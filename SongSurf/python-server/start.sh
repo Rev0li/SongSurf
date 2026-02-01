@@ -42,7 +42,7 @@ fi
 # ============================================
 
 echo -e "${CYAN}▶ Activation de l'environnement virtuel...${NC}"
-source venv/bin/activate
+source venv/Scripts/activate
 
 if [ -z "$VIRTUAL_ENV" ]; then
     echo -e "${RED}❌ Impossible d'activer l'environnement virtuel${NC}"

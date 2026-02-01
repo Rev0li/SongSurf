@@ -277,8 +277,8 @@ print_success "Environnement virtuel créé"
 
 print_step "Activation de l'environnement virtuel..."
 
-source venv/bin/activate
 
+source venv/Scripts/activate
 if [ -z "$VIRTUAL_ENV" ]; then
     print_error "Impossible d'activer l'environnement virtuel"
     exit 1
@@ -292,7 +292,11 @@ print_success "Environnement virtuel activé"
 
 print_step "Mise à jour de pip..."
 
-pip install --upgrade pip --quiet
+# Utiliser python -m pip pour éviter les conflits (surtout sur Windows)
+python -m pip install --upgrade pip --quiet 2>&1 | grep -v "^\[notice\]" || true
+
+# Attendre un peu pour que pip soit bien mis à jour
+sleep 1
 
 PIP_VERSION=$(pip --version | awk '{print $2}')
 print_success "pip $PIP_VERSION"
