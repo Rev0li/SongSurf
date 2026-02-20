@@ -21,10 +21,10 @@
       width: 100%;
       max-width: 380px;
       padding: 40px;
-      background: linear-gradient(135deg, rgba(30, 30, 50, 0.9), rgba(15, 15, 25, 0.95));
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(135deg, rgba(30,30,50,0.9), rgba(15,15,25,0.95));
+      border: 1px solid rgba(255,255,255,0.08);
       border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
       text-align: center;
     }
 
@@ -36,24 +36,43 @@
       background: linear-gradient(135deg, #ff3b6d, #7c3aed);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      margin-bottom: 32px;
+      margin-bottom: 4px;
     }
 
+    .subtitle {
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 28px;
+    }
+
+    /* Badge mode */
+    .mode-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .mode-badge.admin { background: rgba(124,58,237,0.2); border: 1px solid rgba(124,58,237,0.4); color: #a78bfa; }
+    .mode-badge.guest { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.35); color: #6ee7b7; }
+
     .error {
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid rgba(239, 68, 68, 0.3);
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.3);
       color: #fca5a5;
       padding: 10px 16px;
       border-radius: 10px;
       font-size: 13px;
       margin-bottom: 20px;
+      text-align: left;
     }
 
     input[type="password"] {
       width: 100%;
       padding: 14px 16px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 12px;
       color: #fff;
       font-size: 15px;
@@ -61,16 +80,10 @@
       transition: border-color 0.2s;
       margin-bottom: 16px;
     }
+    input[type="password"]:focus { border-color: #7c3aed; }
+    input[type="password"]::placeholder { color: rgba(255,255,255,0.3); }
 
-    input[type="password"]:focus {
-      border-color: #7c3aed;
-    }
-
-    input[type="password"]::placeholder {
-      color: rgba(255, 255, 255, 0.3);
-    }
-
-    button {
+    button.btn-main {
       width: 100%;
       padding: 14px;
       background: linear-gradient(135deg, #ff3b6d, #7c3aed);
@@ -82,56 +95,81 @@
       cursor: pointer;
       transition: transform 0.2s, box-shadow 0.2s;
     }
+    button.btn-main:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124,58,237,0.4); }
+    button.btn-main:active { transform: translateY(0); }
+    button.btn-main:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
-    button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(124, 58, 237, 0.4);
-    }
+    input:disabled { opacity: .4; cursor: not-allowed; }
 
-    button:active {
-      transform: translateY(0);
+    /* Switch mode link */
+    .switch-mode {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
     }
-
-    button:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-      transform: none;
+    .switch-mode a {
+      color: #a78bfa;
+      text-decoration: none;
+      font-weight: 500;
     }
-
-    button:disabled:hover {
-      transform: none;
-      box-shadow: none;
-    }
-
-    input:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-
-    .locked-icon {
-      font-size: 36px;
-      margin-bottom: 8px;
-    }
+    .switch-mode a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="login-card">
-    <div class="logo">{% if locked %}🔒{% else %}🎵{% endif %}</div>
+    <div class="logo">{% if locked %}🔒{% elif is_guest %}🎭{% else %}🎵{% endif %}</div>
     <div class="title">SongSurf</div>
+    <div class="subtitle">YouTube Music Downloader</div>
+
+    <div class="mode-badge {% if is_guest %}guest{% else %}admin{% endif %}">
+      {% if is_guest %}🎭 Accès Guest{% else %}🔐 Accès Admin{% endif %}
+    </div>
 
     {% if error %}
     <div class="error">{{ error }}</div>
     {% endif %}
 
     <form method="POST">
-      <input type="password" name="password" placeholder="Mot de passe"
+      {% if is_guest %}
+      <input type="text" name="guest_name"
+             placeholder="Ton prénom"
+             maxlength="30"
+             {% if not locked %}autofocus{% endif %}
+             {% if locked %}disabled{% endif %}
+             required
+             style="width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:15px;outline:none;margin-bottom:16px;">
+      <input type="password" name="password"
+             placeholder="Mot de passe guest"
+             {% if locked %}disabled{% endif %}
+             required>
+      {% else %}
+      <input type="password" name="password"
+             placeholder="Mot de passe"
              {% if not locked %}autofocus{% endif %}
              {% if locked %}disabled{% endif %}
              required>
-      <button type="submit" {% if locked %}disabled{% endif %}>
-        {% if locked %}Bloqué{% else %}Se connecter{% endif %}
+      {% endif %}
+      <button class="btn-main" type="submit" {% if locked %}disabled{% endif %}>
+        {% if locked %}Bloqué{% elif is_guest %}Accéder en mode guest{% else %}Se connecter{% endif %}
       </button>
     </form>
+
+    {% if is_guest %}
+    <div style="margin-top:20px;padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px;font-size:12px;color:rgba(255,255,255,0.35);text-align:left;line-height:1.6;">
+      ℹ️ En accédant à ce service, vous acceptez que votre prénom et la liste des musiques téléchargées soient conservés dans les logs du serveur à des fins de suivi.
+    </div>
+    {% endif %}
+
+    <!-- Lien pour basculer entre admin et guest -->
+    <div class="switch-mode">
+      {% if is_guest %}
+        Vous êtes l'admin ? <a href="/login">Connexion admin →</a>
+      {% else %}
+        Accès invité ? <a href="/guest/login">Connexion guest →</a>
+      {% endif %}
+    </div>
   </div>
 </body>
 </html>

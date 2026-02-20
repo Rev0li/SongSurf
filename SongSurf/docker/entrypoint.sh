@@ -9,14 +9,22 @@ echo "=============================================="
 echo "📦 Python: $(python --version)"
 echo "🎬 FFmpeg: $(ffmpeg -version 2>&1 | head -n1)"
 
-# Mise à jour de yt-dlp (non-bloquante si pas d'internet)
-echo ""
+# Ajoute ça juste avant le pip install pour voir ce qui bloque
+echo "🔍 Diagnostic réseau..."
+curl -v https://pypi.org/simple/ 2>&1 | head -30
+nslookup pypi.org 2>&1 || echo "nslookup non dispo"
+
 echo "🔄 Mise à jour de yt-dlp..."
-if pip install --no-cache-dir --upgrade yt-dlp 2>&1; then
+if pip install \
+    --no-cache-dir \
+    --upgrade \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    yt-dlp 2>&1; then
     echo "✅ yt-dlp mis à jour: $(yt-dlp --version)"
 else
-    echo "⚠️  Mise à jour échouée (pas d'accès internet ?)"
-    echo "   → Utilisation de la version existante: $(yt-dlp --version)"
+    echo "⚠️  Mise à jour échouée - version existante: $(yt-dlp --version)"
 fi
 
 # Vérifier les dossiers

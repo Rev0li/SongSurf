@@ -126,9 +126,8 @@ Entrez le mot de passe défini à l'étape 2. C'est prêt ! 🎵
 | Arrêter | `sudo docker-compose down` |
 | Redémarrer | `sudo docker-compose restart` |
 | Voir les logs | `sudo docker-compose logs -f` |
-| Reconstruire | `sudo docker-compose up -d --build` |
+| Reconstruire | `sudo docker-compose build --no-cache` |
 | Statut | `sudo docker ps` |
-
 ---
 
 ## Où sont les fichiers musique ?

@@ -6,20 +6,23 @@ SongSurf - Serveur de téléchargement musical
 Dashboard web avec authentification pour télécharger de la musique
 depuis YouTube Music via yt-dlp. Organise automatiquement les fichiers MP3.
 
+Modes:
+  - Admin  : accès complet, musique stockée dans /data/music
+  - Guest  : quota configurable, musique dans /data/music_guest/<session_id>
+             ZIP téléchargeable, nettoyage automatique après 1h
+
 Usage:
   python app.py
-
   Serveur sur http://0.0.0.0:8080
 """
 
-# Fix encodage Windows
 import sys
 import io
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_file
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
@@ -28,6 +31,9 @@ import time
 import queue
 import os
 import secrets
+import shutil
+import zipfile
+import logging
 
 from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
@@ -40,36 +46,80 @@ app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.permanent_session_lifetime = timedelta(days=7)
 
-# Mot de passe du dashboard (OBLIGATOIRE en production)
+# Mots de passe
 DASHBOARD_PASSWORD = os.getenv('SONGSURF_PASSWORD', '')
+GUEST_PASSWORD     = os.getenv('SONGSURF_GUEST_PASSWORD', '')
+
+# Quota guest (0 = illimité)
+GUEST_MAX_SONGS = int(os.getenv('GUEST_MAX_SONGS', '10'))
+
+# Durée de conservation des fichiers guest (en secondes, défaut 1h)
+GUEST_SESSION_TTL = int(os.getenv('GUEST_SESSION_TTL', '3600'))
 
 if not DASHBOARD_PASSWORD:
-    print("⚠️  SONGSURF_PASSWORD non défini ! Le dashboard sera non protégé.")
-    print("   Définissez-le dans docker-compose.yml ou en variable d'environnement.")
+    print("⚠️  SONGSURF_PASSWORD non défini ! Le dashboard admin sera non protégé.")
+if not GUEST_PASSWORD:
+    print("⚠️  SONGSURF_GUEST_PASSWORD non défini ! L'accès guest sera désactivé.")
 
-# Dossiers
+# ============================================
+# DOSSIERS
+# ============================================
+
 if Path(__file__).parent == Path('/app'):
-    TEMP_DIR = Path('/data/temp')
-    MUSIC_DIR = Path('/data/music')
+    TEMP_DIR        = Path('/data/temp')
+    MUSIC_DIR       = Path('/data/music')
+    GUEST_MUSIC_DIR = Path('/data/music_guest')
+    GUEST_TEMP_DIR  = Path('/data/temp_guest')
+    LOG_DIR         = Path('/app/logs')
 else:
-    BASE_DIR = Path(__file__).parent.parent
-    TEMP_DIR = BASE_DIR / "temp"
-    MUSIC_DIR = BASE_DIR / "music"
+    BASE_DIR        = Path(__file__).parent.parent
+    TEMP_DIR        = BASE_DIR / "temp"
+    MUSIC_DIR       = BASE_DIR / "music"
+    GUEST_MUSIC_DIR = BASE_DIR / "music_guest"
+    GUEST_TEMP_DIR  = BASE_DIR / "temp_guest"
+    LOG_DIR         = BASE_DIR / "logs"
 
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+for d in [TEMP_DIR, MUSIC_DIR, GUEST_MUSIC_DIR, GUEST_TEMP_DIR, LOG_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
 
-# Instances
+# ============================================
+# LOGGING (conservé même après nettoyage guest)
+# ============================================
+
+# --- Logger technique complet (console uniquement) ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+
+# Silence werkzeug (les GET /ping, /api/guest/status etc.) dans la console
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+logger = logging.getLogger('songsurf')
+
+# --- Logger activité lisible (fichier dédié) ---
+# Format : 2026-02-20 17:13:42 | MESSAGE
+activity_handler = logging.FileHandler(LOG_DIR / 'activity.log', encoding='utf-8')
+activity_handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+activity_logger = logging.getLogger('songsurf.activity')
+activity_logger.addHandler(activity_handler)
+activity_logger.propagate = False  # Ne pas remonter au logger parent
+activity_logger.setLevel(logging.INFO)
+
+# ============================================
+# INSTANCES
+# ============================================
+
 downloader = YouTubeDownloader(TEMP_DIR, MUSIC_DIR)
-organizer = MusicOrganizer(MUSIC_DIR)
+organizer  = MusicOrganizer(MUSIC_DIR)
 
-# Queue de téléchargement
+# Queue admin
 MAX_QUEUE_SIZE = 50
 download_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-queue_lock = threading.Lock()
-cancel_flag = threading.Event()
+queue_lock     = threading.Lock()
+cancel_flag    = threading.Event()
 
-# État global
 download_status = {
     'in_progress': False,
     'current_download': None,
@@ -80,35 +130,231 @@ download_status = {
 }
 
 # ============================================
-# AUTHENTIFICATION + ANTI-BRUTEFORCE
+# SESSIONS GUEST
+# ============================================
+# Structure :
+# guest_sessions = {
+#   session_id: {
+#     'created_at': datetime,
+#     'expires_at': datetime,
+#     'songs_downloaded': int,
+#     'files': [str],          # chemins absolus des MP3
+#     'queue': Queue,
+#     'status': dict,
+#     'downloader': YouTubeDownloader,
+#     'organizer': MusicOrganizer,
+#     'cancel_flag': Event,
+#   }
+# }
+guest_sessions = {}
+guest_sessions_lock = threading.Lock()
+
+
+def _new_guest_session(guest_name="Inconnu"):
+    """Crée une nouvelle session guest et retourne son ID."""
+    sid = secrets.token_urlsafe(16)
+    session_dir      = GUEST_MUSIC_DIR / sid
+    session_temp_dir = GUEST_TEMP_DIR  / sid
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_temp_dir.mkdir(parents=True, exist_ok=True)
+
+    guest_dl  = YouTubeDownloader(session_temp_dir, session_dir)
+    guest_org = MusicOrganizer(session_dir)
+
+    sess = {
+        'created_at':       datetime.now(),
+        'expires_at':       datetime.now() + timedelta(seconds=GUEST_SESSION_TTL),
+        'guest_name':       guest_name,
+        'songs_downloaded': 0,
+        'files':            [],
+        'queue':            queue.Queue(maxsize=MAX_QUEUE_SIZE),
+        'status': {
+            'in_progress':    False,
+            'current_download': None,
+            'last_completed': None,
+            'last_error':     None,
+            'progress':       None,
+            'queue_size':     0,
+        },
+        'downloader':   guest_dl,
+        'organizer':    guest_org,
+        'cancel_flag':  threading.Event(),
+        'music_dir':    session_dir,
+        'temp_dir':     session_temp_dir,
+        'zip_path':     None,
+    }
+
+    with guest_sessions_lock:
+        guest_sessions[sid] = sess
+
+    # Démarrer le worker dédié à cette session
+    t = threading.Thread(target=guest_queue_worker, args=(sid,), daemon=True)
+    t.start()
+
+    logger.info(f"🎭 Nouvelle session guest: {guest_name} ({sid[:8]})")
+    activity_logger.info(f"🎭 CONNEXION  | {guest_name} | session {sid[:8]}")
+    return sid
+
+
+def _cleanup_guest_session(sid, reason="manuel"):
+    """Supprime les fichiers d'une session guest (logs conservés)."""
+    with guest_sessions_lock:
+        sess = guest_sessions.pop(sid, None)
+
+    if not sess:
+        return
+
+    name  = sess.get('guest_name', 'Inconnu')
+    songs = sess.get('songs_downloaded', 0)
+    files = sess.get('files', [])
+
+    activity_logger.info(f"🧹 FIN SESSION | {name} | {songs} chanson(s) téléchargée(s) | raison: {reason}")
+    for f in files:
+        activity_logger.info(f"   └─ {f}")
+
+    logger.info(f"🧹 Nettoyage session {name} ({sid[:8]}) — {songs} chansons")
+
+    # Supprimer les dossiers de la session
+    for d in [sess.get('music_dir'), sess.get('temp_dir')]:
+        if d and Path(d).exists():
+            shutil.rmtree(d, ignore_errors=True)
+
+    # Supprimer le ZIP s'il existe
+    zip_path = sess.get('zip_path')
+    if zip_path and Path(zip_path).exists():
+        Path(zip_path).unlink(missing_ok=True)
+
+
+def guest_cleanup_worker():
+    """Thread qui nettoie les sessions guest expirées toutes les 5 minutes."""
+    while True:
+        time.sleep(300)
+        now = datetime.now()
+        expired = []
+        with guest_sessions_lock:
+            for sid, sess in list(guest_sessions.items()):
+                if now >= sess['expires_at']:
+                    expired.append(sid)
+
+        for sid in expired:
+            _cleanup_guest_session(sid, reason="expiration automatique")
+
+
+def guest_queue_worker(sid):
+    """Worker de téléchargement dédié à une session guest."""
+    logger.info(f"🔄 Guest worker démarré pour session {sid}")
+
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid)
+    if not sess:
+        return
+
+    dl_queue    = sess['queue']
+    dl          = sess['downloader']
+    org         = sess['organizer']
+    status      = sess['status']
+    cancel      = sess['cancel_flag']
+
+    while True:
+        # Vérifier si la session existe encore
+        with guest_sessions_lock:
+            if sid not in guest_sessions:
+                break
+
+        try:
+            try:
+                item = dl_queue.get(timeout=5)
+            except queue.Empty:
+                continue
+
+            if item is None:
+                break
+
+            url      = item['url']
+            metadata = item['metadata']
+            cancel.clear()
+
+            status['in_progress'] = True
+            status['current_download'] = {
+                'url': url,
+                'metadata': metadata,
+                'started_at': datetime.now().isoformat()
+            }
+            status['last_error'] = None
+
+            logger.info(f"[GUEST:{sid[:8]}] ⬇️  {metadata['artist']} - {metadata['title']}")
+
+            try:
+                result = dl.download(url, metadata)
+
+                if cancel.is_set():
+                    raise Exception("Annulé par l'utilisateur")
+                if not result['success']:
+                    raise Exception(result.get('error', 'Erreur inconnue'))
+
+                org_result = org.organize(result['file_path'], metadata)
+                if not org_result['success']:
+                    raise Exception(org_result.get('error', 'Erreur organisation'))
+
+                # Enregistrer le fichier dans la session
+                with guest_sessions_lock:
+                    if sid in guest_sessions:
+                        guest_sessions[sid]['songs_downloaded'] += 1
+                        guest_sessions[sid]['files'].append(org_result['final_path'])
+                        guest_name = guest_sessions[sid].get('guest_name', 'Inconnu')
+
+                status['in_progress'] = False
+                status['current_download'] = None
+                status['last_completed'] = {
+                    'success': True,
+                    'file_path': org_result['final_path'],
+                    'metadata': metadata,
+                    'timestamp': datetime.now().isoformat()
+                }
+                logger.info(f"[GUEST:{sid[:8]}] ✅ {org_result['final_path']}")
+                activity_logger.info(f"🎵 DOWNLOAD    | {guest_name} | {metadata['artist']} - {metadata['title']}")
+
+            except Exception as e:
+                logger.error(f"[GUEST:{sid[:8]}] ❌ {e}")
+                status['in_progress'] = False
+                status['current_download'] = None
+                status['last_error'] = {
+                    'error': str(e),
+                    'metadata': metadata,
+                    'timestamp': datetime.now().isoformat()
+                }
+
+            dl_queue.task_done()
+
+        except Exception as e:
+            logger.error(f"Guest worker {sid} erreur: {e}")
+            time.sleep(1)
+
+
+# ============================================
+# AUTHENTIFICATION
 # ============================================
 
-# Tracking des tentatives de login par IP
-# { ip: { 'attempts': int, 'locked_until': datetime | None } }
 login_attempts = {}
 MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_DURATION = timedelta(minutes=15)
+LOCKOUT_DURATION   = timedelta(minutes=15)
 
 
 def _get_client_ip():
-    """Récupère l'IP réelle (supporte reverse proxy)"""
     return request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
 
 
 def _is_locked(ip):
-    """Vérifie si une IP est bloquée"""
     info = login_attempts.get(ip)
     if not info or not info.get('locked_until'):
         return False
     if datetime.now() >= info['locked_until']:
-        # Lockout expiré, reset
         login_attempts.pop(ip, None)
         return False
     return True
 
 
 def _remaining_lockout(ip):
-    """Retourne le temps restant de blocage en minutes"""
     info = login_attempts.get(ip, {})
     locked_until = info.get('locked_until')
     if not locked_until:
@@ -118,24 +364,22 @@ def _remaining_lockout(ip):
 
 
 def _record_failed_attempt(ip):
-    """Enregistre un échec de login"""
     if ip not in login_attempts:
         login_attempts[ip] = {'attempts': 0, 'locked_until': None}
     login_attempts[ip]['attempts'] += 1
     attempts = login_attempts[ip]['attempts']
-    print(f"🚫 Échec login depuis {ip} ({attempts}/{MAX_LOGIN_ATTEMPTS})")
+    logger.warning(f"🚫 Échec login depuis {ip} ({attempts}/{MAX_LOGIN_ATTEMPTS})")
     if attempts >= MAX_LOGIN_ATTEMPTS:
         login_attempts[ip]['locked_until'] = datetime.now() + LOCKOUT_DURATION
-        print(f"🔒 IP {ip} bloquée pour {LOCKOUT_DURATION.total_seconds()//60:.0f} minutes")
+        logger.warning(f"🔒 IP {ip} bloquée {LOCKOUT_DURATION.total_seconds()//60:.0f} min")
 
 
 def _reset_attempts(ip):
-    """Reset le compteur après un login réussi"""
     login_attempts.pop(ip, None)
 
 
 def login_required(f):
-    """Décorateur : redirige vers /login si non authentifié"""
+    """Réservé aux admins."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not DASHBOARD_PASSWORD:
@@ -148,9 +392,31 @@ def login_required(f):
     return decorated
 
 
+def guest_required(f):
+    """Réservé aux guests (vérifie session guest active)."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        sid = session.get('guest_session_id')
+        if not sid:
+            if request.is_json:
+                return jsonify({'success': False, 'error': 'Session guest invalide'}), 401
+            return redirect(url_for('guest_login'))
+        with guest_sessions_lock:
+            if sid not in guest_sessions:
+                session.clear()
+                if request.is_json:
+                    return jsonify({'success': False, 'error': 'Session expirée'}), 401
+                return redirect(url_for('guest_login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ============================================
+# ROUTES LOGIN ADMIN
+# ============================================
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Page de connexion avec protection anti-bruteforce"""
     if not DASHBOARD_PASSWORD:
         session['authenticated'] = True
         session.permanent = True
@@ -159,11 +425,9 @@ def login():
     ip = _get_client_ip()
     error = None
 
-    # Vérifier si l'IP est bloquée
     if _is_locked(ip):
         minutes = _remaining_lockout(ip)
-        error = f'Trop de tentatives. Réessayez dans {minutes} min.'
-        return render_template('login.html', error=error, locked=True)
+        return render_template('login.html', error=f'Trop de tentatives. Réessayez dans {minutes} min.', locked=True)
 
     if request.method == 'POST':
         password = request.form.get('password', '')
@@ -171,12 +435,12 @@ def login():
             session['authenticated'] = True
             session.permanent = True
             _reset_attempts(ip)
+            logger.info(f"✅ Login admin depuis {ip}")
             return redirect(url_for('dashboard'))
         else:
             _record_failed_attempt(ip)
             if _is_locked(ip):
-                minutes = _remaining_lockout(ip)
-                error = f'Trop de tentatives. Réessayez dans {minutes} min.'
+                error = f'Trop de tentatives. Réessayez dans {_remaining_lockout(ip)} min.'
             else:
                 remaining = MAX_LOGIN_ATTEMPTS - login_attempts.get(ip, {}).get('attempts', 0)
                 error = f'Mot de passe incorrect ({remaining} essai{"s" if remaining > 1 else ""} restant{"s" if remaining > 1 else ""})'
@@ -186,41 +450,104 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Déconnexion"""
     session.clear()
     return redirect(url_for('login'))
 
 
 # ============================================
-# DASHBOARD
+# ROUTES LOGIN GUEST
+# ============================================
+
+@app.route('/guest/login', methods=['GET', 'POST'])
+def guest_login():
+    if not GUEST_PASSWORD:
+        return render_template('login.html',
+            error="L'accès guest est désactivé (SONGSURF_GUEST_PASSWORD non défini).",
+            locked=True, is_guest=True)
+
+    ip = _get_client_ip()
+    error = None
+
+    if _is_locked(ip):
+        return render_template('login.html',
+            error=f'Trop de tentatives. Réessayez dans {_remaining_lockout(ip)} min.',
+            locked=True, is_guest=True)
+
+    if request.method == 'POST':
+        password   = request.form.get('password', '')
+        guest_name = request.form.get('guest_name', '').strip() or 'Inconnu'
+        if password == GUEST_PASSWORD:
+            sid = _new_guest_session(guest_name)
+            session['guest_session_id'] = sid
+            session['guest_name'] = guest_name
+            session.permanent = False
+            _reset_attempts(ip)
+            logger.info(f"🎭 Login guest '{guest_name}' depuis {ip} → session {sid[:8]}")
+            return redirect(url_for('guest_dashboard'))
+        else:
+            _record_failed_attempt(ip)
+            if _is_locked(ip):
+                error = f'Trop de tentatives. Réessayez dans {_remaining_lockout(ip)} min.'
+            else:
+                remaining = MAX_LOGIN_ATTEMPTS - login_attempts.get(ip, {}).get('attempts', 0)
+                error = f'Mot de passe incorrect ({remaining} essai{"s" if remaining > 1 else ""} restant{"s" if remaining > 1 else ""})'
+
+    return render_template('login.html', error=error, locked=_is_locked(ip), is_guest=True)
+
+
+@app.route('/guest/logout')
+def guest_logout():
+    sid = session.get('guest_session_id')
+    session.clear()
+    logger.info(f"🚪 Guest logout, session {sid[:8] if sid else '?'} conservée jusqu'à expiration")
+    return redirect(url_for('guest_login'))
+
+
+# ============================================
+# DASHBOARD ADMIN
 # ============================================
 
 @app.route('/')
 @login_required
 def dashboard():
-    """Page principale du dashboard"""
     stats = organizer.get_stats()
     return render_template('dashboard.html', stats=stats)
 
 
 # ============================================
-# API
+# DASHBOARD GUEST
+# ============================================
+
+@app.route('/guest')
+@guest_required
+def guest_dashboard():
+    sid = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid, {})
+    return render_template('guest_dashboard.html',
+        session_id=sid,
+        songs_downloaded=sess.get('songs_downloaded', 0),
+        max_songs=GUEST_MAX_SONGS,
+        expires_at=sess.get('expires_at', datetime.now()).isoformat(),
+    )
+
+
+# ============================================
+# API PUBLIQUE
 # ============================================
 
 @app.route('/ping', methods=['GET'])
 def ping():
-    """Health check (public)"""
-    return jsonify({
-        'status': 'ok',
-        'message': 'SongSurf is running',
-        'timestamp': datetime.now().isoformat()
-    })
+    return jsonify({'status': 'ok', 'message': 'SongSurf is running', 'timestamp': datetime.now().isoformat()})
 
+
+# ============================================
+# API ADMIN
+# ============================================
 
 @app.route('/api/status', methods=['GET'])
 @login_required
 def get_status():
-    """Statut du téléchargement en cours"""
     with queue_lock:
         status = download_status.copy()
         status['queue_size'] = download_queue.qsize()
@@ -232,118 +559,79 @@ def get_status():
 @app.route('/api/stats', methods=['GET'])
 @login_required
 def get_stats():
-    """Statistiques de la bibliothèque"""
     return jsonify(organizer.get_stats())
 
 
 @app.route('/api/extract', methods=['POST'])
 @login_required
 def extract_metadata():
-    """Extrait les métadonnées d'une URL YouTube"""
     try:
         data = request.get_json()
-        url = data.get('url', '').strip()
-
+        url  = data.get('url', '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
-
-        print(f"🔍 Extraction: {url}")
-
-        # Playlist/Album ou chanson simple ?
-        if '/playlist?list=' in url or '/browse/' in url:
+        is_playlist = ('/playlist?list=' in url or '/browse/' in url) and '/watch?' not in url
+        if is_playlist:
             result = downloader.extract_playlist_metadata(url)
         else:
             result = downloader.extract_metadata(url)
-
+            if result.get('success') and 'metadata' in result:
+                meta = result.pop('metadata')
+                result.update(meta)
         return jsonify(result)
-
     except Exception as e:
-        print(f"❌ Erreur extraction: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/download', methods=['POST'])
 @login_required
 def start_download():
-    """Ajoute un téléchargement à la queue"""
     try:
         data = request.get_json()
-        url = data.get('url', '').strip()
-
+        url  = data.get('url', '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
-
         if download_queue.full():
             return jsonify({'success': False, 'error': f'Queue pleine ({MAX_QUEUE_SIZE} max)'}), 429
 
         metadata = {
             'artist': data.get('artist', 'Unknown Artist'),
-            'album': data.get('album', 'Unknown Album'),
-            'title': data.get('title', 'Unknown Title'),
-            'year': data.get('year', '')
+            'album':  data.get('album',  'Unknown Album'),
+            'title':  data.get('title',  'Unknown Title'),
+            'year':   data.get('year',   '')
         }
-
-        download_queue.put({
-            'url': url,
-            'metadata': metadata,
-            'added_at': datetime.now().isoformat()
-        })
-
-        print(f"➕ Queue: {metadata['artist']} - {metadata['title']} ({download_queue.qsize()}/{MAX_QUEUE_SIZE})")
-
-        return jsonify({
-            'success': True,
-            'message': 'Ajouté à la queue',
-            'queue_size': download_queue.qsize()
-        })
-
+        download_queue.put({'url': url, 'metadata': metadata, 'added_at': datetime.now().isoformat()})
+        logger.info(f"➕ Admin queue: {metadata['artist']} - {metadata['title']}")
+        return jsonify({'success': True, 'message': 'Ajouté à la queue', 'queue_size': download_queue.qsize()})
     except Exception as e:
-        print(f"❌ Erreur: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/download-playlist', methods=['POST'])
 @login_required
 def download_playlist():
-    """Ajoute toutes les chansons d'une playlist à la queue"""
     try:
-        data = request.get_json()
-        url = data.get('url', '')
+        data     = request.get_json()
+        url      = data.get('url', '')
         playlist = data.get('playlist_metadata', {})
-
         if not url or not playlist:
             return jsonify({'success': False, 'error': 'Données manquantes'}), 400
 
         songs = playlist.get('songs', [])
         added = 0
-
         for song in songs:
             if download_queue.full():
                 break
-
             metadata = {
                 'artist': song.get('artist', playlist.get('artist', 'Unknown')),
-                'album': playlist.get('title', 'Unknown Album'),
-                'title': song['title'],
-                'year': playlist.get('year', '')
+                'album':  playlist.get('title', 'Unknown Album'),
+                'title':  song['title'],
+                'year':   playlist.get('year', '')
             }
-
-            download_queue.put({
-                'url': song['url'],
-                'metadata': metadata,
-                'added_at': datetime.now().isoformat()
-            })
+            download_queue.put({'url': song['url'], 'metadata': metadata, 'added_at': datetime.now().isoformat()})
             added += 1
 
-        print(f"💿 Playlist: {added}/{len(songs)} chansons ajoutées")
-
-        return jsonify({
-            'success': True,
-            'added': added,
-            'total': len(songs),
-            'queue_size': download_queue.qsize()
-        })
-
+        return jsonify({'success': True, 'added': added, 'total': len(songs), 'queue_size': download_queue.qsize()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -351,7 +639,6 @@ def download_playlist():
 @app.route('/api/cancel', methods=['POST'])
 @login_required
 def cancel_download():
-    """Annule le téléchargement en cours"""
     if not download_status['in_progress']:
         return jsonify({'success': False, 'error': 'Aucun téléchargement en cours'}), 400
     cancel_flag.set()
@@ -361,7 +648,6 @@ def cancel_download():
 @app.route('/api/cleanup', methods=['POST'])
 @login_required
 def cleanup():
-    """Nettoie le dossier temp"""
     deleted = []
     if TEMP_DIR.exists():
         for f in TEMP_DIR.iterdir():
@@ -371,52 +657,278 @@ def cleanup():
     download_status['in_progress'] = False
     download_status['current_download'] = None
     download_status['last_error'] = None
-    print(f"🧹 Nettoyage: {len(deleted)} fichiers supprimés")
     return jsonify({'success': True, 'deleted': len(deleted)})
 
 
 # ============================================
-# QUEUE WORKER
+# API GUEST
+# ============================================
+
+@app.route('/api/guest/status', methods=['GET'])
+@guest_required
+def guest_status():
+    sid  = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid, {})
+    status = sess.get('status', {}).copy()
+    status['queue_size']       = sess['queue'].qsize() if 'queue' in sess else 0
+    status['songs_downloaded'] = sess.get('songs_downloaded', 0)
+    status['max_songs']        = GUEST_MAX_SONGS
+    status['expires_at']       = sess.get('expires_at', datetime.now()).isoformat()
+    if status.get('in_progress') and 'downloader' in sess:
+        status['progress'] = sess['downloader'].get_progress()
+    return jsonify(status)
+
+
+@app.route('/api/guest/extract', methods=['POST'])
+@guest_required
+def guest_extract():
+    try:
+        data = request.get_json()
+        url  = data.get('url', '').strip()
+        if not url:
+            return jsonify({'success': False, 'error': 'URL manquante'}), 400
+
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid)
+        if not sess:
+            return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+        dl = sess['downloader']
+        # Playlist seulement si URL pointe vers une vraie playlist, pas une chanson avec &list=
+        is_playlist = ('/playlist?list=' in url or '/browse/' in url) and '/watch?' not in url
+        if is_playlist:
+            result = dl.extract_playlist_metadata(url)
+        else:
+            result = dl.extract_metadata(url)
+            # Aplatir la réponse : sortir les métadonnées du sous-objet 'metadata'
+            if result.get('success') and 'metadata' in result:
+                meta = result.pop('metadata')
+                result.update(meta)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/download', methods=['POST'])
+@guest_required
+def guest_download():
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid)
+        if not sess:
+            return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+        # Vérifier le quota
+        if GUEST_MAX_SONGS > 0 and sess['songs_downloaded'] >= GUEST_MAX_SONGS:
+            return jsonify({
+                'success': False,
+                'error': f'Quota atteint ({GUEST_MAX_SONGS} chansons max par session)'
+            }), 429
+
+        # Vérifier la queue
+        if sess['queue'].full():
+            return jsonify({'success': False, 'error': 'Queue pleine'}), 429
+
+        data = request.get_json()
+        url  = data.get('url', '').strip()
+        if not url:
+            return jsonify({'success': False, 'error': 'URL manquante'}), 400
+
+        metadata = {
+            'artist': data.get('artist', 'Unknown Artist'),
+            'album':  data.get('album',  'Unknown Album'),
+            'title':  data.get('title',  'Unknown Title'),
+            'year':   data.get('year',   '')
+        }
+
+        sess['queue'].put({'url': url, 'metadata': metadata, 'added_at': datetime.now().isoformat()})
+        logger.info(f"[GUEST:{sid[:8]}] ➕ {metadata['artist']} - {metadata['title']}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Ajouté à la queue',
+            'queue_size': sess['queue'].qsize(),
+            'songs_downloaded': sess['songs_downloaded'],
+            'max_songs': GUEST_MAX_SONGS
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/download-playlist', methods=['POST'])
+@guest_required
+def guest_download_playlist():
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid)
+        if not sess:
+            return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+        data     = request.get_json()
+        playlist = data.get('playlist_metadata', {})
+        songs    = playlist.get('songs', [])
+
+        # Calculer combien on peut encore ajouter
+        already = sess['songs_downloaded'] + sess['queue'].qsize()
+        remaining_quota = (GUEST_MAX_SONGS - already) if GUEST_MAX_SONGS > 0 else len(songs)
+        songs_to_add = songs[:remaining_quota]
+
+        added = 0
+        for song in songs_to_add:
+            if sess['queue'].full():
+                break
+            metadata = {
+                'artist': song.get('artist', playlist.get('artist', 'Unknown')),
+                'album':  playlist.get('title', 'Unknown Album'),
+                'title':  song['title'],
+                'year':   playlist.get('year', '')
+            }
+            sess['queue'].put({'url': song['url'], 'metadata': metadata, 'added_at': datetime.now().isoformat()})
+            added += 1
+
+        return jsonify({
+            'success': True,
+            'added': added,
+            'total': len(songs),
+            'skipped': len(songs) - added,
+            'quota_remaining': max(0, remaining_quota - added),
+            'queue_size': sess['queue'].qsize()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/prepare-zip', methods=['POST'])
+@guest_required
+def guest_prepare_zip():
+    """Génère le ZIP des musiques téléchargées par le guest."""
+    sid = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid)
+    if not sess:
+        return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+    music_dir = sess['music_dir']
+
+    # Attendre que la queue soit vide (timeout 30s)
+    try:
+        sess['queue'].join()
+    except Exception:
+        pass
+
+    # Lister tous les MP3
+    mp3_files = list(Path(music_dir).rglob('*.mp3'))
+    if not mp3_files:
+        return jsonify({'success': False, 'error': 'Aucun fichier à télécharger'}), 404
+
+    # Créer le ZIP
+    zip_path = GUEST_TEMP_DIR / f"songsurf_guest_{sid[:8]}.zip"
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for mp3 in mp3_files:
+                arcname = mp3.relative_to(music_dir)
+                zf.write(mp3, arcname)
+
+        with guest_sessions_lock:
+            if sid in guest_sessions:
+                guest_sessions[sid]['zip_path'] = str(zip_path)
+
+        size_mb = zip_path.stat().st_size / (1024 * 1024)
+        logger.info(f"[GUEST:{sid[:8]}] 📦 ZIP créé: {len(mp3_files)} fichiers, {size_mb:.1f} MB")
+
+        return jsonify({
+            'success': True,
+            'file_count': len(mp3_files),
+            'size_mb': round(size_mb, 1),
+            'download_url': url_for('guest_download_zip')
+        })
+    except Exception as e:
+        logger.error(f"[GUEST:{sid[:8]}] ❌ Erreur ZIP: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/download-zip', methods=['GET'])
+@guest_required
+def guest_download_zip():
+    """Envoie le ZIP au client puis déclenche le nettoyage."""
+    sid = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid)
+    if not sess:
+        return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+    zip_path = sess.get('zip_path')
+    if not zip_path or not Path(zip_path).exists():
+        return jsonify({'success': False, 'error': 'ZIP non disponible, utilisez /api/guest/prepare-zip d\'abord'}), 404
+
+    logger.info(f"[GUEST:{sid[:8]}] ⬇️  Téléchargement ZIP par l'utilisateur")
+
+    # Planifier le nettoyage 60s après le téléchargement
+    def delayed_cleanup():
+        time.sleep(60)
+        _cleanup_guest_session(sid, reason="téléchargement ZIP effectué")
+
+    threading.Thread(target=delayed_cleanup, daemon=True).start()
+
+    return send_file(
+        zip_path,
+        as_attachment=True,
+        download_name=f'SongSurf_musiques.zip',
+        mimetype='application/zip'
+    )
+
+
+@app.route('/api/guest/cancel', methods=['POST'])
+@guest_required
+def guest_cancel():
+    sid = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid)
+    if not sess:
+        return jsonify({'success': False, 'error': 'Session expirée'}), 401
+    sess['cancel_flag'].set()
+    return jsonify({'success': True, 'message': 'Annulation demandée'})
+
+
+# ============================================
+# QUEUE WORKER ADMIN
 # ============================================
 
 def queue_worker():
-    """Thread qui traite la queue de téléchargements"""
-    print("🔄 Queue worker démarré")
-
+    """Thread qui traite la queue de téléchargements admin."""
+    logger.info("🔄 Admin queue worker démarré")
     while True:
         try:
             item = download_queue.get()
             if item is None:
                 break
 
-            url = item['url']
+            url      = item['url']
             metadata = item['metadata']
             cancel_flag.clear()
 
             with queue_lock:
                 download_status['in_progress'] = True
                 download_status['current_download'] = {
-                    'url': url,
-                    'metadata': metadata,
+                    'url': url, 'metadata': metadata,
                     'started_at': datetime.now().isoformat()
                 }
                 download_status['last_error'] = None
 
-            print(f"\n🎵 Téléchargement: {metadata['artist']} - {metadata['title']}")
+            logger.info(f"🎵 Admin: {metadata['artist']} - {metadata['title']}")
 
             try:
-                # Étape 1 : Télécharger
                 result = downloader.download(url, metadata)
-
                 if cancel_flag.is_set():
                     raise Exception("Annulé par l'utilisateur")
-
                 if not result['success']:
                     raise Exception(result.get('error', 'Erreur inconnue'))
 
-                # Étape 2 : Organiser
                 org_result = organizer.organize(result['file_path'], metadata)
-
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
 
@@ -429,24 +941,22 @@ def queue_worker():
                         'metadata': metadata,
                         'timestamp': datetime.now().isoformat()
                     }
-
-                print(f"✅ Terminé: {org_result['final_path']}")
+                logger.info(f"✅ Admin: {org_result['final_path']}")
 
             except Exception as e:
-                print(f"❌ Erreur: {e}")
+                logger.error(f"❌ Admin: {e}")
                 with queue_lock:
                     download_status['in_progress'] = False
                     download_status['current_download'] = None
                     download_status['last_error'] = {
-                        'error': str(e),
-                        'metadata': metadata,
+                        'error': str(e), 'metadata': metadata,
                         'timestamp': datetime.now().isoformat()
                     }
 
             download_queue.task_done()
 
         except Exception as e:
-            print(f"❌ Queue worker error: {e}")
+            logger.error(f"❌ Admin queue worker error: {e}")
             time.sleep(1)
 
 
@@ -458,16 +968,19 @@ if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🎵 SongSurf - Dashboard Musical")
     print("=" * 60)
-    print(f"📁 Temp:  {TEMP_DIR}")
-    print(f"📁 Music: {MUSIC_DIR}")
-    print(f"🔐 Auth:  {'✅ Protégé' if DASHBOARD_PASSWORD else '⚠️  OUVERT (définir SONGSURF_PASSWORD)'}")
-    print(f"📊 Queue: max {MAX_QUEUE_SIZE}")
+    print(f"📁 Music admin : {MUSIC_DIR}")
+    print(f"📁 Music guest : {GUEST_MUSIC_DIR}")
+    print(f"🔐 Admin auth  : {'✅ Protégé' if DASHBOARD_PASSWORD else '⚠️  OUVERT'}")
+    print(f"🎭 Guest auth  : {'✅ Protégé' if GUEST_PASSWORD else '❌ Désactivé'}")
+    print(f"🎵 Guest quota : {GUEST_MAX_SONGS if GUEST_MAX_SONGS > 0 else 'illimité'} chansons/session")
+    print(f"⏱️  Guest TTL   : {GUEST_SESSION_TTL // 60} minutes")
+    print(f"📝 Logs        : {LOG_DIR / 'songsurf.log'}")
     print("=" * 60)
     print("🚀 http://0.0.0.0:8080")
     print("=" * 60 + "\n")
 
-    # Démarrer le worker
-    worker = threading.Thread(target=queue_worker, daemon=True)
-    worker.start()
+    # Démarrer les workers
+    threading.Thread(target=queue_worker,       daemon=True).start()
+    threading.Thread(target=guest_cleanup_worker, daemon=True).start()
 
     app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)

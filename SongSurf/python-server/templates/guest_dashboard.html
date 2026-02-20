@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SongSurf - Espace Guest</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      background: #0a0a0f;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .brand { font-size: 20px; font-weight: 700; background: linear-gradient(135deg, #ff3b6d, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .guest-badge { background: rgba(124,58,237,0.2); border: 1px solid rgba(124,58,237,0.4); color: #a78bfa; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .btn-logout { background: none; border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.5); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .2s; }
+    .btn-logout:hover { border-color: rgba(255,255,255,0.3); color: #fff; }
+
+    /* ── Layout ── */
+    main { max-width: 700px; margin: 0 auto; padding: 32px 20px; }
+
+    /* ── Session info bar ── */
+    .session-bar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .session-pill {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      color: rgba(255,255,255,0.7);
+      flex: 1;
+      min-width: 140px;
+    }
+    .session-pill strong { display: block; font-size: 18px; color: #fff; margin-bottom: 2px; }
+    .session-pill.warn strong { color: #fbbf24; }
+    .session-pill.ok strong { color: #34d399; }
+
+    /* ── Quota bar ── */
+    .quota-wrap { margin-bottom: 28px; }
+    .quota-label { font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 8px; display: flex; justify-content: space-between; }
+    .quota-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }
+    .quota-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #ff3b6d); border-radius: 10px; transition: width .4s; }
+    .quota-fill.full { background: #ef4444; }
+
+    /* ── Card ── */
+    .card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: rgba(255,255,255,0.85); }
+
+    /* ── Input URL ── */
+    .input-row { display: flex; gap: 10px; }
+    .url-input {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .url-input:focus { border-color: #7c3aed; }
+    .url-input::placeholder { color: rgba(255,255,255,0.25); }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      white-space: nowrap;
+    }
+    .btn-primary { background: linear-gradient(135deg, #7c3aed, #ff3b6d); color: #fff; }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,0.4); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-success { background: linear-gradient(135deg, #059669, #10b981); color: #fff; width: 100%; font-size: 15px; padding: 14px; }
+    .btn-success:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16,185,129,0.4); }
+    .btn-success:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-danger { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; padding: 8px 16px; font-size: 13px; }
+    .btn-danger:hover { background: rgba(239,68,68,0.25); }
+
+    /* ── Metadata preview ── */
+    #metadata-preview { display: none; margin-top: 16px; }
+    .meta-card {
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .meta-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,0.1); flex-shrink: 0; }
+    .meta-info { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .meta-field { display: flex; flex-direction: column; gap: 3px; }
+    .meta-field label { font-size: 11px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: .5px; }
+    .meta-field input {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px;
+      color: #fff;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color .2s;
+      width: 100%;
+    }
+    .meta-field input:focus { border-color: #7c3aed; }
+    .meta-field input::placeholder { color: rgba(255,255,255,0.2); }
+    .meta-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* ── Progress ── */
+    #progress-zone { display: none; }
+    .progress-bar-wrap { height: 8px; background: rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; margin: 12px 0 6px; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #7c3aed, #ff3b6d); border-radius: 10px; transition: width .3s; }
+    .progress-text { font-size: 12px; color: rgba(255,255,255,0.5); display: flex; justify-content: space-between; }
+    .progress-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .progress-status { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 10px; }
+
+    /* ── Download list ── */
+    .dl-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+    .dl-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+    }
+    .dl-item .icon { font-size: 18px; flex-shrink: 0; }
+    .dl-item .name { flex: 1; color: rgba(255,255,255,0.8); }
+    .dl-item .ok { color: #34d399; font-size: 12px; }
+
+    /* ── ZIP zone ── */
+    #zip-zone { display: none; }
+    .zip-success {
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.25);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .zip-success .zip-icon { font-size: 36px; margin-bottom: 8px; }
+    .zip-success p { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 6px; }
+
+    /* ── Alert ── */
+    .alert { padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 16px; }
+    .alert-error { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+    .alert-info  { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd; }
+
+    /* ── Timer ── */
+    #timer { font-variant-numeric: tabular-nums; }
+
+    /* ── Empty state ── */
+    .empty { text-align: center; color: rgba(255,255,255,0.3); padding: 30px 0; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">🎵 SongSurf</div>
+  <div class="header-right">
+    <span class="guest-badge">🎭 Accès Guest</span>
+    <button class="btn-logout" onclick="location.href='/guest/logout'">Déconnexion</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Session info -->
+  <div class="session-bar">
+    <div class="session-pill ok" id="pill-songs">
+      <strong id="pill-songs-val">0 / {{ max_songs if max_songs > 0 else '∞' }}</strong>
+      Chansons téléchargées
+    </div>
+    <div class="session-pill" id="pill-queue">
+      <strong id="pill-queue-val">0</strong>
+      En attente
+    </div>
+    <div class="session-pill warn">
+      <strong id="timer">--:--</strong>
+      Expiration session
+    </div>
+  </div>
+
+  <!-- Quota bar -->
+  {% if max_songs > 0 %}
+  <div class="quota-wrap">
+    <div class="quota-label">
+      <span>Quota utilisé</span>
+      <span id="quota-text">0 / {{ max_songs }}</span>
+    </div>
+    <div class="quota-bar">
+      <div class="quota-fill" id="quota-fill" style="width: 0%"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Input URL -->
+  <div class="card">
+    <h2>🔗 Coller un lien YouTube Music</h2>
+    <div id="alert-zone"></div>
+    <div class="input-row">
+      <input type="text" class="url-input" id="url-input"
+             placeholder="https://music.youtube.com/watch?v=..." />
+      <button class="btn btn-primary" id="btn-extract" onclick="extractUrl()">Analyser</button>
+    </div>
+
+    <!-- Métadonnées extraites -->
+    <div id="metadata-preview">
+      <div class="meta-card">
+        <img class="meta-thumb" id="meta-thumb" src="" alt="" onerror="this.style.display='none'">
+        <div class="meta-info" id="meta-fields-single">
+          <div class="meta-field">
+            <label>Titre</label>
+            <input type="text" id="edit-title" placeholder="Titre de la chanson">
+          </div>
+          <div class="meta-field">
+            <label>Artiste</label>
+            <input type="text" id="edit-artist" placeholder="Artiste">
+          </div>
+          <div class="meta-field">
+            <label>Album</label>
+            <input type="text" id="edit-album" placeholder="Album">
+          </div>
+        </div>
+        <!-- Playlist : confirmation avec champs éditables -->
+        <div class="meta-info" id="meta-fields-playlist" style="display:none">
+          <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display">—</div>
+          <div class="meta-field">
+            <label>Artiste</label>
+            <input type="text" id="edit-playlist-artist" placeholder="Artiste">
+          </div>
+          <div class="meta-field">
+            <label>Album / Playlist</label>
+            <input type="text" id="edit-playlist-album" placeholder="Nom de l'album">
+          </div>
+          <div class="meta-field">
+            <label>Année</label>
+            <input type="text" id="edit-playlist-year" placeholder="2024" style="max-width:100px">
+          </div>
+        </div>
+      </div>
+      <div class="meta-actions">
+        <button class="btn btn-primary" id="btn-dl" onclick="addToQueue()">⬇️ Télécharger</button>
+        <button class="btn btn-danger" onclick="resetPreview()">✕ Annuler</button>
+      </div>
+      <!-- Playlist quota warning -->
+      <div id="playlist-info" style="display:none; margin-top:12px;">
+        <div class="alert alert-info" id="playlist-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progression en cours -->
+  <div class="card" id="progress-zone">
+    <h2>⏳ Téléchargement en cours</h2>
+    <div class="progress-title" id="prog-title">—</div>
+    <div class="progress-status" id="prog-status">—</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="prog-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-text">
+      <span id="prog-pct">0%</span>
+      <span id="prog-speed">—</span>
+      <span id="prog-eta">—</span>
+    </div>
+  </div>
+
+  <!-- Liste des téléchargements -->
+  <div class="card">
+    <h2>✅ Musiques prêtes</h2>
+    <ul class="dl-list" id="dl-list">
+      <li class="empty" id="dl-empty">Aucune musique téléchargée pour l'instant</li>
+    </ul>
+  </div>
+
+  <!-- Zone ZIP -->
+  <div class="card" id="zip-zone">
+    <h2>📦 Télécharger mes musiques</h2>
+    <div id="zip-preparing" style="display:none; text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
+      ⏳ Préparation du ZIP en cours…
+    </div>
+    <div id="zip-ready" style="display:none;">
+      <div class="zip-success">
+        <div class="zip-icon">📦</div>
+        <div id="zip-info-text"></div>
+        <p>Le ZIP sera supprimé peu après votre téléchargement.</p>
+      </div>
+      <a id="zip-download-link" href="/api/guest/download-zip">
+        <button class="btn btn-success">⬇️ Télécharger le ZIP</button>
+      </a>
+    </div>
+    <button class="btn btn-primary" id="btn-prepare-zip" onclick="prepareZip()" style="width:100%">
+      📦 Préparer mon ZIP
+    </button>
+  </div>
+
+</main>
+
+<script>
+  // ── État ──────────────────────────────────────────
+  const MAX_SONGS  = {{ max_songs }};
+  const EXPIRES_AT = new Date("{{ expires_at }}");
+  let currentMeta  = null;
+  let isPlaylist   = false;
+  let pollInterval = null;
+  let completed    = [];
+
+  // ── Timer expiration ─────────────────────────────
+  function updateTimer() {
+    const now  = new Date();
+    const diff = Math.max(0, Math.floor((EXPIRES_AT - now) / 1000));
+    const h    = Math.floor(diff / 3600);
+    const m    = Math.floor((diff % 3600) / 60);
+    const s    = diff % 60;
+    document.getElementById('timer').textContent =
+      h > 0 ? `${h}h ${String(m).padStart(2,'0')}min` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (diff === 0) {
+      showAlert("⏱️ Votre session a expiré. Reconnectez-vous.", 'info');
+      clearInterval(pollInterval);
+    }
+  }
+  setInterval(updateTimer, 1000);
+  updateTimer();
+
+  // ── Alertes ──────────────────────────────────────
+  function showAlert(msg, type = 'error') {
+    const zone = document.getElementById('alert-zone');
+    zone.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+    setTimeout(() => zone.innerHTML = '', 5000);
+  }
+
+  // ── Gestion état global des boutons ─────────────
+  let isDownloading = false;
+
+  function setDownloadingState(active) {
+    isDownloading = active;
+    document.getElementById('btn-extract').disabled    = active;
+    document.getElementById('btn-prepare-zip').disabled = active;
+    if (active) {
+      document.getElementById('btn-extract').title     = 'Téléchargement en cours…';
+      document.getElementById('btn-prepare-zip').title = 'Attendez la fin du téléchargement';
+    } else {
+      document.getElementById('btn-extract').title     = '';
+      document.getElementById('btn-prepare-zip').title = '';
+    }
+  }
+
+  // ── Extract URL ──────────────────────────────────
+  async function extractUrl() {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) return showAlert('Collez un lien YouTube Music.');
+    document.getElementById('btn-extract').disabled = true;
+    document.getElementById('btn-extract').textContent = '⏳';
+    document.getElementById('metadata-preview').style.display = 'none';
+
+    try {
+      const res  = await fetch('/api/guest/extract', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+      console.log('Extract response:', JSON.stringify(data, null, 2));
+      if (!data.success) return showAlert(data.error || 'Erreur extraction.');
+
+      // Normaliser la réponse : aplatir si les données sont dans 'metadata'
+      const meta = data.metadata ? { ...data, ...data.metadata } : data;
+      currentMeta = meta;
+
+      if (meta.songs) {
+        // ── Playlist / album ──
+        isPlaylist = true;
+        document.getElementById('meta-fields-single').style.display   = 'none';
+        document.getElementById('meta-fields-playlist').style.display = 'flex';
+        document.getElementById('meta-thumb').style.display           = 'none';
+        document.getElementById('playlist-title-display').textContent = `💿 ${meta.songs.length} chanson(s) détectée(s)`;
+        document.getElementById('playlist-info').style.display        = 'none';
+        document.getElementById('btn-dl').textContent = '⬇️ Tout télécharger';
+
+        // Pré-remplir les champs éditables playlist
+        document.getElementById('edit-playlist-artist').value = meta.artist || '';
+        document.getElementById('edit-playlist-album').value  = meta.title  || '';
+        document.getElementById('edit-playlist-year').value   = meta.year   || '';
+
+        if (MAX_SONGS > 0) {
+          const already = parseInt(document.getElementById('pill-songs-val').textContent) || 0;
+          const free = MAX_SONGS - already;
+          if (meta.songs.length > free) {
+            document.getElementById('playlist-info').style.display = 'block';
+            document.getElementById('playlist-msg').textContent = `⚠️ Quota: seulement ${free} chanson(s) seront ajoutées.`;
+          }
+        }
+      } else {
+        // ── Chanson solo — champs éditables ──
+        isPlaylist = false;
+        document.getElementById('meta-fields-single').style.display   = 'flex';
+        document.getElementById('meta-fields-playlist').style.display = 'none';
+        document.getElementById('playlist-info').style.display        = 'none';
+        document.getElementById('btn-dl').textContent = '⬇️ Télécharger';
+
+        document.getElementById('edit-title').value  = meta.title  || '';
+        document.getElementById('edit-artist').value = meta.artist || '';
+        document.getElementById('edit-album').value  = meta.album  || '';
+
+        document.getElementById('meta-thumb').src = meta.thumbnail_url || '';
+        document.getElementById('meta-thumb').style.display = meta.thumbnail_url ? 'block' : 'none';
+      }
+
+      document.getElementById('metadata-preview').style.display = 'block';
+    } catch(e) {
+      showAlert('Erreur réseau.');
+    } finally {
+      document.getElementById('btn-extract').disabled = isDownloading;
+      document.getElementById('btn-extract').textContent = 'Analyser';
+    }
+  }
+
+  function resetPreview() {
+    document.getElementById('metadata-preview').style.display = 'none';
+    document.getElementById('url-input').value = '';
+    document.getElementById('edit-title').value          = '';
+    document.getElementById('edit-artist').value         = '';
+    document.getElementById('edit-album').value          = '';
+    document.getElementById('edit-playlist-artist').value = '';
+    document.getElementById('edit-playlist-album').value  = '';
+    document.getElementById('edit-playlist-year').value   = '';
+    currentMeta = null;
+  }
+
+  // ── Add to queue ─────────────────────────────────
+  async function addToQueue() {
+    if (!currentMeta) return;
+    document.getElementById('btn-dl').disabled = true;
+
+    try {
+      let res, data;
+      if (isPlaylist) {
+        // Lire les valeurs éditées pour la playlist
+        const playlistArtist = document.getElementById('edit-playlist-artist').value.trim() || currentMeta.artist || '';
+        const playlistAlbum  = document.getElementById('edit-playlist-album').value.trim()  || currentMeta.title  || '';
+        const playlistYear   = document.getElementById('edit-playlist-year').value.trim()   || currentMeta.year   || '';
+
+        // Appliquer les valeurs éditées sur les chansons
+        const updatedMeta = {
+          ...currentMeta,
+          artist: playlistArtist,
+          title:  playlistAlbum,
+          year:   playlistYear,
+        };
+
+        res  = await fetch('/api/guest/download-playlist', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ playlist_metadata: updatedMeta })
+        });
+        data = await res.json();
+        if (!data.success) return showAlert(data.error);
+        showAlert(`✅ ${data.added} chanson(s) ajoutée(s) à la queue.`, 'info');
+        if (data.skipped > 0) showAlert(`⚠️ ${data.skipped} chanson(s) ignorée(s) (quota atteint).`);
+      } else {
+        // Lire les valeurs des champs éditables
+        const title  = document.getElementById('edit-title').value.trim()  || currentMeta.title  || 'Unknown Title';
+        const artist = document.getElementById('edit-artist').value.trim() || currentMeta.artist || 'Unknown Artist';
+        const album  = document.getElementById('edit-album').value.trim()  || currentMeta.album  || 'Unknown Album';
+
+        res  = await fetch('/api/guest/download', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            url:    document.getElementById('url-input').value.trim(),
+            title, artist, album,
+            year:   currentMeta.year || ''
+          })
+        });
+        data = await res.json();
+        if (!data.success) return showAlert(data.error);
+        showAlert(`✅ "${title}" ajouté à la queue.`, 'info');
+      }
+
+      resetPreview();
+      setDownloadingState(true);
+      startPolling();
+    } finally {
+      document.getElementById('btn-dl').disabled = false;
+    }
+  }
+
+  // ── Polling status ───────────────────────────────
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(pollStatus, 1500);
+    pollStatus();
+  }
+
+  async function pollStatus() {
+    try {
+      const res  = await fetch('/api/guest/status');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Quotas
+      const songs = data.songs_downloaded || 0;
+      const max   = MAX_SONGS > 0 ? MAX_SONGS : 0;
+      document.getElementById('pill-songs-val').textContent =
+        max > 0 ? `${songs} / ${max}` : `${songs}`;
+      document.getElementById('pill-queue-val').textContent = data.queue_size || 0;
+
+      if (max > 0) {
+        const pct = Math.min(100, Math.round((songs / max) * 100));
+        document.getElementById('quota-fill').style.width = pct + '%';
+        document.getElementById('quota-fill').classList.toggle('full', pct >= 100);
+        document.getElementById('quota-text').textContent = `${songs} / ${max}`;
+      }
+
+      // Progression + grisage des boutons
+      const busy = data.in_progress || data.queue_size > 0;
+      setDownloadingState(busy);
+      const prog = data.in_progress && data.progress;
+      document.getElementById('progress-zone').style.display = prog ? 'block' : 'none';
+      if (prog) {
+        const p = data.progress;
+        const meta = data.current_download?.metadata;
+        document.getElementById('prog-title').textContent  = meta ? `${meta.artist} - ${meta.title}` : '…';
+        document.getElementById('prog-status').textContent = p.status === 'processing' ? 'Conversion en MP3…' : 'Téléchargement…';
+        document.getElementById('prog-bar').style.width    = (p.percent || 0) + '%';
+        document.getElementById('prog-pct').textContent    = (p.percent || 0) + '%';
+        document.getElementById('prog-speed').textContent  = p.speed || '';
+        document.getElementById('prog-eta').textContent    = p.eta ? `ETA: ${p.eta}` : '';
+      }
+
+      // Dernière chanson complétée
+      if (data.last_completed?.success) {
+        const lc  = data.last_completed;
+        const key = lc.timestamp;
+        if (!completed.includes(key)) {
+          completed.push(key);
+          addDlItem(lc.metadata);
+          document.getElementById('zip-zone').style.display = 'block';
+          document.getElementById('btn-prepare-zip').style.display = 'block';
+          document.getElementById('zip-ready').style.display = 'none';
+        }
+      }
+
+      // Arrêter le polling si idle
+      if (!data.in_progress && data.queue_size === 0) {
+        setDownloadingState(false);
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    } catch(e) {}
+  }
+
+  function addDlItem(meta) {
+    document.getElementById('dl-empty').style.display = 'none';
+    const li = document.createElement('li');
+    li.className = 'dl-item';
+    li.innerHTML = `
+      <span class="icon">🎵</span>
+      <span class="name">${meta.artist} – ${meta.title}</span>
+      <span class="ok">✓</span>
+    `;
+    document.getElementById('dl-list').appendChild(li);
+  }
+
+  // ── Préparer ZIP ─────────────────────────────────
+  async function prepareZip() {
+    document.getElementById('btn-prepare-zip').style.display = 'none';
+    document.getElementById('zip-preparing').style.display   = 'block';
+    document.getElementById('zip-ready').style.display       = 'none';
+
+    // Attendre la fin des téléchargements en cours
+    let attempts = 0;
+    while (attempts < 60) {
+      const res  = await fetch('/api/guest/status');
+      const data = await res.json();
+      if (!data.in_progress && data.queue_size === 0) break;
+      await new Promise(r => setTimeout(r, 2000));
+      attempts++;
+    }
+
+    try {
+      const res  = await fetch('/api/guest/prepare-zip', { method: 'POST' });
+      const data = await res.json();
+
+      document.getElementById('zip-preparing').style.display = 'none';
+
+      if (!data.success) {
+        showAlert(data.error || 'Erreur lors de la création du ZIP.');
+        document.getElementById('btn-prepare-zip').style.display = 'block';
+        return;
+      }
+
+      document.getElementById('zip-info-text').innerHTML =
+        `<strong>${data.file_count} fichier(s) · ${data.size_mb} MB</strong>`;
+      document.getElementById('zip-ready').style.display = 'block';
+    } catch(e) {
+      document.getElementById('zip-preparing').style.display = 'none';
+      document.getElementById('btn-prepare-zip').style.display = 'block';
+      showAlert('Erreur réseau.');
+    }
+  }
+
+  // ── Enter key ────────────────────────────────────
+  document.getElementById('url-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') extractUrl();
+  });
+</script>
+</body>
+</html>

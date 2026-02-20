@@ -479,11 +479,12 @@ async function handleExtract() {
       isPlaylist = true;
       playlistData = data;
       showPlaylistMetadata(data);
-    } else if (data.metadata) {
+    } else if (data.title || data.artist) {
+      // Chanson solo (réponse aplatie : title/artist au niveau racine)
       isPlaylist = false;
       playlistData = null;
-      currentMetadata = data.metadata;
-      showSongMetadata(data.metadata);
+      currentMetadata = data;
+      showSongMetadata(data);
     }
 
   } catch (e) {

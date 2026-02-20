@@ -31,11 +31,17 @@ services:
       - SONGSURF_PASSWORD=ChangezMoiAvantDeDéployer
       # Clé secrète Flask pour les sessions
       - FLASK_SECRET_KEY=ChangezMoiAussi
+      - SONGSURF_GUEST_PASSWORD=MotDePasseAmis    # ← nouveau
+      - GUEST_MAX_SONGS=10                         # ← nouveau
+      - GUEST_SESSION_TTL=3600                     # ← nouveau
 
     volumes:
       - ./data/temp:/data/temp
       - ./data/music:/data/music
+      - ./data/music_guest:/data/music_guest
+      - ./data/temp_guest:/data/temp_guest
       - ./logs:/app/logs
+      - ./python-server/templates:/app/templates
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
