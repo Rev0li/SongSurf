@@ -1,0 +1,64 @@
+# .dockerignore - Fichiers à exclure de l'image Docker
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Données (ne pas inclure dans l'image)
+data/
+temp/
+music/
+
+# Chrome Extension (pas nécessaire dans le conteneur)
+chrome-extension/
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Configuration locale
+.env
+env.example
+
+# Tests
+tests/
+*.test.py
+
+# Temporaires
+*.tmp
+*.temp
+*.bak

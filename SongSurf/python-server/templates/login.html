@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SongSurf - Connexion</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0f;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+      padding: 40px;
+      background: linear-gradient(135deg, rgba(30, 30, 50, 0.9), rgba(15, 15, 25, 0.95));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .logo { font-size: 48px; margin-bottom: 8px; }
+
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ff3b6d, #7c3aed);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 32px;
+    }
+
+    .error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    input[type="password"] {
+      width: 100%;
+      padding: 14px 16px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 16px;
+    }
+
+    input[type="password"]:focus {
+      border-color: #7c3aed;
+    }
+
+    input[type="password"]::placeholder {
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #ff3b6d, #7c3aed);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(124, 58, 237, 0.4);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    button:disabled:hover {
+      transform: none;
+      box-shadow: none;
+    }
+
+    input:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .locked-icon {
+      font-size: 36px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo">{% if locked %}🔒{% else %}🎵{% endif %}</div>
+    <div class="title">SongSurf</div>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST">
+      <input type="password" name="password" placeholder="Mot de passe"
+             {% if not locked %}autofocus{% endif %}
+             {% if locked %}disabled{% endif %}
+             required>
+      <button type="submit" {% if locked %}disabled{% endif %}>
+        {% if locked %}Bloqué{% else %}Se connecter{% endif %}
+      </button>
+    </form>
+  </div>
+</body>
+</html>

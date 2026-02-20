@@ -1,0 +1,45 @@
+# ============================================
+# SongSurf - Docker Compose
+# ============================================
+#
+# Dashboard web de téléchargement musical
+#
+# Utilisation:
+#   docker-compose up -d           # Démarrer
+#   docker-compose logs -f         # Logs
+#   docker-compose down            # Arrêter
+#
+# IMPORTANT:
+#   Changez SONGSURF_PASSWORD avant de déployer !
+
+services:
+  songsurf:
+    container_name: songsurf
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: songsurf:latest
+    restart: always
+
+    # Utilise directement le réseau du NAS (résout les problèmes DNS Synology)
+    network_mode: host
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+      # Mot de passe du dashboard (OBLIGATOIRE en production)
+      - SONGSURF_PASSWORD=ChangezMoiAvantDeDéployer
+      # Clé secrète Flask pour les sessions
+      - FLASK_SECRET_KEY=ChangezMoiAussi
+
+    volumes:
+      - ./data/temp:/data/temp
+      - ./data/music:/data/music
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -10,7 +10,6 @@ FONCTIONNALITÉ:
 """
 
 from pathlib import Path
-from mutagen.easyid3 import EasyID3
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC
 import shutil
@@ -193,71 +192,6 @@ class MusicOrganizer:
                 'success': False,
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()
-            }
-    
-    def move_and_rename_feat(self, song_path, target_artist, feat_artist):
-        """
-        Déplace un fichier MP3 vers le bon artiste et renomme avec le feat
-        
-        Args:
-            song_path (str): Chemin relatif du fichier (depuis music/)
-            target_artist (str): Artiste cible
-            feat_artist (str): Artiste en featuring
-            
-        Returns:
-            dict: {success, new_path, error}
-        """
-        try:
-            # Convertir en chemin absolu
-            source_file = self.music_dir / song_path
-            
-            if not source_file.exists():
-                return {'success': False, 'error': f'Fichier introuvable: {source_file}'}
-            
-            # Lire les métadonnées actuelles
-            audio = MP3(source_file, ID3=ID3)
-            
-            # Récupérer les infos
-            title = audio.get('TIT2', ['Unknown'])[0] if 'TIT2' in audio else 'Unknown'
-            album = audio.get('TALB', ['Unknown'])[0] if 'TALB' in audio else 'Unknown'
-            
-            # Nouveau titre avec feat
-            new_title = f"{title} (feat. {feat_artist})"
-            
-            # Créer le nouveau chemin
-            artist_dir = self.music_dir / target_artist
-            album_dir = artist_dir / album
-            album_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Nouveau nom de fichier
-            safe_title = self._clean_filename(new_title)
-            new_filename = f"{safe_title}.mp3"
-            new_path = album_dir / new_filename
-            
-            # Mettre à jour les métadonnées
-            audio['TPE1'] = TPE1(encoding=3, text=target_artist)
-            audio['TIT2'] = TIT2(encoding=3, text=new_title)
-            audio.save()
-            
-            # Déplacer le fichier
-            shutil.move(str(source_file), str(new_path))
-            
-            # Supprimer les dossiers vides
-            self._cleanup_empty_dirs(source_file.parent)
-            
-            print(f"✅ Déplacé: {source_file.name} → {new_path}")
-            
-            return {
-                'success': True,
-                'new_path': str(new_path),
-                'old_path': str(source_file)
-            }
-            
-        except Exception as e:
-            print(f"❌ Erreur lors du déplacement: {e}")
-            return {
-                'success': False,
-                'error': str(e)
             }
     
     def _cleanup_empty_dirs(self, directory):
@@ -461,82 +395,6 @@ class MusicOrganizer:
                 'error': str(e)
             }
     
-    def get_library_structure(self):
-        """Retourne la structure complète de la bibliothèque"""
-        try:
-            structure = {
-                'artists': [],
-                'albums': [],
-                'songs': []
-            }
-            
-            for artist_dir in self.music_dir.iterdir():
-                if not artist_dir.is_dir():
-                    continue
-                
-                artist_name = artist_dir.name
-                artist_albums = []
-                artist_songs_count = 0
-                
-                for album_dir in artist_dir.iterdir():
-                    if not album_dir.is_dir():
-                        continue
-                    
-                    album_name = album_dir.name
-                    songs = list(album_dir.glob('*.mp3'))
-                    artist_songs_count += len(songs)
-                    
-                    # Ajouter l'album
-                    structure['albums'].append({
-                        'name': album_name,
-                        'artist': artist_name,
-                        'songs_count': len(songs)
-                    })
-                    
-                    artist_albums.append(album_name)
-                    
-                    # Extraire la pochette du premier MP3 de l'album
-                    album_art_url = None
-                    if songs:
-                        try:
-                            audio = MP3(songs[0], ID3=ID3)
-                            if audio.tags:
-                                for tag in audio.tags.values():
-                                    if isinstance(tag, APIC):
-                                        # Créer un chemin pour la pochette
-                                        cover_filename = f"{artist_name}_{album_name}.jpg".replace('/', '_').replace('\\', '_')
-                                        album_art_url = f"/api/cover/{cover_filename}"
-                                        break
-                        except:
-                            pass
-                    
-                    # Ajouter les chansons
-                    for song_path in songs:
-                        structure['songs'].append({
-                            'title': song_path.stem,
-                            'artist': artist_name,
-                            'album': album_name,
-                            'path': str(song_path.relative_to(self.music_dir)),
-                            'album_art': album_art_url
-                        })
-                
-                # Ajouter l'artiste
-                structure['artists'].append({
-                    'name': artist_name,
-                    'albums_count': len(artist_albums),
-                    'songs_count': artist_songs_count
-                })
-            
-            return structure
-        except Exception as e:
-            return {
-                'artists': [],
-                'albums': [],
-                'songs': [],
-                'error': str(e)
-            }
-
-
 # Test du module
 if __name__ == '__main__':
     organizer = MusicOrganizer('music')

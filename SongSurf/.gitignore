@@ -6,129 +6,56 @@ __pycache__/
 *$py.class
 *.so
 .Python
-
-# Virtual environments
 env/
 venv/
-ENV/
 .venv/
 python-server/venv/
-
-# Distribution / packaging
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.pytest_cache/
 
 # ============================================
-# Application Data (NE PAS COMMIT)
+# Application Data
 # ============================================
-# Dossiers de téléchargement
 temp/
 music/
-
-# Note: music/ inclut déjà music/artist_photos/
-# Ancienne localisation (au cas où)
-python-server/static/artist_photos/
-
-# Logs
-*.log
+data/
 logs/
-
-# Base de données (si ajoutée plus tard)
+*.log
 *.db
-*.sqlite
 *.sqlite3
 
 # ============================================
-# IDE & Editors
+# Docker
+# ============================================
+.docker/
+docker-volumes/
+
+# ============================================
+# Secrets & Env
+# ============================================
+.env
+.env.*
+secrets/
+*.key
+*.pem
+
+# ============================================
+# IDE & OS
 # ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.project
-.pydevproject
-.settings/
-
-# ============================================
-# OS
-# ============================================
 .DS_Store
 Thumbs.db
 desktop.ini
-*.lnk
 
 # ============================================
-# Chrome Extension
-# ============================================
-*.crx
-*.pem
-chrome-extension/*.zip
-
-# ============================================
-# Docker
-# ============================================
-# Ne pas ignorer Dockerfile et docker-compose.yml
-# Mais ignorer les volumes Docker
-.docker/
-docker-volumes/
-
-# ============================================
-# Environnement & Secrets
-# ============================================
-.env
-.env.local
-.env.*.local
-secrets/
-*.key
-*.pem
-
-# ============================================
-# Fichiers temporaires
+# Temp
 # ============================================
 *.tmp
 *.bak
-*.swp
-*~.nib
 *.orig
-
-# ============================================
-# Documentation générée
-# ============================================
-docs/_build/
-site/
-
-# ============================================
-# Fichiers de test
-# ============================================
-test_downloads/
-test_music/

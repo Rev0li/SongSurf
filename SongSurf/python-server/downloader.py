@@ -111,8 +111,10 @@ class YouTubeDownloader:
             self.progress.reset()
             self.progress.status = 'downloading'
             
-            # Nom de fichier temporaire
-            temp_filename = f"{metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}"
+            # Nom de fichier temporaire (nettoyer les caractères interdits)
+            artist = metadata.get('artist', 'Unknown')
+            title = metadata.get('title', 'Unknown')
+            temp_filename = self._clean_filename(f"{artist} - {title}")
             
             # Configuration yt-dlp (optimisée pour YouTube Music)
             ydl_opts = {
@@ -173,6 +175,14 @@ class YouTubeDownloader:
     def get_progress(self):
         """Retourne la progression actuelle"""
         return self.progress.to_dict()
+    
+    def _clean_filename(self, name):
+        """Nettoie un nom de fichier (supprime les caractères interdits sur Windows)"""
+        # Caractères interdits sur Windows : < > : " / \ | ? *
+        forbidden = '<>:"/\\|?*'
+        for char in forbidden:
+            name = name.replace(char, '')
+        return name.strip()
     
     def extract_metadata(self, url):
         """
