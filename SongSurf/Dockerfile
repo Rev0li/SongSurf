@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Créer un utilisateur non-root pour la sécurité
 RUN useradd -m -u 1000 songsurf && \
-    mkdir -p /app /data/temp /data/music && \
+    mkdir -p /app /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music && \
     chown -R songsurf:songsurf /app /data
 
 # Installer les dépendances système (FFmpeg + outils)

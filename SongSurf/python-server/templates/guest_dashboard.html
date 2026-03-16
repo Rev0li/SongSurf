@@ -183,6 +183,78 @@
 
     /* ── Empty state ── */
     .empty { text-align: center; color: rgba(255,255,255,0.3); padding: 30px 0; font-size: 14px; }
+
+    /* ── Modale expiration session ── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #13131a;
+      border: 1px solid rgba(251,191,36,0.35);
+      border-radius: 18px;
+      padding: 32px 28px;
+      max-width: 420px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      animation: modalIn .25s ease;
+    }
+    @keyframes modalIn {
+      from { transform: scale(.92); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+    .modal-icon { font-size: 44px; margin-bottom: 14px; }
+    .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #fbbf24; }
+    .modal-body  { font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.6; margin-bottom: 24px; }
+    .modal-countdown { font-size: 28px; font-weight: 700; color: #ef4444; margin: 10px 0; font-variant-numeric: tabular-nums; }
+    .modal-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-extend {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: #fff; border: none; border-radius: 10px;
+      padding: 13px 24px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s; flex: 1; min-width: 140px;
+    }
+    .btn-extend:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16,185,129,0.4); }
+    .btn-leave {
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.35);
+      color: #fca5a5; border-radius: 10px;
+      padding: 13px 24px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s; flex: 1; min-width: 140px;
+    }
+    .btn-leave:hover { background: rgba(239,68,68,0.28); }
+
+    /* ── Toggle Playlist ── */
+    .toggle-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; margin-bottom: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+    }
+    .toggle-label { flex: 1; font-size: 13px; color: rgba(255,255,255,0.65); }
+    .toggle-label strong { color: #c4b5fd; }
+    .toggle-label small  { display: block; font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 2px; }
+    .toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.1); border-radius: 24px;
+      cursor: pointer; transition: background .25s;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 18px; height: 18px; left: 2px; top: 2px;
+      background: #fff; border-radius: 50%; transition: transform .25s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: #7c3aed; border-color: #7c3aed; }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
   </style>
 </head>
 <body>
@@ -271,6 +343,17 @@
           </div>
         </div>
       </div>
+      <!-- Toggle Playlist Mode -->
+      <div class="toggle-row" style="margin-top:12px;">
+        <div class="toggle-label">
+          <strong>🎵 Mode Playlist</strong>
+          <small>Actif : dossier par album, pas de tri artiste. Inactif : tri Artist/Album/Titre.</small>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
       <div class="meta-actions">
         <button class="btn btn-primary" id="btn-dl" onclick="addToQueue()">⬇️ Télécharger</button>
         <button class="btn btn-danger" onclick="resetPreview()">✕ Annuler</button>
@@ -308,51 +391,154 @@
   <!-- Zone ZIP -->
   <div class="card" id="zip-zone">
     <h2>📦 Télécharger mes musiques</h2>
-    <div id="zip-preparing" style="display:none; text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
-      ⏳ Préparation du ZIP en cours…
+
+    <!-- État : bouton initial -->
+    <div id="zip-state-idle">
+      <p style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:14px;">
+        ⚠️ Après le téléchargement, votre session sera fermée automatiquement.
+      </p>
+      <button class="btn btn-success" id="btn-prepare-zip" onclick="prepareAndDownloadZip()" style="width:100%">
+        📦 Télécharger mon ZIP
+      </button>
     </div>
-    <div id="zip-ready" style="display:none;">
-      <div class="zip-success">
-        <div class="zip-icon">📦</div>
-        <div id="zip-info-text"></div>
-        <p>Le ZIP sera supprimé peu après votre téléchargement.</p>
+
+    <!-- État : préparation en cours -->
+    <div id="zip-state-preparing" style="display:none; text-align:center; padding:20px;">
+      <div style="font-size:28px;margin-bottom:10px;">⏳</div>
+      <div style="font-weight:600;margin-bottom:6px;">Préparation du ZIP…</div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.5);">Patientez, cela peut prendre quelques secondes.</div>
+    </div>
+
+    <!-- État : téléchargement lancé -->
+    <div id="zip-state-done" style="display:none;">
+      <div class="zip-success" style="background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.25);">
+        <div class="zip-icon">✅</div>
+        <div style="font-weight:600;font-size:16px;margin-bottom:6px;">Téléchargement démarré !</div>
+        <div id="zip-info-text" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:10px;"></div>
+        <p style="font-size:13px;color:rgba(255,255,255,0.5);">
+          Votre session sera fermée dans <strong id="zip-countdown">2:00</strong>.<br>
+          Vous pouvez fermer cette page une fois le téléchargement terminé.
+        </p>
       </div>
-      <a id="zip-download-link" href="/api/guest/download-zip">
-        <button class="btn btn-success">⬇️ Télécharger le ZIP</button>
-      </a>
+      <button class="btn btn-danger" style="width:100%;margin-top:10px;" onclick="closeSessionNow()">
+        🚪 Fermer ma session maintenant
+      </button>
     </div>
-    <button class="btn btn-primary" id="btn-prepare-zip" onclick="prepareZip()" style="width:100%">
-      📦 Préparer mon ZIP
-    </button>
   </div>
 
 </main>
 
+<!-- ── Modale expiration session ── -->
+<div class="modal-overlay" id="expiry-modal">
+  <div class="modal-box">
+    <div class="modal-icon">⏰</div>
+    <div class="modal-title">Votre session expire bientôt !</div>
+    <div class="modal-body">
+      Il vous reste
+      <div class="modal-countdown" id="modal-countdown">5:00</div>
+      avant la fermeture automatique de votre session et la suppression de vos fichiers.
+    </div>
+    <div class="modal-actions">
+      <button class="btn-extend" id="btn-extend" onclick="extendSession()">
+        ✅ Continuer<br><small style="font-weight:400;font-size:11px;">Prolonger d'1 heure</small>
+      </button>
+      <button class="btn-leave" onclick="leaveSession()">
+        📦 Partir<br><small style="font-weight:400;font-size:11px;">Télécharger mon ZIP</small>
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── État ──────────────────────────────────────────
-  const MAX_SONGS  = {{ max_songs }};
-  const EXPIRES_AT = new Date("{{ expires_at }}");
-  let currentMeta  = null;
-  let isPlaylist   = false;
-  let pollInterval = null;
-  let completed    = [];
+  const MAX_SONGS      = {{ max_songs }};
+  let expiresAt        = new Date("{{ expires_at }}");
+  let currentMeta      = null;
+  let isPlaylist       = false;
+  let pollInterval     = null;
+  let completed        = [];
+  let playlistModeEnabled = false;
+  let expiryModalShown = false;   // pop-up affichée une seule fois par session
+
+  function onPlaylistModeChange() {
+    playlistModeEnabled = document.getElementById('toggle-playlist-mode').checked;
+  }
 
   // ── Timer expiration ─────────────────────────────
+  const WARN_SECONDS = 5 * 60; // afficher la pop-up à 5 min restantes
+
   function updateTimer() {
     const now  = new Date();
-    const diff = Math.max(0, Math.floor((EXPIRES_AT - now) / 1000));
+    const diff = Math.max(0, Math.floor((expiresAt - now) / 1000));
     const h    = Math.floor(diff / 3600);
     const m    = Math.floor((diff % 3600) / 60);
     const s    = diff % 60;
     document.getElementById('timer').textContent =
       h > 0 ? `${h}h ${String(m).padStart(2,'0')}min` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+    // Mettre à jour le compte à rebours dans la modale si elle est ouverte
+    if (document.getElementById('expiry-modal').classList.contains('active')) {
+      document.getElementById('modal-countdown').textContent =
+        h > 0 ? `${h}h ${String(m).padStart(2,'0')}min` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    // Afficher la pop-up à WARN_SECONDS avant l'expiration (une seule fois)
+    if (!expiryModalShown && diff > 0 && diff <= WARN_SECONDS) {
+      expiryModalShown = true;
+      document.getElementById('expiry-modal').classList.add('active');
+    }
+
+    // Session expirée
     if (diff === 0) {
+      document.getElementById('expiry-modal').classList.remove('active');
       showAlert("⏱️ Votre session a expiré. Reconnectez-vous.", 'info');
-      clearInterval(pollInterval);
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     }
   }
   setInterval(updateTimer, 1000);
   updateTimer();
+
+  // ── Prolonger la session ──────────────────────────
+  async function extendSession() {
+    const btn = document.getElementById('btn-extend');
+    btn.disabled = true;
+    btn.textContent = '⏳ Prolongation…';
+    try {
+      const res  = await fetch('/api/guest/extend-session', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        expiresAt        = new Date(data.expires_at);
+        expiryModalShown = false; // permettre un nouvel avertissement dans 1h
+        document.getElementById('expiry-modal').classList.remove('active');
+        showAlert('✅ Session prolongée d\'une heure !', 'info');
+      } else {
+        showAlert(data.error || 'Impossible de prolonger la session.');
+        document.getElementById('expiry-modal').classList.remove('active');
+      }
+    } catch(e) {
+      showAlert('Erreur réseau lors de la prolongation.');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '✅ Continuer<br><small style="font-weight:400;font-size:11px;">Prolonger d\'1 heure</small>';
+    }
+  }
+
+  // ── Partir : fermer la modale et lancer le flow ZIP ──
+  function leaveSession() {
+    document.getElementById('expiry-modal').classList.remove('active');
+
+    const zipZone = document.getElementById('zip-zone');
+    if (zipZone.style.display === 'none' || zipZone.style.display === '') {
+      // Aucun fichier encore → informer l'utilisateur
+      showAlert('📦 Aucune musique téléchargée. Téléchargez d\'abord une musique pour obtenir un ZIP.', 'info');
+      return;
+    }
+
+    // Scroller vers la zone ZIP et lancer directement
+    zipZone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Petit délai pour que le scroll soit visible avant de lancer
+    setTimeout(() => prepareAndDownloadZip(), 400);
+  }
 
   // ── Alertes ──────────────────────────────────────
   function showAlert(msg, type = 'error') {
@@ -481,7 +667,7 @@
 
         res  = await fetch('/api/guest/download-playlist', {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ playlist_metadata: updatedMeta })
+          body: JSON.stringify({ playlist_metadata: updatedMeta, playlist_mode: playlistModeEnabled })
         });
         data = await res.json();
         if (!data.success) return showAlert(data.error);
@@ -496,9 +682,10 @@
         res  = await fetch('/api/guest/download', {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
-            url:    document.getElementById('url-input').value.trim(),
+            url:           document.getElementById('url-input').value.trim(),
             title, artist, album,
-            year:   currentMeta.year || ''
+            year:          currentMeta.year || '',
+            playlist_mode: playlistModeEnabled
           })
         });
         data = await res.json();
@@ -564,9 +751,11 @@
         if (!completed.includes(key)) {
           completed.push(key);
           addDlItem(lc.metadata);
-          document.getElementById('zip-zone').style.display = 'block';
-          document.getElementById('btn-prepare-zip').style.display = 'block';
-          document.getElementById('zip-ready').style.display = 'none';
+          // Afficher la zone ZIP (état initial)
+          document.getElementById('zip-zone').style.display       = 'block';
+          document.getElementById('zip-state-idle').style.display = 'block';
+          document.getElementById('zip-state-preparing').style.display = 'none';
+          document.getElementById('zip-state-done').style.display = 'none';
         }
       }
 
@@ -591,42 +780,105 @@
     document.getElementById('dl-list').appendChild(li);
   }
 
-  // ── Préparer ZIP ─────────────────────────────────
-  async function prepareZip() {
-    document.getElementById('btn-prepare-zip').style.display = 'none';
-    document.getElementById('zip-preparing').style.display   = 'block';
-    document.getElementById('zip-ready').style.display       = 'none';
+  // ── Préparer + télécharger ZIP en une seule action ──
+  let zipCountdownInterval = null;
 
-    // Attendre la fin des téléchargements en cours
+  async function prepareAndDownloadZip() {
+    // Passer en état "préparation"
+    document.getElementById('zip-state-idle').style.display     = 'none';
+    document.getElementById('zip-state-preparing').style.display = 'block';
+    document.getElementById('zip-state-done').style.display     = 'none';
+
+    // Attendre la fin des téléchargements en cours (max 2 min)
     let attempts = 0;
     while (attempts < 60) {
-      const res  = await fetch('/api/guest/status');
-      const data = await res.json();
-      if (!data.in_progress && data.queue_size === 0) break;
+      try {
+        const res  = await fetch('/api/guest/status');
+        const data = await res.json();
+        if (!data.in_progress && data.queue_size === 0) break;
+      } catch(e) {}
       await new Promise(r => setTimeout(r, 2000));
       attempts++;
     }
 
+    // Préparer le ZIP côté serveur
+    let zipData;
     try {
-      const res  = await fetch('/api/guest/prepare-zip', { method: 'POST' });
-      const data = await res.json();
-
-      document.getElementById('zip-preparing').style.display = 'none';
-
-      if (!data.success) {
-        showAlert(data.error || 'Erreur lors de la création du ZIP.');
-        document.getElementById('btn-prepare-zip').style.display = 'block';
-        return;
-      }
-
-      document.getElementById('zip-info-text').innerHTML =
-        `<strong>${data.file_count} fichier(s) · ${data.size_mb} MB</strong>`;
-      document.getElementById('zip-ready').style.display = 'block';
+      const res = await fetch('/api/guest/prepare-zip', { method: 'POST' });
+      zipData   = await res.json();
     } catch(e) {
-      document.getElementById('zip-preparing').style.display = 'none';
-      document.getElementById('btn-prepare-zip').style.display = 'block';
-      showAlert('Erreur réseau.');
+      _resetZipState();
+      showAlert('Erreur réseau lors de la préparation du ZIP.');
+      return;
     }
+
+    if (!zipData.success) {
+      _resetZipState();
+      showAlert(zipData.error || 'Erreur lors de la création du ZIP.');
+      return;
+    }
+
+    // Lancer le téléchargement immédiatement
+    _triggerZipDownload();
+
+    // Afficher le message post-téléchargement
+    document.getElementById('zip-state-preparing').style.display = 'none';
+    document.getElementById('zip-state-done').style.display      = 'block';
+    document.getElementById('zip-info-text').textContent =
+      `${zipData.file_count} fichier(s) · ${zipData.size_mb} MB`;
+
+    // Bloquer l'interface
+    _lockUIAfterZip();
+
+    // Décompte 2 min avant fermeture auto
+    let remaining = 120;
+    _updateZipCountdown(remaining);
+    zipCountdownInterval = setInterval(() => {
+      remaining--;
+      _updateZipCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(zipCountdownInterval);
+        window.location.href = '/guest/login';
+      }
+    }, 1000);
+  }
+
+  function _updateZipCountdown(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const el = document.getElementById('zip-countdown');
+    if (el) el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function _triggerZipDownload() {
+    const a = document.createElement('a');
+    a.href     = '/api/guest/download-zip';
+    a.download = 'SongSurf_musiques.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function _resetZipState() {
+    document.getElementById('zip-state-idle').style.display      = 'block';
+    document.getElementById('zip-state-preparing').style.display = 'none';
+    document.getElementById('zip-state-done').style.display      = 'none';
+  }
+
+  function _lockUIAfterZip() {
+    document.getElementById('btn-extract').disabled = true;
+    const btnDl = document.getElementById('btn-dl');
+    if (btnDl) btnDl.disabled = true;
+    const urlInput = document.getElementById('url-input');
+    urlInput.disabled    = true;
+    urlInput.placeholder = 'Session en cours de fermeture…';
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  }
+
+  // Bouton "Fermer maintenant"
+  function closeSessionNow() {
+    if (zipCountdownInterval) clearInterval(zipCountdownInterval);
+    window.location.href = '/guest/logout';
   }
 
   // ── Enter key ────────────────────────────────────

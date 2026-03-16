@@ -19,7 +19,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: songsurf:latest
-    restart: always
+    restart: on-failure
 
     # Utilise directement le réseau du NAS (résout les problèmes DNS Synology)
     network_mode: host
@@ -34,6 +34,7 @@ services:
       - SONGSURF_GUEST_PASSWORD=MotDePasseAmis    # ← nouveau
       - GUEST_MAX_SONGS=10                         # ← nouveau
       - GUEST_SESSION_TTL=3600                     # ← nouveau
+      - PLEX_MUSIC_DIR=/data/plex_music            # ← dossier Plex destination
 
     volumes:
       - ./data/temp:/data/temp
@@ -42,6 +43,8 @@ services:
       - ./data/temp_guest:/data/temp_guest
       - ./logs:/app/logs
       - ./python-server/templates:/app/templates
+      # Dossier Plex destination (déplacement après validation des métadonnées)
+      - /volume1/plex_media/music:/data/plex_music
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]

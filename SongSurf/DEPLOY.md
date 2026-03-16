@@ -1,193 +1,221 @@
-# 🚀 Déployer SongSurf sur un NAS Synology
+﻿# Guide de dÃ©ploiement â€” SongSurf
 
-## Pré-requis
-
-- Synology DSM avec **Docker** installé (via le Centre de paquets)
-- Accès SSH activé sur le NAS (Panneau de configuration → Terminal & SNMP → Activer SSH)
-- Un client SSH (PowerShell, Terminal, ou PuTTY)
+DÃ©ploiement sur NAS Synology via Docker Compose, accessible depuis l'extÃ©rieur via Tailscale + reverse proxy OVH/DuckDNS.
 
 ---
 
-## Étape 1 — Copier le projet sur le NAS
+## PrÃ©requis
 
-### Option A : Depuis PowerShell (Windows)
-
-```powershell
-# Copier tout le projet sur le NAS via SCP
-scp -r C:\Users\Molim\Music\MYTUNE\SongSurf utilisateur@IP_DU_NAS:/volume1/docker/songsurf
-```
-
-> Remplacez `utilisateur` par votre login DSM et `IP_DU_NAS` par l'IP locale (ex: `192.168.1.45`).
-
-### Option B : Via File Station
-
-1. Ouvrez **File Station** dans DSM
-2. Naviguez vers `/docker/` (créez le dossier s'il n'existe pas)
-3. Créez un dossier `songsurf`
-4. Glissez-déposez les fichiers suivants depuis votre PC :
-
-```
-songsurf/
-├── Dockerfile
-├── docker-compose.yml
-├── docker/
-│   └── entrypoint.sh
-└── python-server/
-    ├── app.py
-    ├── downloader.py
-    ├── organizer.py
-    ├── requirements.txt
-    └── templates/
-        ├── login.html
-        └── dashboard.html
-```
-
-> ⚠️ Ne copiez **PAS** les dossiers `venv/`, `music/`, `temp/`, `__pycache__/`.
+- NAS Synology avec Docker (DSM 7+)
+- AccÃ¨s SSH au NAS
+- Docker + Docker Compose installÃ©s
+- (Optionnel) Tailscale pour l'accÃ¨s VPN
+- (Optionnel) VPS avec reverse proxy + DuckDNS pour l'accÃ¨s public
 
 ---
 
-## Étape 2 — Configurer le mot de passe
-
-Connectez-vous en SSH au NAS :
+## 1. PrÃ©parer le NAS
 
 ```bash
-ssh utilisateur@IP_DU_NAS
+# CrÃ©er le dossier du projet
+mkdir -p /volume1/docker/SongSurf
+cd /volume1/docker/SongSurf
+
+# CrÃ©er les dossiers de donnÃ©es
+mkdir -p data/music data/music_guest data/temp data/temp_guest logs
 ```
 
-Éditez le `docker-compose.yml` :
+---
 
-```bash
-cd /volume1/docker/songsurf
-sudo vi docker-compose.yml
+## 2. Cloner / Copier les fichiers
+
+Copier tout le contenu du projet dans `/volume1/docker/SongSurf/` :
+
+```
+SongSurf/
+â”œâ”€â”€ Dockerfile
+â”œâ”€â”€ docker-compose.yml
+â”œâ”€â”€ docker/
+â”‚   â””â”€â”€ entrypoint.sh
+â””â”€â”€ python-server/
+    â”œâ”€â”€ app.py
+    â”œâ”€â”€ downloader.py
+    â”œâ”€â”€ organizer.py
+    â”œâ”€â”€ requirements.txt
+    â””â”€â”€ templates/
+        â”œâ”€â”€ dashboard.html
+        â”œâ”€â”€ guest_dashboard.html
+        â””â”€â”€ login.html
 ```
 
-> Si `vi` vous fait peur, utilisez `nano` (sinon installez-le via `sudo apt-get install nano` ou modifiez le fichier avant de le copier).
+---
 
-Modifiez ces 2 lignes :
+## 3. Configurer les mots de passe
+
+Ã‰diter `docker-compose.yml` et changer les valeurs suivantes :
 
 ```yaml
-- SONGSURF_PASSWORD=VotreMotDePasseSecret
-- FLASK_SECRET_KEY=UneChaineLongueEtAleatoire
+environment:
+  - SONGSURF_PASSWORD=VotreMotDePasseAdmin        # â† OBLIGATOIRE
+  - FLASK_SECRET_KEY=UneClÃ©AlÃ©atoireSecurisÃ©e    # â† OBLIGATOIRE (32+ chars)
+  - SONGSURF_GUEST_PASSWORD=MotDePasseInvitÃ©     # â† laisser vide pour dÃ©sactiver les guests
+  - GUEST_MAX_SONGS=10
+  - GUEST_SESSION_TTL=3600
 ```
 
-**Pour générer une clé secrète Flask :**
-
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Copiez le résultat et collez-le comme valeur de `FLASK_SECRET_KEY`.
+> âš ï¸ Ne jamais laisser les valeurs par dÃ©faut en production.
 
 ---
 
-## Étape 3 — Construire et lancer
+## 4. Configurer le dossier Plex
 
-```bash
-cd /volume1/docker/songsurf
-sudo docker-compose up -d --build
+Si vous utilisez Plex sur le NAS, configurez le volume de destination :
+
+```yaml
+volumes:
+  # Remplacer par le chemin rÃ©el de votre bibliothÃ¨que Plex Music
+  - /volume1/plex_media/music:/data/plex_music
 ```
 
-La première fois, ça prend 2-3 minutes (téléchargement Python, FFmpeg, yt-dlp).
+VÃ©rifier les droits :
+```bash
+ls -la /volume1/plex_media/music
+# Doit afficher drwxrwxrwx (ou au moins rwx pour others / uid 1000)
+```
 
-### Vérifier que ça tourne :
+---
+
+## 5. Build & DÃ©marrage
 
 ```bash
+cd /volume1/docker/SongSurf
+
+# Build de l'image
+docker compose build
+
+# DÃ©marrage en arriÃ¨re-plan
+docker compose up -d
+
 # Voir les logs
-sudo docker-compose logs -f
-
-# Tester le ping
-curl http://localhost:8080/ping
+docker compose logs -f
 ```
 
-Vous devriez voir :
-```json
-{"message":"SongSurf is running","status":"ok","timestamp":"..."}
+Le serveur est disponible sur : `http://<IP-NAS>:8080`
+
+---
+
+## 6. Mise Ã  jour
+
+Quand vous modifiez `app.py`, `downloader.py` ou `organizer.py` :
+
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+Quand vous modifiez uniquement les templates HTML (pas de rebuild nÃ©cessaire car montÃ© en volume) :
+```bash
+# Aucune action requise â€” les templates sont rechargÃ©s automatiquement
 ```
 
 ---
 
-## Étape 4 — Accéder au dashboard
+## 7. AccÃ¨s Tailscale / VPN
 
-Depuis votre navigateur sur le réseau local :
-
-```
-http://IP_DU_NAS:8080
-```
-
-Entrez le mot de passe défini à l'étape 2. C'est prêt ! 🎵
+SongSurf utilise `network_mode: host` pour accÃ©der directement au rÃ©seau du NAS.  
+Avec Tailscale installÃ© sur le NAS, il est accessible via l'IP Tailscale : `http://<tailscale-ip>:8080`
 
 ---
 
-## Commandes utiles
+## 8. Reverse Proxy OVH + DuckDNS
 
-| Action | Commande |
+Sur votre VPS (ex: Nginx) :
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name songsurf.votredomaine.duckdns.org;
+
+    ssl_certificate     /etc/letsencrypt/live/votredomaine.duckdns.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/votredomaine.duckdns.org/privkey.pem;
+
+    location / {
+        proxy_pass         http://<tailscale-ip-NAS>:8080;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;   # Important pour les tÃ©lÃ©chargements longs
+    }
+}
+```
+
+---
+
+## 9. Workflow d'utilisation Admin
+
+### TÃ©lÃ©chargement normal (Artist/Album/Titre)
+1. Coller un lien YouTube Music dans l'input
+2. Cliquer **Extraire** â†’ vÃ©rifier/modifier les mÃ©tadonnÃ©es
+3. Cliquer **TÃ©lÃ©charger** (Mode Playlist **dÃ©sactivÃ©**)
+4. Les fichiers arrivent dans `data/music/Artist/Album/`
+
+### TÃ©lÃ©chargement playlist (Album/Titre)
+1. Coller un lien de playlist YouTube Music
+2. **Activer** le toggle **Mode Playlist**
+3. Cliquer **TÃ©lÃ©charger**
+4. Les fichiers arrivent dans `data/music/NomPlaylist/`
+
+### Valider les mÃ©tadonnÃ©es (Beets)
+1. Aller dans l'onglet **MÃ©tadonnÃ©es**
+2. Cliquer **Analyser** â†’ MusicBrainz propose des corrections
+3. Valider/ignorer par album ou par champ
+4. Cliquer **Appliquer tout**
+5. Cliquer **DÃ©placer vers Plex** (pour la bibliothÃ¨que normale)
+
+### Envoyer les playlists vers Plex
+1. Aller dans l'onglet **MÃ©tadonnÃ©es**
+2. La section **Dossiers Playlist** apparaÃ®t automatiquement si des playlists sont prÃ©sentes
+3. Cliquer **Envoyer dans Mes Music (Plex)**
+
+---
+
+## 10. Logs
+
+```bash
+# Logs techniques en temps rÃ©el
+docker compose logs -f
+
+# Journal d'activitÃ© lisible
+cat /volume1/docker/SongSurf/logs/activity.log
+```
+
+Format du journal d'activitÃ© :
+```
+2026-03-16 14:23:01 | ðŸŽ­ CONNEXION  | Alice | session abc12345
+2026-03-16 14:25:12 | ðŸŽµ DOWNLOAD   | Alice | The Weeknd - Blinding Lights
+2026-03-16 14:26:30 | ðŸ§¹ FIN SESSION | Alice | 1 chanson(s) | raison: tÃ©lÃ©chargement ZIP effectuÃ©
+```
+
+---
+
+## 11. DÃ©pannage
+
+| ProblÃ¨me | Solution |
 |---|---|
-| Démarrer | `sudo docker-compose up -d` |
-| Arrêter | `sudo docker-compose down` |
-| Redémarrer | `sudo docker-compose restart` |
-| Voir les logs | `sudo docker-compose logs -f` |
-| Reconstruire | `sudo docker-compose build --no-cache` |
-| Statut | `sudo docker ps` |
----
-
-## Où sont les fichiers musique ?
-
-Les MP3 téléchargés sont dans :
-
-```
-/volume1/docker/songsurf/data/music/
-└── Artiste/
-    └── Album/
-        └── Titre.mp3
-```
-
-Ce dossier est persistant même si vous reconstruisez le conteneur.
+| Port 8080 non accessible | VÃ©rifier le firewall NAS + `docker compose ps` |
+| Permission denied sur `/data/plex_music` | VÃ©rifier les droits du dossier Plex (`chmod -R 777` ou `chown 1000`) |
+| `yt-dlp` Ã©choue | `docker compose restart` pour forcer la mise Ã  jour |
+| MusicBrainz timeout | Scan Beets ralenti par rate-limiting (1 req/s), attendre |
+| Session guest expirÃ©e pendant DL | Le nettoyage est diffÃ©rÃ© 120s aprÃ¨s le tÃ©lÃ©chargement ZIP |
 
 ---
 
-## Étape suivante : HTTPS (reverse proxy + DDNS + certificat)
+## 12. SÃ©curitÃ©
 
-Le dashboard tourne en HTTP sur le port 8080. Pour y accéder depuis l'extérieur en HTTPS, il faut configurer :
-
-1. **DDNS** — Pour avoir un nom de domaine qui pointe vers votre IP publique
-   - DSM → Panneau de configuration → Accès externe → DDNS
-   - Synology offre un DDNS gratuit en `*.synology.me`
-
-2. **Certificat SSL** — Let's Encrypt gratuit
-   - DSM → Panneau de configuration → Sécurité → Certificat
-   - Ajouter → Obtenir auprès de Let's Encrypt
-   - Renseignez votre domaine DDNS
-
-3. **Reverse Proxy** — Pour rediriger HTTPS → HTTP:8080
-   - DSM → Panneau de configuration → Portail de connexion → Avancé → Reverse Proxy
-   - Créer une règle :
-
-   | Champ | Valeur |
-   |---|---|
-   | Nom | SongSurf |
-   | Source protocole | HTTPS |
-   | Source nom d'hôte | `votrenom.synology.me` |
-   | Source port | 443 |
-   | Destination protocole | HTTP |
-   | Destination nom d'hôte | `localhost` |
-   | Destination port | 8080 |
-
-4. **Redirection de port** — Sur votre box/routeur
-   - Port externe 443 → IP du NAS, port 443
-
-Après cette config, le dashboard sera accessible via :
-```
-https://votrenom.synology.me
-```
-
----
-
-## Sécurité en résumé
-
-| Protection | Détail |
-|---|---|
-| 🔐 Mot de passe | Requis pour accéder au dashboard |
-| 🛡️ Anti-bruteforce | 5 tentatives max, blocage 15 min par IP |
-| 🔒 HTTPS | Via reverse proxy Synology + Let's Encrypt |
-| 🏠 Sessions | Expiration après 7 jours d'inactivité |
-| 👤 Container isolé | Utilisateur non-root dans Docker |
+- Les mots de passe admin et guest sont distincts
+- Brute-force protÃ©gÃ© : blocage 15 min aprÃ¨s 5 tentatives
+- Les URLs sont validÃ©es (YouTube/YouTube Music uniquement)
+- Les erreurs yt-dlp ne sont **pas** exposÃ©es aux guests
+- Le serveur tourne sous l'uid 1000 (non-root)
+- `restart: on-failure` pour ne pas redÃ©marrer sur arrÃªt manuel
