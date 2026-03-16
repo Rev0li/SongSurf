@@ -40,9 +40,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copier le code de l'application
 COPY --chown=songsurf:songsurf python-server/ .
 
-# Copier le script entrypoint
+# Copier le script entrypoint (sed corrige les fins de ligne CRLF → LF au cas où)
 COPY --chown=songsurf:songsurf docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Changer vers l'utilisateur non-root
 USER songsurf

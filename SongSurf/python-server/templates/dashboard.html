@@ -896,6 +896,8 @@ async function startScan() {
             ? `<strong>${count} album(s)</strong> avec des suggestions MusicBrainz`
             : '✅ Aucune correction — tous les tags sont à jour !';
         renderAlbums(albums);
+        // Afficher le bouton Plex dès que le scan est terminé (même sans changements à appliquer)
+        document.getElementById('plex-bar').style.display = 'flex';
       }
     }
   }, 1500);
@@ -1254,10 +1256,7 @@ async function applyChanges() {
           ? `⚠️ Terminé avec erreurs: ${s.last_error}`
           : `✅ ${s.progress || 'Tags appliqués avec succès'}`;
       refreshStats();
-      // Afficher le bouton Plex après application réussie
-      if (!s.last_error) {
-        document.getElementById('plex-bar').style.display = 'flex';
-      }
+      // plex-bar déjà visible depuis renderAlbums(), pas besoin de le re-afficher ici
     }
   }, 1000);
 }
@@ -1336,8 +1335,19 @@ async function moveToPlex() {
       <div class="apply-bar-text">✅ ${res.moved} fichier(s) déplacé(s) vers Plex</div>
       <div class="apply-bar-sub">${res.skipped > 0 ? `${res.skipped} écrasé(s) · ` : ''}${errCount > 0 ? `${errCount} erreur(s)` : 'Tout est OK'}</div>
     </div>
+    <button class="btn" onclick="resetPlexBar()" style="background:rgba(255,255,255,0.15);color:#fff;font-weight:600;padding:8px 16px;font-size:12px;">↺ Réinitialiser</button>
   `;
   refreshStats();
+}
+
+function resetPlexBar() {
+  document.getElementById('plex-bar').innerHTML = `
+    <div>
+      <div class="apply-bar-text">📦 Déplacer vers Plex</div>
+      <div class="apply-bar-sub">Déplace la bibliothèque normale (Artist/Album) vers Plex</div>
+    </div>
+    <button class="btn" onclick="moveToPlex()" style="background:#fff;color:#059669;font-weight:700;padding:10px 20px;font-size:13px;" id="btn-plex-move">Déplacer →</button>
+  `;
 }
 
 // ═══════════════════════════════════════════

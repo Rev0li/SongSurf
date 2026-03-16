@@ -144,21 +144,59 @@
     .progress-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
     .progress-status { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 10px; }
 
-    /* ── Download list ── */
-    .dl-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+    /* ── Download list groupée ── */
+    #dl-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .dl-group {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .dl-group-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.05);
+      cursor: pointer;
+      user-select: none;
+      transition: background .15s;
+    }
+    .dl-group-header:hover { background: rgba(255,255,255,0.08); }
+    .dl-group-icon { font-size: 22px; flex-shrink: 0; }
+    .dl-group-info { flex: 1; min-width: 0; }
+    .dl-group-title {
+      font-size: 14px; font-weight: 600; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block;
+    }
+    .dl-group-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+    .dl-group-chevron {
+      font-size: 11px; color: rgba(255,255,255,0.35);
+      transition: transform .2s; flex-shrink: 0;
+    }
+    .dl-group.open .dl-group-chevron { transform: rotate(180deg); }
+
+    .dl-group-songs {
+      list-style: none;
+      display: none;
+      flex-direction: column;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .dl-group.open .dl-group-songs { display: flex; }
+
     .dl-item {
       display: flex;
       align-items: center;
       gap: 10px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 8px;
-      padding: 10px 14px;
+      padding: 9px 16px 9px 44px;
       font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
     }
-    .dl-item .icon { font-size: 18px; flex-shrink: 0; }
-    .dl-item .name { flex: 1; color: rgba(255,255,255,0.8); }
-    .dl-item .ok { color: #34d399; font-size: 12px; }
+    .dl-item:last-child { border-bottom: none; }
+    .dl-item .icon { font-size: 14px; flex-shrink: 0; color: rgba(255,255,255,0.3); }
+    .dl-item .name { flex: 1; color: rgba(255,255,255,0.75); }
+    .dl-item .ok { color: #34d399; font-size: 12px; font-weight: 600; }
 
     /* ── ZIP zone ── */
     #zip-zone { display: none; }
@@ -255,6 +293,158 @@
     }
     .toggle-switch input:checked + .toggle-slider { background: #7c3aed; border-color: #7c3aed; }
     .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+    /* ── Modale tuto onboarding ── */
+    .tuto-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.82);
+      backdrop-filter: blur(6px);
+      align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .tuto-overlay.active { display: flex; }
+    .tuto-box {
+      background: #13131a;
+      border: 1px solid rgba(124,58,237,0.4);
+      border-radius: 20px;
+      padding: 32px 28px 24px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+      animation: modalIn .25s ease;
+    }
+    .tuto-steps {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 28px;
+    }
+    .tuto-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      transition: background .2s;
+    }
+    .tuto-dot.active { background: #7c3aed; width: 22px; border-radius: 4px; }
+    .tuto-screen { display: none; }
+    .tuto-screen.active { display: block; }
+    .tuto-icon { font-size: 36px; margin-bottom: 12px; text-align: center; }
+    .tuto-title {
+      font-size: 18px; font-weight: 700; color: #fff;
+      text-align: center; margin-bottom: 6px;
+    }
+    .tuto-subtitle {
+      font-size: 13px; color: rgba(255,255,255,0.5);
+      text-align: center; margin-bottom: 20px; line-height: 1.5;
+    }
+    /* Fausse barre d'adresse */
+    .fake-browser {
+      background: #1e1e2a;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .fake-browser-bar {
+      background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .fake-dots { display: flex; gap: 5px; }
+    .fake-dots span { width: 10px; height: 10px; border-radius: 50%; }
+    .fake-dots .d1 { background: #ef4444; }
+    .fake-dots .d2 { background: #fbbf24; }
+    .fake-dots .d3 { background: #34d399; }
+    .fake-url {
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-family: monospace;
+      color: rgba(255,255,255,0.6);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fake-url .hl { color: #a78bfa; font-weight: 700; }
+    .fake-url .hl2 { color: #34d399; font-weight: 700; }
+    .fake-screen-body {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .fake-thumb {
+      width: 64px; height: 64px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+    }
+    .fake-thumb.song { background: linear-gradient(135deg, #7c3aed33, #ff3b6d33); border: 1px solid rgba(124,58,237,0.3); }
+    .fake-thumb.album { background: linear-gradient(135deg, #05966933, #0ea5e933); border: 1px solid rgba(5,150,105,0.3); }
+    .fake-meta { flex: 1; }
+    .fake-meta-title { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .fake-meta-sub { font-size: 11px; color: rgba(255,255,255,0.4); }
+    .tuto-tip {
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.65);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .tuto-tip strong { color: #a78bfa; }
+    .tuto-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .btn-tuto-skip {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.4);
+      border-radius: 10px;
+      padding: 11px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-tuto-skip:hover { color: rgba(255,255,255,0.7); }
+    .btn-tuto-next {
+      flex: 2;
+      background: linear-gradient(135deg, #7c3aed, #ff3b6d);
+      border: none;
+      color: #fff;
+      border-radius: 10px;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-tuto-next:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,0.4); }
+    /* Bouton aide dans le header */
+    .btn-help {
+      background: rgba(124,58,237,0.15);
+      border: 1px solid rgba(124,58,237,0.35);
+      color: #a78bfa;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      transition: all .2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .btn-help:hover { background: rgba(124,58,237,0.3); }
   </style>
 </head>
 <body>
@@ -263,9 +453,89 @@
   <div class="brand">🎵 SongSurf</div>
   <div class="header-right">
     <span class="guest-badge">🎭 Accès Guest</span>
+    <button class="btn-help" onclick="openTuto()" title="Comment ça marche ?">?</button>
     <button class="btn-logout" onclick="location.href='/guest/logout'">Déconnexion</button>
   </div>
 </header>
+
+<!-- ── Modale tuto onboarding ── -->
+<div class="tuto-overlay" id="tuto-overlay">
+  <div class="tuto-box">
+
+    <!-- Indicateurs d'étapes -->
+    <div class="tuto-steps">
+      <div class="tuto-dot active" id="tuto-dot-0"></div>
+      <div class="tuto-dot"        id="tuto-dot-1"></div>
+    </div>
+
+    <!-- ── Écran 1 : Chanson simple ── -->
+    <div class="tuto-screen active" id="tuto-screen-0">
+      <div class="tuto-icon">🎵</div>
+      <div class="tuto-title">Télécharger une chanson</div>
+      <div class="tuto-subtitle">Lance la chanson sur YouTube Music, puis copie l'URL de la barre d'adresse.</div>
+
+      <div class="fake-browser">
+        <div class="fake-browser-bar">
+          <div class="fake-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <div class="fake-url">
+            <span class="hl">music.youtube.com</span>/watch?<span class="hl2">v=rFWe4mYYyl4</span>&amp;list=...
+          </div>
+        </div>
+        <div class="fake-screen-body">
+          <div class="fake-thumb song">🎵</div>
+          <div class="fake-meta">
+            <div class="fake-meta-title">Amours</div>
+            <div class="fake-meta-sub">Louise Attaque · 1997 · 1:58</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tuto-tip">
+        💡 L'URL doit contenir <strong>music.youtube.com/watch?v=</strong><br>
+        Colle ce lien directement dans SongSurf.
+      </div>
+
+      <div class="tuto-actions">
+        <button class="btn-tuto-skip" onclick="closeTuto()">Passer</button>
+        <button class="btn-tuto-next" onclick="tutoNext()">Suivant →</button>
+      </div>
+    </div>
+
+    <!-- ── Écran 2 : Album / Playlist ── -->
+    <div class="tuto-screen" id="tuto-screen-1">
+      <div class="tuto-icon">💿</div>
+      <div class="tuto-title">Télécharger un album ou une playlist</div>
+      <div class="tuto-subtitle">Ouvre la page de l'album ou de la playlist, puis copie l'URL.</div>
+
+      <div class="fake-browser">
+        <div class="fake-browser-bar">
+          <div class="fake-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <div class="fake-url">
+            <span class="hl">music.youtube.com</span>/playlist?<span class="hl2">list=OLAK5uy_n...</span>
+          </div>
+        </div>
+        <div class="fake-screen-body">
+          <div class="fake-thumb album">💿</div>
+          <div class="fake-meta">
+            <div class="fake-meta-title">Louise Attaque</div>
+            <div class="fake-meta-sub">Album · 1997 · 14 chansons · 39 min</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tuto-tip">
+        💡 L'URL doit contenir <strong>music.youtube.com/playlist?list=</strong><br>
+        Active le <strong>Mode Playlist 🎵</strong> avant de télécharger pour organiser les morceaux dans un seul dossier.
+      </div>
+
+      <div class="tuto-actions">
+        <button class="btn-tuto-skip" onclick="tutoPrev()">← Retour</button>
+        <button class="btn-tuto-next" onclick="closeTuto()">C'est parti ! 🚀</button>
+      </div>
+    </div>
+
+  </div>
+</div>
 
 <main>
 
@@ -380,12 +650,12 @@
     </div>
   </div>
 
-  <!-- Liste des téléchargements -->
+  <!-- Liste des téléchargements groupée par album -->
   <div class="card">
     <h2>✅ Musiques prêtes</h2>
-    <ul class="dl-list" id="dl-list">
-      <li class="empty" id="dl-empty">Aucune musique téléchargée pour l'instant</li>
-    </ul>
+    <div id="dl-list">
+      <div class="empty" id="dl-empty">Aucune musique téléchargée pour l'instant</div>
+    </div>
   </div>
 
   <!-- Zone ZIP -->
@@ -416,8 +686,8 @@
         <div style="font-weight:600;font-size:16px;margin-bottom:6px;">Téléchargement démarré !</div>
         <div id="zip-info-text" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:10px;"></div>
         <p style="font-size:13px;color:rgba(255,255,255,0.5);">
-          Votre session sera fermée dans <strong id="zip-countdown">2:00</strong>.<br>
-          Vous pouvez fermer cette page une fois le téléchargement terminé.
+          Votre session sera fermée dans <strong id="zip-countdown">15:00</strong>.<br>
+          Vous pouvez fermer cet onglet, le téléchargement continue en arrière-plan.
         </p>
       </div>
       <button class="btn btn-danger" style="width:100%;margin-top:10px;" onclick="closeSessionNow()">
@@ -459,6 +729,42 @@
   let completed        = [];
   let playlistModeEnabled = false;
   let expiryModalShown = false;   // pop-up affichée une seule fois par session
+
+  // ── Tuto onboarding ───────────────────────────────
+  let tutoStep = 0;
+
+  function openTuto() {
+    tutoStep = 0;
+    _tutoRender();
+    document.getElementById('tuto-overlay').classList.add('active');
+  }
+
+  function closeTuto() {
+    document.getElementById('tuto-overlay').classList.remove('active');
+    localStorage.setItem('songsurf_tuto_done', '1');
+  }
+
+  function tutoNext() {
+    tutoStep = 1;
+    _tutoRender();
+  }
+
+  function tutoPrev() {
+    tutoStep = 0;
+    _tutoRender();
+  }
+
+  function _tutoRender() {
+    [0, 1].forEach(i => {
+      document.getElementById(`tuto-screen-${i}`).classList.toggle('active', i === tutoStep);
+      document.getElementById(`tuto-dot-${i}`).classList.toggle('active', i === tutoStep);
+    });
+  }
+
+  // Afficher automatiquement à la première visite
+  if (!localStorage.getItem('songsurf_tuto_done')) {
+    openTuto();
+  }
 
   function onPlaylistModeChange() {
     playlistModeEnabled = document.getElementById('toggle-playlist-mode').checked;
@@ -768,16 +1074,68 @@
     } catch(e) {}
   }
 
+  // ── Liste groupée par album ───────────────────────
+  const dlGroups = {}; // { groupKey: { groupEl, songsEl, count } }
+
+  function _esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function toggleGroup(key) {
+    const g = dlGroups[key];
+    if (g) g.groupEl.classList.toggle('open');
+  }
+
   function addDlItem(meta) {
     document.getElementById('dl-empty').style.display = 'none';
+
+    // Clé de groupement = album (ou artiste si album absent)
+    const groupKey   = meta.album || meta.artist || 'Inconnu';
+    const groupIcon  = meta.album ? '💿' : '🎵';
+    const groupLabel = groupKey;
+    const subLabel   = meta.artist || '';
+
+    // Créer le groupe s'il n'existe pas encore
+    if (!dlGroups[groupKey]) {
+      const groupEl  = document.createElement('div');
+      groupEl.className = 'dl-group open'; // ouvert par défaut
+      groupEl.id = `dlg-${groupKey.replace(/[^a-z0-9]/gi,'_')}`;
+
+      const songsEl = document.createElement('ul');
+      songsEl.className = 'dl-group-songs';
+
+      groupEl.innerHTML = `
+        <div class="dl-group-header" onclick="toggleGroup(${JSON.stringify(groupKey)})">
+          <span class="dl-group-icon">${groupIcon}</span>
+          <div class="dl-group-info">
+            <span class="dl-group-title">${_esc(groupLabel)}</span>
+            <span class="dl-group-meta" id="dlg-meta-${groupEl.id}">${_esc(subLabel)} · <span id="dlg-count-${groupEl.id}">0</span> chanson(s)</span>
+          </div>
+          <span class="dl-group-chevron">▼</span>
+        </div>
+      `;
+      groupEl.appendChild(songsEl);
+      document.getElementById('dl-list').appendChild(groupEl);
+
+      dlGroups[groupKey] = { groupEl, songsEl, count: 0 };
+    }
+
+    // Ajouter la chanson dans le groupe
+    const g  = dlGroups[groupKey];
+    g.count += 1;
+
+    // Mettre à jour le compteur
+    const countEl = g.groupEl.querySelector('[id^="dlg-count-"]');
+    if (countEl) countEl.textContent = g.count;
+
     const li = document.createElement('li');
     li.className = 'dl-item';
     li.innerHTML = `
-      <span class="icon">🎵</span>
-      <span class="name">${meta.artist} – ${meta.title}</span>
+      <span class="icon">♪</span>
+      <span class="name">${_esc(meta.title || meta.artist)}</span>
       <span class="ok">✓</span>
     `;
-    document.getElementById('dl-list').appendChild(li);
+    g.songsEl.appendChild(li);
   }
 
   // ── Préparer + télécharger ZIP en une seule action ──
@@ -830,8 +1188,8 @@
     // Bloquer l'interface
     _lockUIAfterZip();
 
-    // Décompte 2 min avant fermeture auto
-    let remaining = 120;
+    // Décompte 15 min avant fermeture auto (aligne avec le cleanup serveur)
+    let remaining = 900;
     _updateZipCountdown(remaining);
     zipCountdownInterval = setInterval(() => {
       remaining--;

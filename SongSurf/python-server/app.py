@@ -1439,10 +1439,12 @@ def guest_download_zip():
 
     logger.info(f"[GUEST:{sid[:8]}] ⬇️  Téléchargement ZIP par l'utilisateur")
 
-    # Planifier le nettoyage 120s après le téléchargement
-    # (laisse le temps au navigateur de finir le téléchargement avant de fermer la session)
+    # Planifier le nettoyage 15 min après le téléchargement
+    # Le navigateur gère le DL de façon indépendante (fermer l'onglet ne l'arrête pas),
+    # mais le fichier ZIP doit rester disponible jusqu'à la fin du transfert.
+    # 15 min couvre les gros fichiers sur connexion lente.
     def delayed_cleanup():
-        time.sleep(120)
+        time.sleep(900)  # 15 minutes
         _cleanup_guest_session(sid, reason="téléchargement ZIP effectué")
 
     threading.Thread(target=delayed_cleanup, daemon=True).start()

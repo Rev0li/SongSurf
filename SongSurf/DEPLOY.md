@@ -47,7 +47,26 @@ SongSurf/
         ├── guest_dashboard.html
         └── login.html
 ```
+```bash
+cp SongSurf/Dockerfile SongSurf/docker-compose.yml /volume1/docker/SongSurf/ && \
+cp SongSurf/docker/entrypoint.sh /volume1/docker/SongSurf/docker/ && \
+cp SongSurf/python-server/app.py \
+   SongSurf/python-server/downloader.py \
+   SongSurf/python-server/organizer.py \
+   SongSurf/python-server/requirements.txt \
+   /volume1/docker/SongSurf/python-server/ && \
+cp SongSurf/python-server/templates/dashboard.html \
+   SongSurf/python-server/templates/guest_dashboard.html \
+   SongSurf/python-server/templates/login.html \
+   /volume1/docker/SongSurf/python-server/templates/
+```
 
+Pense à créer les dossiers d'abord si ils n'existent pas encore :
+
+```bash
+mkdir -p /volume1/docker/SongSurf/docker \
+         /volume1/docker/SongSurf/python-server/templates
+```
 ---
 
 ## 3. Configurer les mots de passe
@@ -98,6 +117,8 @@ docker compose up -d
 
 # Voir les logs
 docker compose logs -f
+
+ sudo docker-compose up -d && sudo docker logs -f songsurf
 ```
 
 Le serveur est disponible sur : `http://<IP-NAS>:8080`
