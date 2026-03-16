@@ -35,6 +35,7 @@ services:
       - GUEST_MAX_SONGS=10                         # ← nouveau
       - GUEST_SESSION_TTL=3600                     # ← nouveau
       - PLEX_MUSIC_DIR=/data/plex_music            # ← dossier Plex destination
+      - ADMIN_LOGIN_PATH=/administrator            # ← URL secrète du login admin
 
     volumes:
       - ./data/temp:/data/temp

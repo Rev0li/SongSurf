@@ -727,7 +727,7 @@ async function api(endpoint, method = 'GET', body = null) {
   const opts = { method, headers: {} };
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const res = await fetch(endpoint, opts);
-  if (res.status === 401) { window.location.href = '/login'; return null; }
+  if (res.status === 401) { window.location.href = '{{ admin_login_path }}'; return null; }
   return res.json();
 }
 

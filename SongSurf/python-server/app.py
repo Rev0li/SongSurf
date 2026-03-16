@@ -51,6 +51,12 @@ GUEST_MAX_SONGS = int(os.getenv('GUEST_MAX_SONGS', '10'))
 # Durée de conservation des fichiers guest (en secondes, défaut 1h)
 GUEST_SESSION_TTL = int(os.getenv('GUEST_SESSION_TTL', '3600'))
 
+# URL de la page de login admin (sécurité par obscurité)
+ADMIN_LOGIN_PATH = os.getenv('ADMIN_LOGIN_PATH', '/administrator')
+# S'assurer que le chemin commence par /
+if not ADMIN_LOGIN_PATH.startswith('/'):
+    ADMIN_LOGIN_PATH = '/' + ADMIN_LOGIN_PATH
+
 if not DASHBOARD_PASSWORD:
     print("⚠️  SONGSURF_PASSWORD non défini ! Le dashboard admin sera non protégé.")
 if not GUEST_PASSWORD:
@@ -454,8 +460,9 @@ def guest_required(f):
 # ROUTES LOGIN ADMIN
 # ============================================
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route(ADMIN_LOGIN_PATH, methods=['GET', 'POST'])
 def login():
+    """Page de login admin — chemin configurable via ADMIN_LOGIN_PATH."""
     if not DASHBOARD_PASSWORD:
         session['authenticated'] = True
         session.permanent = True
@@ -484,7 +491,8 @@ def login():
                 remaining = MAX_LOGIN_ATTEMPTS - login_attempts.get(ip, {}).get('attempts', 0)
                 error = f'Mot de passe incorrect ({remaining} essai{"s" if remaining > 1 else ""} restant{"s" if remaining > 1 else ""})'
 
-    return render_template('login.html', error=error, locked=_is_locked(ip))
+    return render_template('login.html', error=error, locked=_is_locked(ip),
+                           admin_login_path=ADMIN_LOGIN_PATH)
 
 
 @app.route('/logout')
@@ -550,7 +558,7 @@ def guest_logout():
 @login_required
 def dashboard():
     stats = organizer.get_stats()
-    return render_template('dashboard.html', stats=stats)
+    return render_template('dashboard.html', stats=stats, admin_login_path=ADMIN_LOGIN_PATH)
 
 
 # ============================================

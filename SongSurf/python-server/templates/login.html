@@ -162,14 +162,12 @@
     </div>
     {% endif %}
 
-    <!-- Lien pour basculer entre admin et guest -->
+    {% if not is_guest %}
+    <!-- Lien guest visible uniquement sur la page admin -->
     <div class="switch-mode">
-      {% if is_guest %}
-        Vous êtes l'admin ? <a href="/login">Connexion admin →</a>
-      {% else %}
-        Accès invité ? <a href="/guest/login">Connexion guest →</a>
-      {% endif %}
+      Accès invité ? <a href="/guest/login">Connexion guest →</a>
     </div>
+    {% endif %}
   </div>
 </body>
 </html>
