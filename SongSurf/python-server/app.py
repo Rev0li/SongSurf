@@ -41,9 +41,12 @@ app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.permanent_session_lifetime = timedelta(days=7)
 
-# Mots de passe
+# Mots de passe (utilisés uniquement en mode standalone, sans Watcher)
 DASHBOARD_PASSWORD = os.getenv('SONGSURF_PASSWORD', '')
 GUEST_PASSWORD     = os.getenv('SONGSURF_GUEST_PASSWORD', '')
+
+# Secret partagé avec le Watcher (si vide → mode standalone sans Watcher)
+WATCHER_SECRET = os.getenv('WATCHER_SECRET', '')
 
 # Quota guest (0 = illimité)
 GUEST_MAX_SONGS = int(os.getenv('GUEST_MAX_SONGS', '10'))
@@ -51,16 +54,18 @@ GUEST_MAX_SONGS = int(os.getenv('GUEST_MAX_SONGS', '10'))
 # Durée de conservation des fichiers guest (en secondes, défaut 1h)
 GUEST_SESSION_TTL = int(os.getenv('GUEST_SESSION_TTL', '3600'))
 
-# URL de la page de login admin (sécurité par obscurité)
+# URL de la page de login admin (fallback mode standalone)
 ADMIN_LOGIN_PATH = os.getenv('ADMIN_LOGIN_PATH', '/administrator')
-# S'assurer que le chemin commence par /
 if not ADMIN_LOGIN_PATH.startswith('/'):
     ADMIN_LOGIN_PATH = '/' + ADMIN_LOGIN_PATH
 
-if not DASHBOARD_PASSWORD:
-    print("⚠️  SONGSURF_PASSWORD non défini ! Le dashboard admin sera non protégé.")
-if not GUEST_PASSWORD:
-    print("⚠️  SONGSURF_GUEST_PASSWORD non défini ! L'accès guest sera désactivé.")
+if WATCHER_SECRET:
+    print("✅ Mode Watcher activé — authentification déléguée au Watcher.")
+else:
+    if not DASHBOARD_PASSWORD:
+        print("⚠️  SONGSURF_PASSWORD non défini ! Le dashboard admin sera non protégé.")
+    if not GUEST_PASSWORD:
+        print("⚠️  SONGSURF_GUEST_PASSWORD non défini ! L'accès guest sera désactivé.")
 
 # ============================================
 # DOSSIERS
@@ -424,23 +429,61 @@ def _reset_attempts(ip):
 
 
 def login_required(f):
-    """Réservé aux admins."""
+    """Réservé aux admins.
+    Accepte soit le token Watcher (mode production), soit la session Flask (mode standalone/dev).
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not DASHBOARD_PASSWORD:
-            return f(*args, **kwargs)
-        if not session.get('authenticated'):
+        # ── Mode Watcher : vérifier le token d'en-tête ──────────────────────
+        watcher_token = request.headers.get('X-Watcher-Token', '')
+        if WATCHER_SECRET and watcher_token == WATCHER_SECRET:
+            if request.headers.get('X-User-Role') == 'admin':
+                session['authenticated'] = True   # maintenir session locale
+                return f(*args, **kwargs)
+            # Token valide mais rôle incorrect
             if request.is_json:
-                return jsonify({'success': False, 'error': 'Non authentifié'}), 401
+                return jsonify({'success': False, 'error': 'Accès admin requis'}), 403
             return redirect(url_for('login'))
-        return f(*args, **kwargs)
+
+        # ── Fallback : session classique (mode standalone sans Watcher) ─────
+        if not DASHBOARD_PASSWORD or session.get('authenticated'):
+            return f(*args, **kwargs)
+        if request.is_json:
+            return jsonify({'success': False, 'error': 'Non authentifié'}), 401
+        return redirect(url_for('login'))
     return decorated
 
 
 def guest_required(f):
-    """Réservé aux guests (vérifie session guest active)."""
+    """Réservé aux guests.
+    Accepte soit le token Watcher (mode production), soit la session Flask (mode standalone/dev).
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
+        # ── Mode Watcher : vérifier le token d'en-tête ──────────────────────
+        watcher_token = request.headers.get('X-Watcher-Token', '')
+        if WATCHER_SECRET and watcher_token == WATCHER_SECRET:
+            role     = request.headers.get('X-User-Role', '')
+            guest_id = request.headers.get('X-Guest-Session-Id', '')
+            if role == 'guest' and guest_id:
+                # Créer la session guest en mémoire si elle n'existe pas encore
+                with guest_sessions_lock:
+                    if guest_id not in guest_sessions:
+                        guest_name = request.headers.get('X-Guest-Name', 'Guest')
+                        guest_sessions[guest_id] = {
+                            'songs_downloaded': 0,
+                            'created_at': datetime.now().isoformat(),
+                            'name': guest_name,
+                            'expires_at': (datetime.now() + timedelta(seconds=GUEST_SESSION_TTL)).isoformat(),
+                        }
+                        logger.info(f"🆕 Session guest Watcher créée: {guest_id[:8]} ({guest_name})")
+                session['guest_session_id'] = guest_id   # sync session locale
+                return f(*args, **kwargs)
+            if request.is_json:
+                return jsonify({'success': False, 'error': 'Session guest invalide'}), 401
+            return redirect(url_for('guest_login'))
+
+        # ── Fallback : session classique (mode standalone sans Watcher) ─────
         sid = session.get('guest_session_id')
         if not sid:
             if request.is_json:

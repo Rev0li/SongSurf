@@ -2,17 +2,67 @@
 # SongSurf - Docker Compose
 # ============================================
 #
-# Dashboard web de téléchargement musical
+# Architecture :
+#   [Watcher :8080]  ← toujours actif, gère l'auth et proxyfie
+#        │
+#        └── démarre/arrête à la demande →  [SongSurf :8080 interne]
 #
 # Utilisation:
-#   docker-compose up -d           # Démarrer
+#   docker-compose up -d           # Démarrer (Watcher + SongSurf)
 #   docker-compose logs -f         # Logs
 #   docker-compose down            # Arrêter
 #
-# IMPORTANT:
-#   Changez SONGSURF_PASSWORD avant de déployer !
+# IMPORTANT :
+#   Changez WATCHER_PASSWORD, FLASK_SECRET_KEY et WATCHER_SECRET
+#   avant de déployer en production !
 
 services:
+
+  # ── Watcher : portail d'auth, toujours actif (~15 MB RAM) ───────────────
+  watcher:
+    container_name: watcher
+    build:
+      context: .
+      dockerfile: watcher/Dockerfile
+    image: watcher:latest
+    restart: on-failure
+    networks: [songsurf-net]
+
+    ports:
+      - "8080:8080"   # seul port exposé à l'extérieur
+
+    volumes:
+      # Accès au Docker socket pour démarrer/arrêter SongSurf
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+      # Clé secrète Flask pour les sessions Watcher
+      - FLASK_SECRET_KEY=ChangezMoiAussi-Watcher
+      # Mot de passe du dashboard admin
+      - WATCHER_PASSWORD=ChangezMoiAvantDeDéployer
+      # Mot de passe accès guest
+      - WATCHER_GUEST_PASSWORD=MotDePasseAmis
+      # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
+      - WATCHER_SECRET=GenerezUnSecretAleatoire32chars
+      # URL secrète du login admin
+      - ADMIN_LOGIN_PATH=/administrator
+      # Nom du container SongSurf (doit correspondre à container_name ci-dessous)
+      - TARGET_CONTAINER=songsurf
+      # URL interne de SongSurf (réseau Docker)
+      - TARGET_URL=http://songsurf:8080
+      # Arrêter SongSurf après 30 min d'inactivité
+      - INACTIVITY_TIMEOUT=1800
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── SongSurf : application principale, démarrée à la demande ────────────
   songsurf:
     container_name: songsurf
     build:
@@ -20,22 +70,33 @@ services:
       dockerfile: Dockerfile
     image: songsurf:latest
     restart: on-failure
+    networks: [songsurf-net]
 
-    # Utilise directement le réseau du NAS (résout les problèmes DNS Synology)
-    network_mode: host
+    # Pas de ports exposés — uniquement accessible depuis Watcher (réseau interne)
+
+    # Contournement DNS Synology : utiliser les DNS publics Google/Cloudflare
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Paris
-      # Mot de passe du dashboard (OBLIGATOIRE en production)
-      - SONGSURF_PASSWORD=ChangezMoiAvantDeDéployer
-      # Clé secrète Flask pour les sessions
-      - FLASK_SECRET_KEY=ChangezMoiAussi
-      - SONGSURF_GUEST_PASSWORD=MotDePasseAmis    # ← nouveau
-      - GUEST_MAX_SONGS=10                         # ← nouveau
-      - GUEST_SESSION_TTL=3600                     # ← nouveau
-      - PLEX_MUSIC_DIR=/data/plex_music            # ← dossier Plex destination
-      - ADMIN_LOGIN_PATH=/administrator            # ← URL secrète du login admin
+      # Clé secrète Flask (différente de celle du Watcher)
+      - FLASK_SECRET_KEY=ChangezMoiAussi-SongSurf
+      # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
+      - WATCHER_SECRET=GenerezUnSecretAleatoire32chars
+      # URL du login admin (fallback mode standalone uniquement)
+      - ADMIN_LOGIN_PATH=/administrator
+      # Ces mots de passe ne sont plus utilisés en mode Watcher
+      # (gardés pour mode standalone/dev local uniquement)
+      - SONGSURF_PASSWORD=
+      - SONGSURF_GUEST_PASSWORD=
+      # Quota et durée de session guest
+      - GUEST_MAX_SONGS=10
+      - GUEST_SESSION_TTL=3600
+      # Dossier Plex destination
+      - PLEX_MUSIC_DIR=/data/plex_music
 
     volumes:
       - ./data/temp:/data/temp
@@ -53,3 +114,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+# ── Réseau interne Bridge ────────────────────────────────────────────────────
+networks:
+  songsurf-net:
+    driver: bridge
