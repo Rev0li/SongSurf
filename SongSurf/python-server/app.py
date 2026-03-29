@@ -77,7 +77,6 @@ if Path(__file__).parent == Path('/app'):
     GUEST_MUSIC_DIR = Path('/data/music_guest')
     GUEST_TEMP_DIR  = Path('/data/temp_guest')
     LOG_DIR         = Path('/app/logs')
-    PLEX_MUSIC_DIR  = Path(os.getenv('PLEX_MUSIC_DIR', '/data/plex_music'))
 else:
     BASE_DIR        = Path(__file__).parent.parent
     TEMP_DIR        = BASE_DIR / "temp"
@@ -85,9 +84,8 @@ else:
     GUEST_MUSIC_DIR = BASE_DIR / "music_guest"
     GUEST_TEMP_DIR  = BASE_DIR / "temp_guest"
     LOG_DIR         = BASE_DIR / "logs"
-    PLEX_MUSIC_DIR  = Path(os.getenv('PLEX_MUSIC_DIR', str(BASE_DIR / "plex_music")))
 
-for d in [TEMP_DIR, MUSIC_DIR, GUEST_MUSIC_DIR, GUEST_TEMP_DIR, LOG_DIR, PLEX_MUSIC_DIR]:
+for d in [TEMP_DIR, MUSIC_DIR, GUEST_MUSIC_DIR, GUEST_TEMP_DIR, LOG_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # ============================================
@@ -199,9 +197,10 @@ guest_sessions = {}
 guest_sessions_lock = threading.Lock()
 
 
-def _new_guest_session(guest_name="Inconnu"):
+def _new_guest_session(guest_name="Inconnu", sid=None):
     """Crée une nouvelle session guest et retourne son ID."""
-    sid = secrets.token_urlsafe(16)
+    if sid is None:
+        sid = secrets.token_urlsafe(16)
     session_dir      = GUEST_MUSIC_DIR / sid
     session_temp_dir = GUEST_TEMP_DIR  / sid
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -282,7 +281,10 @@ def guest_cleanup_worker():
         expired = []
         with guest_sessions_lock:
             for sid, sess in list(guest_sessions.items()):
-                if now >= sess['expires_at']:
+                exp = sess.get('expires_at', now)
+                if isinstance(exp, str):
+                    exp = datetime.fromisoformat(exp)
+                if now >= exp:
                     expired.append(sid)
 
         for sid in expired:
@@ -466,17 +468,12 @@ def guest_required(f):
             role     = request.headers.get('X-User-Role', '')
             guest_id = request.headers.get('X-Guest-Session-Id', '')
             if role == 'guest' and guest_id:
-                # Créer la session guest en mémoire si elle n'existe pas encore
+                # Créer la session guest complète si elle n'existe pas encore
                 with guest_sessions_lock:
-                    if guest_id not in guest_sessions:
-                        guest_name = request.headers.get('X-Guest-Name', 'Guest')
-                        guest_sessions[guest_id] = {
-                            'songs_downloaded': 0,
-                            'created_at': datetime.now().isoformat(),
-                            'name': guest_name,
-                            'expires_at': (datetime.now() + timedelta(seconds=GUEST_SESSION_TTL)).isoformat(),
-                        }
-                        logger.info(f"🆕 Session guest Watcher créée: {guest_id[:8]} ({guest_name})")
+                    already_exists = guest_id in guest_sessions
+                if not already_exists:
+                    guest_name = request.headers.get('X-Guest-Name', 'Guest')
+                    _new_guest_session(guest_name=guest_name, sid=guest_id)
                 session['guest_session_id'] = guest_id   # sync session locale
                 return f(*args, **kwargs)
             if request.is_json:
@@ -618,7 +615,7 @@ def guest_dashboard():
         session_id=sid,
         songs_downloaded=sess.get('songs_downloaded', 0),
         max_songs=GUEST_MAX_SONGS,
-        expires_at=sess.get('expires_at', datetime.now()).isoformat(),
+        expires_at=(sess['expires_at'] if isinstance(sess.get('expires_at'), str) else sess.get('expires_at', datetime.now()).isoformat()),  # str si déjà sérialisé, sinon datetime→str
     )
 
 
@@ -761,500 +758,6 @@ def cleanup():
     download_status['current_download'] = None
     download_status['last_error'] = None
     return jsonify({'success': True, 'deleted': len(deleted)})
-
-
-@app.route('/api/move-to-plex', methods=['POST'])
-@login_required
-def move_to_plex():
-    """
-    Déplace tous les fichiers MP3 de MUSIC_DIR vers PLEX_MUSIC_DIR
-    en conservant la structure Artist/Album/Title.mp3.
-    Appelé après validation des métadonnées (onglet Métadonnées → Appliquer tout).
-    """
-    try:
-        moved   = []
-        errors  = []
-        skipped = []
-
-        mp3_files = list(MUSIC_DIR.rglob('*.mp3'))
-        if not mp3_files:
-            return jsonify({'success': True, 'moved': 0, 'message': 'Aucun fichier à déplacer'})
-
-        for src in mp3_files:
-            try:
-                # Chemin relatif depuis MUSIC_DIR  (ex: Artist/Album/Title.mp3)
-                rel = src.relative_to(MUSIC_DIR)
-                dst = PLEX_MUSIC_DIR / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-
-                if dst.exists():
-                    # Fichier déjà présent côté Plex → on écrase (métadonnées fraîchement corrigées)
-                    dst.unlink()
-                    skipped.append(str(rel))
-
-                shutil.move(str(src), str(dst))
-                moved.append(str(rel))
-                logger.info(f"📦 Plex move: {rel}")
-
-            except PermissionError as e:
-                err_msg = f"Permission refusée — vérifiez que l'uid 1000 (songsurf) a accès à {PLEX_MUSIC_DIR}"
-                errors.append({'file': str(src.name), 'error': err_msg})
-                logger.error(f"❌ Plex move permission error {src.name}: {e}")
-            except Exception as e:
-                errors.append({'file': str(src.name), 'error': str(e)})
-                logger.error(f"❌ Plex move error {src.name}: {e}")
-
-        # Nettoyer les dossiers vides restants dans MUSIC_DIR
-        for dirpath in sorted(MUSIC_DIR.rglob('*'), reverse=True):
-            if dirpath.is_dir():
-                try:
-                    dirpath.rmdir()   # ne supprime que si vide
-                except OSError:
-                    pass
-
-        activity_logger.info(f"📦 MOVE TO PLEX | {len(moved)} fichier(s) déplacé(s) vers {PLEX_MUSIC_DIR}")
-
-        return jsonify({
-            'success': True,
-            'moved':   len(moved),
-            'skipped': len(skipped),
-            'errors':  errors,
-            'message': f'{len(moved)} fichier(s) déplacé(s) vers Plex'
-        })
-
-    except Exception as e:
-        logger.error(f"❌ move-to-plex: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ============================================
-# API ADMIN — PLAYLISTS
-# ============================================
-
-@app.route('/api/playlists', methods=['GET'])
-@login_required
-def get_playlists():
-    """
-    Retourne la liste des dossiers en mode playlist dans MUSIC_DIR.
-    Un dossier "playlist" est un sous-dossier de MUSIC_DIR qui contient
-    des MP3 directement (structure Album/Title.mp3).
-    Ces dossiers sont ignorés par Beets et déplacés séparément vers Plex.
-    """
-    playlists = []
-    if MUSIC_DIR.exists():
-        for d in sorted(MUSIC_DIR.iterdir()):
-            if not d.is_dir():
-                continue
-            direct_mp3s = list(d.glob('*.mp3'))
-            if direct_mp3s:
-                playlists.append({
-                    'name':       d.name,
-                    'song_count': len(direct_mp3s),
-                })
-    return jsonify({'playlists': playlists})
-
-
-@app.route('/api/move-playlists-to-plex', methods=['POST'])
-@login_required
-def move_playlists_to_plex():
-    """
-    Déplace les dossiers en mode playlist depuis MUSIC_DIR vers PLEX_MUSIC_DIR.
-    Contrairement à /api/move-to-plex (qui gère la structure normale Artist/Album),
-    cette route gère la structure playlist Album/Title.mp3.
-    """
-    try:
-        moved  = []
-        errors = []
-
-        for playlist_dir in sorted(MUSIC_DIR.iterdir()):
-            if not playlist_dir.is_dir():
-                continue
-            direct_mp3s = list(playlist_dir.glob('*.mp3'))
-            if not direct_mp3s:
-                continue   # Pas un dossier playlist
-
-            dest_dir = PLEX_MUSIC_DIR / playlist_dir.name
-            dest_dir.mkdir(parents=True, exist_ok=True)
-
-            for mp3 in direct_mp3s:
-                try:
-                    dst = dest_dir / mp3.name
-                    if dst.exists():
-                        dst.unlink()
-                    shutil.move(str(mp3), str(dst))
-                    moved.append(f"{playlist_dir.name}/{mp3.name}")
-                    logger.info(f"🎵 Playlist move: {playlist_dir.name}/{mp3.name}")
-                except PermissionError as e:
-                    err_msg = f"Permission refusée — vérifiez que l'uid 1000 a accès à {PLEX_MUSIC_DIR}"
-                    errors.append({'file': mp3.name, 'error': err_msg})
-                    logger.error(f"❌ Playlist move permission error {mp3.name}: {e}")
-                except Exception as e:
-                    errors.append({'file': mp3.name, 'error': str(e)})
-                    logger.error(f"❌ Playlist move error {mp3.name}: {e}")
-
-            # Supprimer le dossier playlist s'il est vide
-            try:
-                playlist_dir.rmdir()
-            except OSError:
-                pass
-
-        activity_logger.info(f"🎵 MOVE PLAYLISTS TO PLEX | {len(moved)} fichier(s)")
-
-        return jsonify({
-            'success': True,
-            'moved':   len(moved),
-            'errors':  errors,
-            'message': f'{len(moved)} fichier(s) déplacé(s) vers Plex'
-        })
-
-    except Exception as e:
-        logger.error(f"❌ move-playlists-to-plex: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ============================================
-# API ADMIN — BEETS (Métadonnées MusicBrainz)
-# ============================================
-
-beets_status = {
-    'running':     False,
-    'task':        None,        # 'scan' | 'apply'
-    'progress':    None,
-    'last_error':  None,
-    'scan_result': None,        # dict albums → résultat du dernier scan
-}
-beets_lock = threading.Lock()
-
-
-@app.route('/api/beets/status', methods=['GET'])
-@login_required
-def beets_get_status():
-    with beets_lock:
-        return jsonify(dict(beets_status))
-
-
-@app.route('/api/beets/scan', methods=['POST'])
-@login_required
-def beets_scan():
-    """
-    Scanne chaque album dans MUSIC_DIR via MusicBrainz et propose des corrections.
-    Ignore les dossiers en mode playlist (structure Album/Title.mp3 = profondeur 2).
-    Seuls les fichiers en structure normale Artist/Album/Title.mp3 sont analysés.
-    """
-    with beets_lock:
-        if beets_status['running']:
-            return jsonify({'success': False, 'error': 'Beets déjà en cours'}), 409
-        beets_status['running']     = True
-        beets_status['task']        = 'scan'
-        beets_status['last_error']  = None
-        beets_status['progress']    = 'Initialisation…'
-        beets_status['scan_result'] = None
-
-    def _scan():
-        try:
-            import musicbrainzngs as mb
-            from mutagen.mp3 import MP3
-            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, TCON
-
-            mb.set_useragent('SongSurf', '1.0', 'https://github.com/songsurf')
-            mb.set_rate_limit(limit_or_interval=1.0)
-
-            # ── Étape 1 : lire les MP3 en structure normale (depth=3) ─────────
-            albums = {}
-            for mp3_path in sorted(MUSIC_DIR.rglob('*.mp3')):
-                # Ignorer les fichiers de playlist (Album/Title.mp3 = 2 niveaux)
-                rel = mp3_path.relative_to(MUSIC_DIR)
-                if len(rel.parts) != 3:
-                    continue
-
-                try:
-                    audio = MP3(mp3_path, ID3=ID3)
-                    tags  = audio.tags or {}
-
-                    def get_tag(tag_id):
-                        t = tags.get(tag_id)
-                        return str(t.text[0]).strip() if t and hasattr(t, 'text') and t.text else ''
-
-                    current = {
-                        'title':     get_tag('TIT2'),
-                        'artist':    get_tag('TPE1'),
-                        'album':     get_tag('TALB'),
-                        'year':      get_tag('TDRC'),
-                        'track':     get_tag('TRCK'),
-                        'genre':     get_tag('TCON'),
-                        'has_cover': bool(tags.get('APIC:')),
-                        'duration':  int(audio.info.length) if audio.info else 0,
-                    }
-
-                    album_key = f"{current['artist'] or 'Unknown'}/{current['album'] or 'Unknown'}"
-                    rel_path  = str(rel)
-
-                    if album_key not in albums:
-                        cover = mp3_path.parent / 'cover.jpg'
-                        albums[album_key] = {
-                            'artist':     current['artist'],
-                            'album':      current['album'],
-                            'year':       current['year'],
-                            'tracks':     [],
-                            'cover_path': str(cover) if cover.exists() else None,
-                            'candidates': [],
-                        }
-
-                    albums[album_key]['tracks'].append({
-                        'path':    rel_path,
-                        'current': current,
-                    })
-
-                except Exception as e:
-                    logger.warning(f'🏷️  Skip {mp3_path.name}: {e}')
-
-            # Trier les pistes par numéro de piste
-            for alb in albums.values():
-                alb['tracks'].sort(key=lambda t: _track_num(t['current']['track']))
-
-            total = len(albums)
-            logger.info(f'🏷️  Scan MusicBrainz: {total} album(s) à analyser')
-
-            # ── Étape 2 : requête MusicBrainz par album ───────────────────────
-            for idx, (key, alb) in enumerate(albums.items()):
-                with beets_lock:
-                    beets_status['progress'] = f'Album {idx+1}/{total} : {alb["album"] or "?"}'
-
-                artist_q = alb['artist'] or ''
-                album_q  = alb['album']  or ''
-                if not artist_q and not album_q:
-                    continue
-
-                try:
-                    result = mb.search_releases(
-                        artist=artist_q,
-                        release=album_q,
-                        limit=5,
-                        type='album',
-                    )
-                    releases = result.get('release-list', [])
-
-                    candidates = []
-                    for rel in releases[:5]:
-                        score = int(rel.get('ext:score', 0))
-                        if score < 50:
-                            continue
-
-                        mb_artist = ''
-                        ac = rel.get('artist-credit', [])
-                        if ac and isinstance(ac[0], dict):
-                            mb_artist = ac[0].get('artist', {}).get('name', '')
-
-                        mb_date  = rel.get('date', '') or rel.get('first-release-date', '')
-                        mb_year  = mb_date[:4] if mb_date else ''
-
-                        mb_id     = rel.get('id', '')
-                        cover_url = f'https://coverartarchive.org/release/{mb_id}/front-250' if mb_id else ''
-
-                        mb_tracks = []
-                        for medium in rel.get('medium-list', []):
-                            for tr in medium.get('track-list', []):
-                                recording = tr.get('recording', {})
-                                mb_tracks.append({
-                                    'number': tr.get('number', ''),
-                                    'title':  recording.get('title', tr.get('title', '')),
-                                    'artist': mb_artist,
-                                    'length': recording.get('length', 0),
-                                })
-
-                        candidates.append({
-                            'score':     score,
-                            'mb_id':     mb_id,
-                            'title':     rel.get('title', ''),
-                            'artist':    mb_artist,
-                            'year':      mb_year,
-                            'country':   rel.get('country', ''),
-                            'label':     (rel.get('label-info-list') or [{}])[0].get('label', {}).get('name', '') if rel.get('label-info-list') else '',
-                            'cover_url': cover_url,
-                            'tracks':    mb_tracks,
-                        })
-
-                    candidates.sort(key=lambda c: c['score'], reverse=True)
-                    alb['candidates'] = candidates[:3]
-
-                    if candidates:
-                        _apply_candidate_to_tracks(alb, candidates[0])
-
-                    logger.info(f'🏷️  {album_q}: {len(candidates)} candidat(s) MusicBrainz')
-
-                except Exception as e:
-                    logger.warning(f'🏷️  MusicBrainz erreur pour {album_q}: {e}')
-                    alb['candidates'] = []
-                    for t in alb['tracks']:
-                        t['suggested'] = _suggest_tags(t['current'])
-
-            # ── Étape 3 : ne garder que les albums avec candidats ou diffs ────
-            results = {}
-            for key, alb in albums.items():
-                has_candidates = bool(alb.get('candidates'))
-                has_diff = any(_has_diff(t['current'], t.get('suggested', t['current'])) for t in alb['tracks'])
-                if has_candidates or has_diff:
-                    results[key] = alb
-
-            with beets_lock:
-                beets_status['scan_result'] = results
-                beets_status['progress']    = f'{len(results)} album(s) avec suggestions'
-
-            logger.info(f'🏷️  Scan terminé: {len(results)} albums avec corrections proposées')
-
-        except ImportError as e:
-            with beets_lock:
-                beets_status['last_error'] = f'Dépendance manquante: {e} — pip install musicbrainzngs mutagen'
-            logger.error(f'🏷️  Import manquant: {e}')
-        except Exception as e:
-            with beets_lock:
-                beets_status['last_error'] = str(e)
-            logger.error(f'🏷️  Beets scan erreur: {e}')
-        finally:
-            with beets_lock:
-                beets_status['running'] = False
-                beets_status['task']    = None
-
-    threading.Thread(target=_scan, daemon=True).start()
-    return jsonify({'success': True})
-
-
-def _apply_candidate_to_tracks(alb, candidate):
-    """Applique les tags d'un candidat MusicBrainz aux pistes de l'album."""
-    mb_tracks = candidate.get('tracks', [])
-    for i, t in enumerate(alb['tracks']):
-        mb_tr = mb_tracks[i] if i < len(mb_tracks) else {}
-        t['suggested'] = {
-            'title':     mb_tr.get('title')   or t['current']['title'],
-            'artist':    candidate.get('artist') or t['current']['artist'],
-            'album':     candidate.get('title')  or t['current']['album'],
-            'year':      candidate.get('year')   or t['current']['year'],
-            'track':     mb_tr.get('number')  or t['current']['track'],
-            'genre':     t['current']['genre'],
-            'has_cover': bool(candidate.get('cover_url')),
-        }
-
-
-def _track_num(track_str):
-    """Extrait le numéro de piste (gère '3/12' ou '3')."""
-    try:
-        return int(str(track_str).split('/')[0])
-    except Exception:
-        return 999
-
-
-def _suggest_tags(current):
-    """Suggestions locales basées sur les tags actuels (normalisation)."""
-    def title_case(s):
-        if not s:
-            return s
-        if s.isupper():
-            small = {'a','an','the','and','but','or','for','nor','on','at','to','by','in','of','up','as','is','it'}
-            words = s.lower().split()
-            result = []
-            for i, w in enumerate(words):
-                result.append(w if (i > 0 and w in small) else w.capitalize())
-            return ' '.join(result)
-        return s
-
-    def clean_track(t):
-        if not t:
-            return t
-        parts = str(t).split('/')
-        try:
-            num = str(int(parts[0]))
-            return f"{num}/{parts[1]}" if len(parts) > 1 else num
-        except Exception:
-            return t
-
-    return {
-        'title':     title_case(current['title']),
-        'artist':    current['artist'],
-        'album':     current['album'],
-        'year':      current['year'][:4] if current['year'] else current['year'],
-        'track':     clean_track(current['track']),
-        'genre':     current['genre'],
-        'has_cover': current['has_cover'],
-    }
-
-
-def _has_diff(current, suggested):
-    """Retourne True si au moins un champ diffère entre current et suggested."""
-    fields = ['title', 'artist', 'album', 'year', 'track', 'genre']
-    return any(
-        (current.get(f) or '') != (suggested.get(f) or '')
-        for f in fields
-    )
-
-
-@app.route('/api/beets/apply', methods=['POST'])
-@login_required
-def beets_apply():
-    """Applique les changements de tags validés par le frontend."""
-    with beets_lock:
-        if beets_status['running']:
-            return jsonify({'success': False, 'error': 'Beets déjà en cours'}), 409
-        beets_status['running']  = True
-        beets_status['task']     = 'apply'
-        beets_status['progress'] = 'Application en cours…'
-
-    data    = request.get_json()
-    changes = data.get('changes', [])
-
-    def _apply():
-        applied = 0
-        errors  = []
-        try:
-            from mutagen.mp3 import MP3
-            from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, TRCK, TCON
-
-            for change in changes:
-                rel_path = change.get('path', '')
-                mp3_path = MUSIC_DIR / rel_path
-                if not mp3_path.exists():
-                    errors.append(f'Fichier introuvable: {rel_path}')
-                    continue
-                try:
-                    try:
-                        tags = ID3(mp3_path)
-                    except ID3NoHeaderError:
-                        tags = ID3()
-
-                    if change.get('title')  is not None: tags['TIT2'] = TIT2(encoding=3, text=change['title'])
-                    if change.get('artist') is not None: tags['TPE1'] = TPE1(encoding=3, text=change['artist'])
-                    if change.get('album')  is not None: tags['TALB'] = TALB(encoding=3, text=change['album'])
-                    if change.get('year')   is not None: tags['TDRC'] = TDRC(encoding=3, text=change['year'])
-                    if change.get('track')  is not None: tags['TRCK'] = TRCK(encoding=3, text=change['track'])
-                    if change.get('genre')  is not None: tags['TCON'] = TCON(encoding=3, text=change['genre'])
-
-                    tags.save(mp3_path)
-                    applied += 1
-                    logger.info(f'🏷️  Tagged: {rel_path}')
-
-                except Exception as e:
-                    errors.append(f'{rel_path}: {e}')
-                    logger.error(f'🏷️  Erreur tag {rel_path}: {e}')
-
-        except ImportError:
-            with beets_lock:
-                beets_status['last_error'] = 'mutagen non installé'
-        except Exception as e:
-            with beets_lock:
-                beets_status['last_error'] = str(e)
-        finally:
-            with beets_lock:
-                beets_status['running']  = False
-                beets_status['task']     = None
-                beets_status['progress'] = f'{applied} fichier(s) mis à jour'
-                if errors:
-                    beets_status['last_error'] = '; '.join(errors[:5])
-            logger.info(f'🏷️  Apply terminé: {applied} fichiers, {len(errors)} erreurs')
-
-    threading.Thread(target=_apply, daemon=True).start()
-    return jsonify({'success': True, 'queued': len(changes)})
-
-
-# ============================================
 # API GUEST
 # ============================================
 
@@ -1268,7 +771,8 @@ def guest_status():
     status['queue_size']       = sess['queue'].qsize() if 'queue' in sess else 0
     status['songs_downloaded'] = sess.get('songs_downloaded', 0)
     status['max_songs']        = GUEST_MAX_SONGS
-    status['expires_at']       = sess.get('expires_at', datetime.now()).isoformat()
+    exp = sess.get('expires_at', datetime.now())
+    status['expires_at']       = exp if isinstance(exp, str) else exp.isoformat()
     if status.get('in_progress') and 'downloader' in sess:
         status['progress'] = sess['downloader'].get_progress()
     return jsonify(status)
@@ -1283,6 +787,9 @@ def guest_extend_session():
         sess = guest_sessions.get(sid)
         if not sess:
             return jsonify({'success': False, 'error': 'Session introuvable'}), 404
+        # Normaliser expires_at en datetime si nécessaire
+        if isinstance(sess['expires_at'], str):
+            sess['expires_at'] = datetime.fromisoformat(sess['expires_at'])
         sess['expires_at'] = sess['expires_at'] + timedelta(seconds=GUEST_SESSION_TTL)
         new_expires = sess['expires_at'].isoformat()
     logger.info(f"🔄 Session guest prolongée: {sid[:8]} → expire à {new_expires}")
@@ -1610,4 +1117,5 @@ if __name__ == '__main__':
     threading.Thread(target=queue_worker,         daemon=True).start()
     threading.Thread(target=guest_cleanup_worker, daemon=True).start()
 
-    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+    flask_port = int(os.getenv('FLASK_PORT', '8080'))
+    app.run(host='0.0.0.0', port=flask_port, debug=False, use_reloader=False)

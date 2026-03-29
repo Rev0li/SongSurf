@@ -54,8 +54,8 @@ EXPOSE 8080
 VOLUME ["/data/temp", "/data/music"]
 
 # Healthcheck pour vérifier que le serveur répond
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8080/ping || exit 1
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:${FLASK_PORT:-8080}/ping || exit 1
 
 # Point d'entrée qui met à jour yt-dlp avant de démarrer
 ENTRYPOINT ["/entrypoint.sh"]

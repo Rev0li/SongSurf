@@ -5,7 +5,11 @@
 # Architecture :
 #   [Watcher :8080]  ← toujours actif, gère l'auth et proxyfie
 #        │
-#        └── démarre/arrête à la demande →  [SongSurf :8080 interne]
+#        └── démarre/arrête à la demande →  [SongSurf :8081 interne]
+#
+# Les deux services utilisent network_mode: host (résout les problèmes DNS Synology).
+# Watcher atteint SongSurf via http://localhost:8081 (réseau hôte partagé).
+# Seul le port 8080 (Watcher) doit être accessible depuis l'extérieur.
 #
 # Utilisation:
 #   docker-compose up -d           # Démarrer (Watcher + SongSurf)
@@ -26,10 +30,8 @@ services:
       dockerfile: watcher/Dockerfile
     image: watcher:latest
     restart: on-failure
-    networks: [songsurf-net]
-
-    ports:
-      - "8080:8080"   # seul port exposé à l'extérieur
+    network_mode: host
+    user: root    # Nécessaire pour accéder au Docker socket (/var/run/docker.sock)
 
     volumes:
       # Accès au Docker socket pour démarrer/arrêter SongSurf
@@ -45,13 +47,13 @@ services:
       # Mot de passe accès guest
       - WATCHER_GUEST_PASSWORD=MotDePasseAmis
       # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
-      - WATCHER_SECRET=GenerezUnSecretAleatoire32chars
+      - WATCHER_SECRET=GenerezUnSecretAleatoire
       # URL secrète du login admin
       - ADMIN_LOGIN_PATH=/administrator
       # Nom du container SongSurf (doit correspondre à container_name ci-dessous)
       - TARGET_CONTAINER=songsurf
-      # URL interne de SongSurf (réseau Docker)
-      - TARGET_URL=http://songsurf:8080
+      # SongSurf écoute sur localhost:8081 (réseau hôte)
+      - TARGET_URL=http://localhost:8081
       # Arrêter SongSurf après 30 min d'inactivité
       - INACTIVITY_TIMEOUT=1800
 
@@ -70,33 +72,26 @@ services:
       dockerfile: Dockerfile
     image: songsurf:latest
     restart: on-failure
-    networks: [songsurf-net]
-
-    # Pas de ports exposés — uniquement accessible depuis Watcher (réseau interne)
-
-    # Contournement DNS Synology : utiliser les DNS publics Google/Cloudflare
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    network_mode: host
 
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Paris
+      # SongSurf écoute sur le port 8081 (Watcher prend le 8080)
+      - FLASK_PORT=8081
       # Clé secrète Flask (différente de celle du Watcher)
       - FLASK_SECRET_KEY=ChangezMoiAussi-SongSurf
       # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
-      - WATCHER_SECRET=GenerezUnSecretAleatoire32chars
+      - WATCHER_SECRET=GenerezUnSecretAleatoire
       # URL du login admin (fallback mode standalone uniquement)
       - ADMIN_LOGIN_PATH=/administrator
       # Ces mots de passe ne sont plus utilisés en mode Watcher
       # (gardés pour mode standalone/dev local uniquement)
       - SONGSURF_PASSWORD=
       - SONGSURF_GUEST_PASSWORD=
-      # Quota et durée de session guest
-      - GUEST_MAX_SONGS=10
+      # Quota et durée de session guest (0 = illimité)
+      - GUEST_MAX_SONGS=0
       - GUEST_SESSION_TTL=3600
-      # Dossier Plex destination
-      - PLEX_MUSIC_DIR=/data/plex_music
 
     volumes:
       - ./data/temp:/data/temp
@@ -105,17 +100,10 @@ services:
       - ./data/temp_guest:/data/temp_guest
       - ./logs:/app/logs
       - ./python-server/templates:/app/templates
-      # Dossier Plex destination (déplacement après validation des métadonnées)
-      - /volume1/plex_media/music:/data/plex_music
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8081/ping"]
+      interval: 10s
+      timeout: 5s
       retries: 3
-      start_period: 40s
-
-# ── Réseau interne Bridge ────────────────────────────────────────────────────
-networks:
-  songsurf-net:
-    driver: bridge
+      start_period: 15s
