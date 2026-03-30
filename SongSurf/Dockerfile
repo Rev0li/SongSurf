@@ -32,13 +32,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copier le requirements.txt en premier (pour cache Docker)
-COPY --chown=songsurf:songsurf python-server/requirements.txt .
+COPY --chown=songsurf:songsurf server/requirements.txt .
 
 # Installer les dépendances Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copier le code de l'application
-COPY --chown=songsurf:songsurf python-server/ .
+COPY --chown=songsurf:songsurf server/ .
 
 # Copier le script entrypoint (sed corrige les fins de ligne CRLF → LF au cas où)
 COPY --chown=songsurf:songsurf docker/entrypoint.sh /entrypoint.sh
@@ -47,8 +47,8 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 # Changer vers l'utilisateur non-root
 USER songsurf
 
-# Exposer le port du serveur Flask
-EXPOSE 8080
+# Exposer les ports possibles du serveur Flask (8080 standalone / 8081 derrière Watcher)
+EXPOSE 8080 8081
 
 # Volumes pour persistance des données
 VOLUME ["/data/temp", "/data/music"]

@@ -271,6 +271,20 @@ class MusicOrganizer:
                 img = img.convert('RGB')
 
             max_size = 1000
+
+            # AJOUTER AVANT max_size :
+            # Crop en carré 1:1
+            width, height = img.size
+            
+            if width != height:
+                min_dim = min(width, height)
+                left = (width - min_dim) // 2
+                top = (height - min_dim) // 2
+                right = left + min_dim
+                bottom = top + min_dim
+                img = img.crop((left, top, right, bottom))
+                logger.debug(f"✂️ Image croppée: {min_dim}x{min_dim}")
+
             if img.width > max_size or img.height > max_size:
                 img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 

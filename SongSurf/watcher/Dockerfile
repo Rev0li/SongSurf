@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY watcher/watcher.py .
 
 # Templates : propres au watcher + login partagé avec SongSurf
-COPY watcher/templates/ templates/
-COPY python-server/templates/login.html templates/login.html
+COPY templates/ templates/
+COPY templates/pages/login.html templates/pages/login.html
 
 EXPOSE 8080
 

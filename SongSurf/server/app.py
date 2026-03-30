@@ -1093,12 +1093,17 @@ def queue_worker():
             logger.error(f"❌ Admin queue worker error: {e}")
             time.sleep(1)
 
+from flask import send_from_directory
 
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
 # ============================================
 # MAIN
 # ============================================
 
 if __name__ == '__main__':
+    flask_port = int(os.getenv('FLASK_PORT', '8080'))
     print("\n" + "=" * 60)
     print("🎵 SongSurf - Dashboard Musical")
     print("=" * 60)
@@ -1110,12 +1115,11 @@ if __name__ == '__main__':
     print(f"⏱️  Guest TTL   : {GUEST_SESSION_TTL // 60} minutes")
     print(f"📝 Logs        : {LOG_DIR / 'songsurf.log'}")
     print("=" * 60)
-    print("🚀 http://0.0.0.0:8080")
+    print(f"🚀 http://0.0.0.0:{flask_port}")
     print("=" * 60 + "\n")
 
     # Démarrer les workers
     threading.Thread(target=queue_worker,         daemon=True).start()
     threading.Thread(target=guest_cleanup_worker, daemon=True).start()
 
-    flask_port = int(os.getenv('FLASK_PORT', '8080'))
     app.run(host='0.0.0.0', port=flask_port, debug=False, use_reloader=False)

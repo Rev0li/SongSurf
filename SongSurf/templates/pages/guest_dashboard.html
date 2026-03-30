@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SongSurf - Espace Guest</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      background: #0a0a0f;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .brand { font-size: 20px; font-weight: 700; background: linear-gradient(135deg, #ff3b6d, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .guest-badge { background: rgba(124,58,237,0.2); border: 1px solid rgba(124,58,237,0.4); color: #a78bfa; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .btn-logout { background: none; border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.5); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .2s; }
+    .btn-logout:hover { border-color: rgba(255,255,255,0.3); color: #fff; }
+
+    /* ── Layout ── */
+    main { max-width: 700px; margin: 0 auto; padding: 32px 20px; }
+
+    /* ── Session info bar ── */
+    .session-bar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .session-pill {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      color: rgba(255,255,255,0.7);
+      flex: 1;
+      min-width: 140px;
+    }
+    .session-pill strong { display: block; font-size: 18px; color: #fff; margin-bottom: 2px; }
+    .session-pill.warn strong { color: #fbbf24; }
+    .session-pill.ok strong { color: #34d399; }
+
+    /* ── Quota bar ── */
+    .quota-wrap { margin-bottom: 28px; }
+    .quota-label { font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 8px; display: flex; justify-content: space-between; }
+    .quota-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }
+    .quota-fill { height: 100%; background: linear-gradient(90deg, #7c3aed, #ff3b6d); border-radius: 10px; transition: width .4s; }
+    .quota-fill.full { background: #ef4444; }
+
+    /* ── Card ── */
+    .card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: rgba(255,255,255,0.85); }
+
+    /* ── Input URL ── */
+    .input-row { display: flex; gap: 10px; }
+    .url-input {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .url-input:focus { border-color: #7c3aed; }
+    .url-input::placeholder { color: rgba(255,255,255,0.25); }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      white-space: nowrap;
+    }
+    .btn-primary { background: linear-gradient(135deg, #7c3aed, #ff3b6d); color: #fff; }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,0.4); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-success { background: linear-gradient(135deg, #059669, #10b981); color: #fff; width: 100%; font-size: 15px; padding: 14px; }
+    .btn-success:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16,185,129,0.4); }
+    .btn-success:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-danger { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; padding: 8px 16px; font-size: 13px; }
+    .btn-danger:hover { background: rgba(239,68,68,0.25); }
+
+    /* ── Metadata preview ── */
+    #metadata-preview { display: none; margin-top: 16px; }
+    .meta-card {
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .meta-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,0.1); flex-shrink: 0; }
+    .meta-info { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .meta-field { display: flex; flex-direction: column; gap: 3px; }
+    .meta-field label { font-size: 11px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: .5px; }
+    .meta-field input {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px;
+      color: #fff;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color .2s;
+      width: 100%;
+    }
+    .meta-field input:focus { border-color: #7c3aed; }
+    .meta-field input::placeholder { color: rgba(255,255,255,0.2); }
+    .meta-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* ── Progress ── */
+    #progress-zone { display: none; }
+    .progress-bar-wrap { height: 8px; background: rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; margin: 12px 0 6px; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #7c3aed, #ff3b6d); border-radius: 10px; transition: width .3s; }
+    .progress-text { font-size: 12px; color: rgba(255,255,255,0.5); display: flex; justify-content: space-between; }
+    .progress-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .progress-status { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 10px; }
+
+    /* ── Download list groupée ── */
+    #dl-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .dl-group {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .dl-group-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.05);
+      cursor: pointer;
+      user-select: none;
+      transition: background .15s;
+    }
+    .dl-group-header:hover { background: rgba(255,255,255,0.08); }
+    .dl-group-icon { font-size: 22px; flex-shrink: 0; }
+    .dl-group-info { flex: 1; min-width: 0; }
+    .dl-group-title {
+      font-size: 14px; font-weight: 600; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block;
+    }
+    .dl-group-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+    .dl-group-chevron {
+      font-size: 11px; color: rgba(255,255,255,0.35);
+      transition: transform .2s; flex-shrink: 0;
+    }
+    .dl-group.open .dl-group-chevron { transform: rotate(180deg); }
+
+    .dl-group-songs {
+      list-style: none;
+      display: none;
+      flex-direction: column;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .dl-group.open .dl-group-songs { display: flex; }
+
+    .dl-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px 9px 44px;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .dl-item:last-child { border-bottom: none; }
+    .dl-item .icon { font-size: 14px; flex-shrink: 0; color: rgba(255,255,255,0.3); }
+    .dl-item .name { flex: 1; color: rgba(255,255,255,0.75); }
+    .dl-item .ok { color: #34d399; font-size: 12px; font-weight: 600; }
+
+    /* ── ZIP zone ── */
+    #zip-zone { display: none; }
+    .zip-success {
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.25);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .zip-success .zip-icon { font-size: 36px; margin-bottom: 8px; }
+    .zip-success p { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 6px; }
+
+    /* ── Alert ── */
+    .alert { padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 16px; }
+    .alert-error { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+    .alert-info  { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd; }
+
+    /* ── Timer ── */
+    #timer { font-variant-numeric: tabular-nums; }
+
+    /* ── Empty state ── */
+    .empty { text-align: center; color: rgba(255,255,255,0.3); padding: 30px 0; font-size: 14px; }
+
+    /* ── Modale expiration session ── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #13131a;
+      border: 1px solid rgba(251,191,36,0.35);
+      border-radius: 18px;
+      padding: 32px 28px;
+      max-width: 420px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      animation: modalIn .25s ease;
+    }
+    @keyframes modalIn {
+      from { transform: scale(.92); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+    .modal-icon { font-size: 44px; margin-bottom: 14px; }
+    .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #fbbf24; }
+    .modal-body  { font-size: 14px; color: rgba(255,255,255,0.65); line-height: 1.6; margin-bottom: 24px; }
+    .modal-countdown { font-size: 28px; font-weight: 700; color: #ef4444; margin: 10px 0; font-variant-numeric: tabular-nums; }
+    .modal-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-extend {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: #fff; border: none; border-radius: 10px;
+      padding: 13px 24px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s; flex: 1; min-width: 140px;
+    }
+    .btn-extend:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16,185,129,0.4); }
+    .btn-leave {
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.35);
+      color: #fca5a5; border-radius: 10px;
+      padding: 13px 24px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s; flex: 1; min-width: 140px;
+    }
+    .btn-leave:hover { background: rgba(239,68,68,0.28); }
+
+    /* ── Toggle Playlist ── */
+    .toggle-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; margin-bottom: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+    }
+    .toggle-label { flex: 1; font-size: 13px; color: rgba(255,255,255,0.65); }
+    .toggle-label strong { color: #c4b5fd; }
+    .toggle-label small  { display: block; font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 2px; }
+    .toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.1); border-radius: 24px;
+      cursor: pointer; transition: background .25s;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 18px; height: 18px; left: 2px; top: 2px;
+      background: #fff; border-radius: 50%; transition: transform .25s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: #7c3aed; border-color: #7c3aed; }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+    /* ── Modale tuto onboarding ── */
+    .tuto-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.82);
+      backdrop-filter: blur(6px);
+      align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .tuto-overlay.active { display: flex; }
+    .tuto-box {
+      background: #13131a;
+      border: 1px solid rgba(124,58,237,0.4);
+      border-radius: 20px;
+      padding: 32px 28px 24px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+      animation: modalIn .25s ease;
+    }
+    .tuto-steps {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 28px;
+    }
+    .tuto-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      transition: background .2s;
+    }
+    .tuto-dot.active { background: #7c3aed; width: 22px; border-radius: 4px; }
+    .tuto-screen { display: none; }
+    .tuto-screen.active { display: block; }
+    .tuto-icon { font-size: 36px; margin-bottom: 12px; text-align: center; }
+    .tuto-title {
+      font-size: 18px; font-weight: 700; color: #fff;
+      text-align: center; margin-bottom: 6px;
+    }
+    .tuto-subtitle {
+      font-size: 13px; color: rgba(255,255,255,0.5);
+      text-align: center; margin-bottom: 20px; line-height: 1.5;
+    }
+    /* Fausse barre d'adresse */
+    .fake-browser {
+      background: #1e1e2a;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .fake-browser-bar {
+      background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .fake-dots { display: flex; gap: 5px; }
+    .fake-dots span { width: 10px; height: 10px; border-radius: 50%; }
+    .fake-dots .d1 { background: #ef4444; }
+    .fake-dots .d2 { background: #fbbf24; }
+    .fake-dots .d3 { background: #34d399; }
+    .fake-url {
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-family: monospace;
+      color: rgba(255,255,255,0.6);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fake-url .hl { color: #a78bfa; font-weight: 700; }
+    .fake-url .hl2 { color: #34d399; font-weight: 700; }
+    .fake-screen-body {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .fake-thumb {
+      width: 64px; height: 64px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+    }
+    .fake-thumb.song { background: linear-gradient(135deg, #7c3aed33, #ff3b6d33); border: 1px solid rgba(124,58,237,0.3); }
+    .fake-thumb.album { background: linear-gradient(135deg, #05966933, #0ea5e933); border: 1px solid rgba(5,150,105,0.3); }
+    .fake-meta { flex: 1; }
+    .fake-meta-title { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .fake-meta-sub { font-size: 11px; color: rgba(255,255,255,0.4); }
+    .tuto-tip {
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.65);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .tuto-tip strong { color: #a78bfa; }
+    .tuto-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .btn-tuto-skip {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.4);
+      border-radius: 10px;
+      padding: 11px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-tuto-skip:hover { color: rgba(255,255,255,0.7); }
+    .btn-tuto-next {
+      flex: 2;
+      background: linear-gradient(135deg, #7c3aed, #ff3b6d);
+      border: none;
+      color: #fff;
+      border-radius: 10px;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-tuto-next:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,0.4); }
+    /* Bouton aide dans le header */
+    .btn-help {
+      background: rgba(124,58,237,0.15);
+      border: 1px solid rgba(124,58,237,0.35);
+      color: #a78bfa;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      transition: all .2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .btn-help:hover { background: rgba(124,58,237,0.3); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">🎵 SongSurf</div>
+  <div class="header-right">
+    <span class="guest-badge">🎭 Accès Guest</span>
+    <button class="btn-help" onclick="openTuto()" title="Comment ça marche ?">?</button>
+    <button class="btn-logout" onclick="location.href='/guest/logout'">Déconnexion</button>
+  </div>
+</header>
+
+<!-- ── Modale tuto onboarding ── -->
+<div class="tuto-overlay" id="tuto-overlay">
+  <div class="tuto-box">
+
+    <!-- Indicateurs d'étapes -->
+    <div class="tuto-steps">
+      <div class="tuto-dot active" id="tuto-dot-0"></div>
+      <div class="tuto-dot"        id="tuto-dot-1"></div>
+    </div>
+
+    <!-- ── Écran 1 : Chanson simple ── -->
+    <div class="tuto-screen active" id="tuto-screen-0">
+      <div class="tuto-icon">🎵</div>
+      <div class="tuto-title">Télécharger une chanson</div>
+      <div class="tuto-subtitle">Lance la chanson sur YouTube Music, puis copie l'URL de la barre d'adresse.</div>
+
+      <div class="fake-browser">
+        <div class="fake-browser-bar">
+          <div class="fake-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <div class="fake-url">
+            <span class="hl">music.youtube.com</span>/watch?<span class="hl2">v=rFWe4mYYyl4</span>&amp;list=...
+          </div>
+        </div>
+        <div class="fake-screen-body">
+          <div class="fake-thumb song">🎵</div>
+          <div class="fake-meta">
+            <div class="fake-meta-title">Amours</div>
+            <div class="fake-meta-sub">Louise Attaque · 1997 · 1:58</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tuto-tip">
+        💡 L'URL doit contenir <strong>music.youtube.com/watch?v=</strong><br>
+        Colle ce lien directement dans SongSurf.
+      </div>
+
+      <div class="tuto-actions">
+        <button class="btn-tuto-skip" onclick="closeTuto()">Passer</button>
+        <button class="btn-tuto-next" onclick="tutoNext()">Suivant →</button>
+      </div>
+    </div>
+
+    <!-- ── Écran 2 : Album / Playlist ── -->
+    <div class="tuto-screen" id="tuto-screen-1">
+      <div class="tuto-icon">💿</div>
+      <div class="tuto-title">Télécharger un album ou une playlist</div>
+      <div class="tuto-subtitle">Ouvre la page de l'album ou de la playlist, puis copie l'URL.</div>
+
+      <div class="fake-browser">
+        <div class="fake-browser-bar">
+          <div class="fake-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+          <div class="fake-url">
+            <span class="hl">music.youtube.com</span>/playlist?<span class="hl2">list=OLAK5uy_n...</span>
+          </div>
+        </div>
+        <div class="fake-screen-body">
+          <div class="fake-thumb album">💿</div>
+          <div class="fake-meta">
+            <div class="fake-meta-title">Louise Attaque</div>
+            <div class="fake-meta-sub">Album · 1997 · 14 chansons · 39 min</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tuto-tip">
+        💡 L'URL doit contenir <strong>music.youtube.com/playlist?list=</strong><br>
+        Active le <strong>Mode Playlist 🎵</strong> avant de télécharger pour organiser les morceaux dans un seul dossier.
+      </div>
+
+      <div class="tuto-actions">
+        <button class="btn-tuto-skip" onclick="tutoPrev()">← Retour</button>
+        <button class="btn-tuto-next" onclick="closeTuto()">C'est parti ! 🚀</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<main>
+
+  <!-- Session info -->
+  <div class="session-bar">
+    <div class="session-pill ok" id="pill-songs">
+      <strong id="pill-songs-val">0 / {{ max_songs if max_songs > 0 else '∞' }}</strong>
+      Chansons téléchargées
+    </div>
+    <div class="session-pill" id="pill-queue">
+      <strong id="pill-queue-val">0</strong>
+      En attente
+    </div>
+    <div class="session-pill warn">
+      <strong id="timer">--:--</strong>
+      Expiration session
+    </div>
+  </div>
+
+  <!-- Quota bar -->
+  {% if max_songs > 0 %}
+  <div class="quota-wrap">
+    <div class="quota-label">
+      <span>Quota utilisé</span>
+      <span id="quota-text">0 / {{ max_songs }}</span>
+    </div>
+    <div class="quota-bar">
+      <div class="quota-fill" id="quota-fill" style="width: 0%"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Input URL -->
+  <div class="card">
+    <h2>🔗 Coller un lien YouTube Music</h2>
+    <div id="alert-zone"></div>
+    <div class="input-row">
+      <input type="text" class="url-input" id="url-input"
+             placeholder="https://music.youtube.com/watch?v=..." />
+      <button class="btn btn-primary" id="btn-extract" onclick="extractUrl()">Analyser</button>
+    </div>
+
+    <!-- Métadonnées extraites -->
+    <div id="metadata-preview">
+      <div class="meta-card">
+        <img class="meta-thumb" id="meta-thumb" src="" alt="" onerror="this.style.display='none'">
+        <div class="meta-info" id="meta-fields-single">
+          <div class="meta-field">
+            <label>Titre</label>
+            <input type="text" id="edit-title" placeholder="Titre de la chanson">
+          </div>
+          <div class="meta-field">
+            <label>Artiste</label>
+            <input type="text" id="edit-artist" placeholder="Artiste">
+          </div>
+          <div class="meta-field">
+            <label>Album</label>
+            <input type="text" id="edit-album" placeholder="Album">
+          </div>
+        </div>
+        <!-- Playlist : confirmation avec champs éditables -->
+        <div class="meta-info" id="meta-fields-playlist" style="display:none">
+          <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display">—</div>
+          <div class="meta-field">
+            <label>Artiste</label>
+            <input type="text" id="edit-playlist-artist" placeholder="Artiste">
+          </div>
+          <div class="meta-field">
+            <label>Album / Playlist</label>
+            <input type="text" id="edit-playlist-album" placeholder="Nom de l'album">
+          </div>
+          <div class="meta-field">
+            <label>Année</label>
+            <input type="text" id="edit-playlist-year" placeholder="2024" style="max-width:100px">
+          </div>
+        </div>
+      </div>
+      <!-- Toggle Playlist Mode -->
+      <div class="toggle-row" style="margin-top:12px;">
+        <div class="toggle-label">
+          <strong>🎵 Mode Playlist</strong>
+          <small>Actif : dossier par album, pas de tri artiste. Inactif : tri Artist/Album/Titre.</small>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="meta-actions">
+        <button class="btn btn-primary" id="btn-dl" onclick="addToQueue()">⬇️ Télécharger</button>
+        <button class="btn btn-danger" onclick="resetPreview()">✕ Annuler</button>
+      </div>
+      <!-- Playlist quota warning -->
+      <div id="playlist-info" style="display:none; margin-top:12px;">
+        <div class="alert alert-info" id="playlist-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progression en cours -->
+  <div class="card" id="progress-zone">
+    <h2>⏳ Téléchargement en cours</h2>
+    <div class="progress-title" id="prog-title">—</div>
+    <div class="progress-status" id="prog-status">—</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="prog-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-text">
+      <span id="prog-pct">0%</span>
+      <span id="prog-speed">—</span>
+      <span id="prog-eta">—</span>
+    </div>
+  </div>
+
+  <!-- Liste des téléchargements groupée par album -->
+  <div class="card">
+    <h2>✅ Musiques prêtes</h2>
+    <div id="dl-list">
+      <div class="empty" id="dl-empty">Aucune musique téléchargée pour l'instant</div>
+    </div>
+  </div>
+
+  <!-- Zone ZIP -->
+  <div class="card" id="zip-zone">
+    <h2>📦 Télécharger mes musiques</h2>
+
+    <!-- État : bouton initial -->
+    <div id="zip-state-idle">
+      <p style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:14px;">
+        ⚠️ Après le téléchargement, votre session sera fermée automatiquement.
+      </p>
+      <button class="btn btn-success" id="btn-prepare-zip" onclick="prepareAndDownloadZip()" style="width:100%">
+        📦 Télécharger mon ZIP
+      </button>
+    </div>
+
+    <!-- État : préparation en cours -->
+    <div id="zip-state-preparing" style="display:none; text-align:center; padding:20px;">
+      <div style="font-size:28px;margin-bottom:10px;">⏳</div>
+      <div style="font-weight:600;margin-bottom:6px;">Préparation du ZIP…</div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.5);">Patientez, cela peut prendre quelques secondes.</div>
+    </div>
+
+    <!-- État : téléchargement lancé -->
+    <div id="zip-state-done" style="display:none;">
+      <div class="zip-success" style="background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.25);">
+        <div class="zip-icon">✅</div>
+        <div style="font-weight:600;font-size:16px;margin-bottom:6px;">Téléchargement démarré !</div>
+        <div id="zip-info-text" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:10px;"></div>
+        <p style="font-size:13px;color:rgba(255,255,255,0.5);">
+          Votre session sera fermée dans <strong id="zip-countdown">15:00</strong>.<br>
+          Vous pouvez fermer cet onglet, le téléchargement continue en arrière-plan.
+        </p>
+      </div>
+      <button class="btn btn-danger" style="width:100%;margin-top:10px;" onclick="closeSessionNow()">
+        🚪 Fermer ma session maintenant
+      </button>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Modale expiration session ── -->
+<div class="modal-overlay" id="expiry-modal">
+  <div class="modal-box">
+    <div class="modal-icon">⏰</div>
+    <div class="modal-title">Votre session expire bientôt !</div>
+    <div class="modal-body">
+      Il vous reste
+      <div class="modal-countdown" id="modal-countdown">5:00</div>
+      avant la fermeture automatique de votre session et la suppression de vos fichiers.
+    </div>
+    <div class="modal-actions">
+      <button class="btn-extend" id="btn-extend" onclick="extendSession()">
+        ✅ Continuer<br><small style="font-weight:400;font-size:11px;">Prolonger d'1 heure</small>
+      </button>
+      <button class="btn-leave" onclick="leaveSession()">
+        📦 Partir<br><small style="font-weight:400;font-size:11px;">Télécharger mon ZIP</small>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── État ──────────────────────────────────────────
+  const MAX_SONGS      = { max_songs };
+  let expiresAt        = new Date("{{ expires_at }}");
+  let currentMeta      = null;
+  let isPlaylist       = false;
+  let pollInterval     = null;
+  let completed        = [];
+  let playlistModeEnabled = false;
+  let expiryModalShown = false;   // pop-up affichée une seule fois par session
+
+  // ── Tuto onboarding ───────────────────────────────
+  let tutoStep = 0;
+
+  function openTuto() {
+    tutoStep = 0;
+    _tutoRender();
+    document.getElementById('tuto-overlay').classList.add('active');
+  }
+
+  function closeTuto() {
+    document.getElementById('tuto-overlay').classList.remove('active');
+    localStorage.setItem('songsurf_tuto_done', '1');
+  }
+
+  function tutoNext() {
+    tutoStep = 1;
+    _tutoRender();
+  }
+
+  function tutoPrev() {
+    tutoStep = 0;
+    _tutoRender();
+  }
+
+  function _tutoRender() {
+    [0, 1].forEach(i => {
+      document.getElementById(`tuto-screen-${i}`).classList.toggle('active', i === tutoStep);
+      document.getElementById(`tuto-dot-${i}`).classList.toggle('active', i === tutoStep);
+    });
+  }
+
+  // Afficher automatiquement à la première visite
+  if (!localStorage.getItem('songsurf_tuto_done')) {
+    openTuto();
+  }
+
+  function onPlaylistModeChange() {
+    playlistModeEnabled = document.getElementById('toggle-playlist-mode').checked;
+  }
+
+  // ── Timer expiration ─────────────────────────────
+  const WARN_SECONDS = 5 * 60; // afficher la pop-up à 5 min restantes
+
+  function updateTimer() {
+    const now  = new Date();
+    const diff = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    const h    = Math.floor(diff / 3600);
+    const m    = Math.floor((diff % 3600) / 60);
+    const s    = diff % 60;
+    document.getElementById('timer').textContent =
+      h > 0 ? `${h}h ${String(m).padStart(2,'0')}min` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+    // Mettre à jour le compte à rebours dans la modale si elle est ouverte
+    if (document.getElementById('expiry-modal').classList.contains('active')) {
+      document.getElementById('modal-countdown').textContent =
+        h > 0 ? `${h}h ${String(m).padStart(2,'0')}min` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    // Afficher la pop-up à WARN_SECONDS avant l'expiration (une seule fois)
+    if (!expiryModalShown && diff > 0 && diff <= WARN_SECONDS) {
+      expiryModalShown = true;
+      document.getElementById('expiry-modal').classList.add('active');
+    }
+
+    // Session expirée
+    if (diff === 0) {
+      document.getElementById('expiry-modal').classList.remove('active');
+      showAlert("⏱️ Votre session a expiré. Reconnectez-vous.", 'info');
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    }
+  }
+  setInterval(updateTimer, 1000);
+  updateTimer();
+
+  // ── Prolonger la session ──────────────────────────
+  async function extendSession() {
+    const btn = document.getElementById('btn-extend');
+    btn.disabled = true;
+    btn.textContent = '⏳ Prolongation…';
+    try {
+      const res  = await fetch('/api/guest/extend-session', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        expiresAt        = new Date(data.expires_at);
+        expiryModalShown = false; // permettre un nouvel avertissement dans 1h
+        document.getElementById('expiry-modal').classList.remove('active');
+        showAlert('✅ Session prolongée d\'une heure !', 'info');
+      } else {
+        showAlert(data.error || 'Impossible de prolonger la session.');
+        document.getElementById('expiry-modal').classList.remove('active');
+      }
+    } catch(e) {
+      showAlert('Erreur réseau lors de la prolongation.');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '✅ Continuer<br><small style="font-weight:400;font-size:11px;">Prolonger d\'1 heure</small>';
+    }
+  }
+
+  // ── Partir : fermer la modale et lancer le flow ZIP ──
+  function leaveSession() {
+    document.getElementById('expiry-modal').classList.remove('active');
+
+    const zipZone = document.getElementById('zip-zone');
+    if (zipZone.style.display === 'none' || zipZone.style.display === '') {
+      // Aucun fichier encore → informer l'utilisateur
+      showAlert('📦 Aucune musique téléchargée. Téléchargez d\'abord une musique pour obtenir un ZIP.', 'info');
+      return;
+    }
+
+    // Scroller vers la zone ZIP et lancer directement
+    zipZone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Petit délai pour que le scroll soit visible avant de lancer
+    setTimeout(() => prepareAndDownloadZip(), 400);
+  }
+
+  // ── Alertes ──────────────────────────────────────
+  function showAlert(msg, type = 'error') {
+    const zone = document.getElementById('alert-zone');
+    zone.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+    setTimeout(() => zone.innerHTML = '', 5000);
+  }
+
+  // ── Gestion état global des boutons ─────────────
+  let isDownloading = false;
+
+  function setDownloadingState(active) {
+    isDownloading = active;
+    document.getElementById('btn-extract').disabled    = active;
+    document.getElementById('btn-prepare-zip').disabled = active;
+    if (active) {
+      document.getElementById('btn-extract').title     = 'Téléchargement en cours…';
+      document.getElementById('btn-prepare-zip').title = 'Attendez la fin du téléchargement';
+    } else {
+      document.getElementById('btn-extract').title     = '';
+      document.getElementById('btn-prepare-zip').title = '';
+    }
+  }
+
+  // ── Extract URL ──────────────────────────────────
+  async function extractUrl() {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) return showAlert('Collez un lien YouTube Music.');
+    document.getElementById('btn-extract').disabled = true;
+    document.getElementById('btn-extract').textContent = '⏳';
+    document.getElementById('metadata-preview').style.display = 'none';
+
+    try {
+      const res  = await fetch('/api/guest/extract', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+      console.log('Extract response:', JSON.stringify(data, null, 2));
+      if (!data.success) return showAlert(data.error || 'Erreur extraction.');
+
+      // Normaliser la réponse : aplatir si les données sont dans 'metadata'
+      const meta = data.metadata ? { ...data, ...data.metadata } : data;
+      currentMeta = meta;
+
+      if (meta.songs) {
+        // ── Playlist / album ──
+        isPlaylist = true;
+        document.getElementById('meta-fields-single').style.display   = 'none';
+        document.getElementById('meta-fields-playlist').style.display = 'flex';
+        document.getElementById('meta-thumb').style.display           = 'none';
+        document.getElementById('playlist-title-display').textContent = `💿 ${meta.songs.length} chanson(s) détectée(s)`;
+        document.getElementById('playlist-info').style.display        = 'none';
+        document.getElementById('btn-dl').textContent = '⬇️ Tout télécharger';
+
+        // Pré-remplir les champs éditables playlist
+        document.getElementById('edit-playlist-artist').value = meta.artist || '';
+        document.getElementById('edit-playlist-album').value  = meta.title  || '';
+        document.getElementById('edit-playlist-year').value   = meta.year   || '';
+
+        if (MAX_SONGS > 0) {
+          const already = parseInt(document.getElementById('pill-songs-val').textContent) || 0;
+          const free = MAX_SONGS - already;
+          if (meta.songs.length > free) {
+            document.getElementById('playlist-info').style.display = 'block';
+            document.getElementById('playlist-msg').textContent = `⚠️ Quota: seulement ${free} chanson(s) seront ajoutées.`;
+          }
+        }
+      } else {
+        // ── Chanson solo — champs éditables ──
+        isPlaylist = false;
+        document.getElementById('meta-fields-single').style.display   = 'flex';
+        document.getElementById('meta-fields-playlist').style.display = 'none';
+        document.getElementById('playlist-info').style.display        = 'none';
+        document.getElementById('btn-dl').textContent = '⬇️ Télécharger';
+
+        document.getElementById('edit-title').value  = meta.title  || '';
+        document.getElementById('edit-artist').value = meta.artist || '';
+        document.getElementById('edit-album').value  = meta.album  || '';
+
+        document.getElementById('meta-thumb').src = meta.thumbnail_url || '';
+        document.getElementById('meta-thumb').style.display = meta.thumbnail_url ? 'block' : 'none';
+      }
+
+      document.getElementById('metadata-preview').style.display = 'block';
+    } catch(e) {
+      showAlert('Erreur réseau.');
+    } finally {
+      document.getElementById('btn-extract').disabled = isDownloading;
+      document.getElementById('btn-extract').textContent = 'Analyser';
+    }
+  }
+
+  function resetPreview() {
+    document.getElementById('metadata-preview').style.display = 'none';
+    document.getElementById('url-input').value = '';
+    document.getElementById('edit-title').value          = '';
+    document.getElementById('edit-artist').value         = '';
+    document.getElementById('edit-album').value          = '';
+    document.getElementById('edit-playlist-artist').value = '';
+    document.getElementById('edit-playlist-album').value  = '';
+    document.getElementById('edit-playlist-year').value   = '';
+    currentMeta = null;
+  }
+
+  // ── Add to queue ─────────────────────────────────
+  async function addToQueue() {
+    if (!currentMeta) return;
+    document.getElementById('btn-dl').disabled = true;
+
+    try {
+      let res, data;
+      if (isPlaylist) {
+        // Lire les valeurs éditées pour la playlist
+        const playlistArtist = document.getElementById('edit-playlist-artist').value.trim() || currentMeta.artist || '';
+        const playlistAlbum  = document.getElementById('edit-playlist-album').value.trim()  || currentMeta.title  || '';
+        const playlistYear   = document.getElementById('edit-playlist-year').value.trim()   || currentMeta.year   || '';
+
+        // Appliquer les valeurs éditées sur les chansons
+        const updatedMeta = {
+          ...currentMeta,
+          artist: playlistArtist,
+          title:  playlistAlbum,
+          year:   playlistYear,
+        };
+
+        res  = await fetch('/api/guest/download-playlist', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ playlist_metadata: updatedMeta, playlist_mode: playlistModeEnabled })
+        });
+        data = await res.json();
+        if (!data.success) return showAlert(data.error);
+        showAlert(`✅ ${data.added} chanson(s) ajoutée(s) à la queue.`, 'info');
+        if (data.skipped > 0) showAlert(`⚠️ ${data.skipped} chanson(s) ignorée(s) (quota atteint).`);
+      } else {
+        // Lire les valeurs des champs éditables
+        const title  = document.getElementById('edit-title').value.trim()  || currentMeta.title  || 'Unknown Title';
+        const artist = document.getElementById('edit-artist').value.trim() || currentMeta.artist || 'Unknown Artist';
+        const album  = document.getElementById('edit-album').value.trim()  || currentMeta.album  || 'Unknown Album';
+
+        res  = await fetch('/api/guest/download', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            url:           document.getElementById('url-input').value.trim(),
+            title, artist, album,
+            year:          currentMeta.year || '',
+            playlist_mode: playlistModeEnabled
+          })
+        });
+        data = await res.json();
+        if (!data.success) return showAlert(data.error);
+        showAlert(`✅ "${title}" ajouté à la queue.`, 'info');
+      }
+
+      resetPreview();
+      setDownloadingState(true);
+      startPolling();
+    } finally {
+      document.getElementById('btn-dl').disabled = false;
+    }
+  }
+
+  // ── Polling status ───────────────────────────────
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(pollStatus, 1500);
+    pollStatus();
+  }
+
+  async function pollStatus() {
+    try {
+      const res  = await fetch('/api/guest/status');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Quotas
+      const songs = data.songs_downloaded || 0;
+      const max   = MAX_SONGS > 0 ? MAX_SONGS : 0;
+      document.getElementById('pill-songs-val').textContent =
+        max > 0 ? `${songs} / ${max}` : `${songs}`;
+      document.getElementById('pill-queue-val').textContent = data.queue_size || 0;
+
+      if (max > 0) {
+        const pct = Math.min(100, Math.round((songs / max) * 100));
+        document.getElementById('quota-fill').style.width = pct + '%';
+        document.getElementById('quota-fill').classList.toggle('full', pct >= 100);
+        document.getElementById('quota-text').textContent = `${songs} / ${max}`;
+      }
+
+      // Progression + grisage des boutons
+      const busy = data.in_progress || data.queue_size > 0;
+      setDownloadingState(busy);
+      const prog = data.in_progress && data.progress;
+      document.getElementById('progress-zone').style.display = prog ? 'block' : 'none';
+      if (prog) {
+        const p = data.progress;
+        const meta = data.current_download?.metadata;
+        document.getElementById('prog-title').textContent  = meta ? `${meta.artist} - ${meta.title}` : '…';
+        document.getElementById('prog-status').textContent = p.status === 'processing' ? 'Conversion en MP3…' : 'Téléchargement…';
+        document.getElementById('prog-bar').style.width    = (p.percent || 0) + '%';
+        document.getElementById('prog-pct').textContent    = (p.percent || 0) + '%';
+        document.getElementById('prog-speed').textContent  = p.speed || '';
+        document.getElementById('prog-eta').textContent    = p.eta ? `ETA: ${p.eta}` : '';
+      }
+
+      // Dernière chanson complétée
+      if (data.last_completed?.success) {
+        const lc  = data.last_completed;
+        const key = lc.timestamp;
+        if (!completed.includes(key)) {
+          completed.push(key);
+          addDlItem(lc.metadata);
+          // Afficher la zone ZIP (état initial)
+          document.getElementById('zip-zone').style.display       = 'block';
+          document.getElementById('zip-state-idle').style.display = 'block';
+          document.getElementById('zip-state-preparing').style.display = 'none';
+          document.getElementById('zip-state-done').style.display = 'none';
+        }
+      }
+
+        
+    // Réinitialiser l'interface
+    setTimeout(() => {
+        document.getElementById('url-input').value = '';
+        const preview = document.getElementById('metadata-preview');
+        if (preview) preview.style.display = 'none';
+        document.getElementById('btn-extract').disabled = false;
+        currentMeta = null;
+        isPlaylist = false;
+        playlistData = null;
+    }, 1000);
+    } catch(e) {}
+  }
+
+  // ── Liste groupée par album ───────────────────────
+  const dlGroups = {}; // { groupKey: { groupEl, songsEl, count } }
+
+  function _esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function toggleGroup(key) {
+    const g = dlGroups[key];
+    if (g) g.groupEl.classList.toggle('open');
+  }
+
+  function addDlItem(meta) {
+    document.getElementById('dl-empty').style.display = 'none';
+
+    // Clé de groupement = album (ou artiste si album absent)
+    const groupKey   = meta.album || meta.artist || 'Inconnu';
+    const groupIcon  = meta.album ? '💿' : '🎵';
+    const groupLabel = groupKey;
+    const subLabel   = meta.artist || '';
+
+    // Créer le groupe s'il n'existe pas encore
+    if (!dlGroups[groupKey]) {
+      const groupEl  = document.createElement('div');
+      groupEl.className = 'dl-group open'; // ouvert par défaut
+      groupEl.id = `dlg-${groupKey.replace(/[^a-z0-9]/gi,'_')}`;
+
+      const songsEl = document.createElement('ul');
+      songsEl.className = 'dl-group-songs';
+
+      groupEl.innerHTML = `
+        <div class="dl-group-header" onclick="toggleGroup(${JSON.stringify(groupKey)})">
+          <span class="dl-group-icon">${groupIcon}</span>
+          <div class="dl-group-info">
+            <span class="dl-group-title">${_esc(groupLabel)}</span>
+            <span class="dl-group-meta" id="dlg-meta-${groupEl.id}">${_esc(subLabel)} · <span id="dlg-count-${groupEl.id}">0</span> chanson(s)</span>
+          </div>
+          <span class="dl-group-chevron">▼</span>
+        </div>
+      `;
+      groupEl.appendChild(songsEl);
+      document.getElementById('dl-list').appendChild(groupEl);
+
+      dlGroups[groupKey] = { groupEl, songsEl, count: 0 };
+    }
+
+    // Ajouter la chanson dans le groupe
+    const g  = dlGroups[groupKey];
+    g.count += 1;
+
+    // Mettre à jour le compteur
+    const countEl = g.groupEl.querySelector('[id^="dlg-count-"]');
+    if (countEl) countEl.textContent = g.count;
+
+    const li = document.createElement('li');
+    li.className = 'dl-item';
+    li.innerHTML = `
+      <span class="icon">♪</span>
+      <span class="name">${_esc(meta.title || meta.artist)}</span>
+      <span class="ok">✓</span>
+    `;
+    g.songsEl.appendChild(li);
+  }
+
+  // ── Préparer + télécharger ZIP en une seule action ──
+  let zipCountdownInterval = null;
+
+  async function prepareAndDownloadZip() {
+    // Passer en état "préparation"
+    document.getElementById('zip-state-idle').style.display     = 'none';
+    document.getElementById('zip-state-preparing').style.display = 'block';
+    document.getElementById('zip-state-done').style.display     = 'none';
+
+    // Attendre la fin des téléchargements en cours (max 2 min)
+    let attempts = 0;
+    while (attempts < 60) {
+      try {
+        const res  = await fetch('/api/guest/status');
+        const data = await res.json();
+        if (!data.in_progress && data.queue_size === 0) break;
+      } catch(e) {}
+      await new Promise(r => setTimeout(r, 2000));
+      attempts++;
+    }
+
+    // Préparer le ZIP côté serveur
+    let zipData;
+    try {
+      const res = await fetch('/api/guest/prepare-zip', { method: 'POST' });
+      zipData   = await res.json();
+    } catch(e) {
+      _resetZipState();
+      showAlert('Erreur réseau lors de la préparation du ZIP.');
+      return;
+    }
+
+    if (!zipData.success) {
+      _resetZipState();
+      showAlert(zipData.error || 'Erreur lors de la création du ZIP.');
+      return;
+    }
+
+    // Lancer le téléchargement immédiatement
+    _triggerZipDownload();
+
+    // Afficher le message post-téléchargement
+    document.getElementById('zip-state-preparing').style.display = 'none';
+    document.getElementById('zip-state-done').style.display      = 'block';
+    document.getElementById('zip-info-text').textContent =
+      `${zipData.file_count} fichier(s) · ${zipData.size_mb} MB`;
+
+    // Bloquer l'interface
+    _lockUIAfterZip();
+
+    // Décompte 15 min avant fermeture auto (aligne avec le cleanup serveur)
+    let remaining = 900;
+    _updateZipCountdown(remaining);
+    zipCountdownInterval = setInterval(() => {
+      remaining--;
+      _updateZipCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(zipCountdownInterval);
+        window.location.href = '/guest/login';
+      }
+    }, 1000);
+  }
+
+  function _updateZipCountdown(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const el = document.getElementById('zip-countdown');
+    if (el) el.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function _triggerZipDownload() {
+    const a = document.createElement('a');
+    a.href     = '/api/guest/download-zip';
+    a.download = 'SongSurf_musiques.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function _resetZipState() {
+    document.getElementById('zip-state-idle').style.display      = 'block';
+    document.getElementById('zip-state-preparing').style.display = 'none';
+    document.getElementById('zip-state-done').style.display      = 'none';
+  }
+
+  function _lockUIAfterZip() {
+    document.getElementById('btn-extract').disabled = true;
+    const btnDl = document.getElementById('btn-dl');
+    if (btnDl) btnDl.disabled = true;
+    const urlInput = document.getElementById('url-input');
+    urlInput.disabled    = true;
+    urlInput.placeholder = 'Session en cours de fermeture…';
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+  }
+
+  // Bouton "Fermer maintenant"
+  function closeSessionNow() {
+    if (zipCountdownInterval) clearInterval(zipCountdownInterval);
+    window.location.href = '/guest/logout';
+  }
+
+  // ── Enter key ────────────────────────────────────
+  document.getElementById('url-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') extractUrl();
+  });
+</script>
+</body>
+</html>

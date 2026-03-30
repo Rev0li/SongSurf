@@ -41,13 +41,13 @@ services:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Paris
       # Clé secrète Flask pour les sessions Watcher
-      - FLASK_SECRET_KEY=ChangezMoiAussi-Watcher
-      # Mot de passe du dashboard admin
-      - WATCHER_PASSWORD=ChangezMoiAvantDeDéployer
-      # Mot de passe accès guest
-      - WATCHER_GUEST_PASSWORD=MotDePasseAmis
-      # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
-      - WATCHER_SECRET=GenerezUnSecretAleatoire
+      # - FLASK_SECRET_KEY=ChangezMoiAussi-Watcher
+      # # Mot de passe du dashboard admin
+      # - WATCHER_PASSWORD=ChangezMoiAvantDeDéployer
+      # # Mot de passe accès guest
+      # - WATCHER_GUEST_PASSWORD=MotDePasseAmis
+      # # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
+      # - WATCHER_SECRET=GenerezUnSecretAleatoire
       # URL secrète du login admin
       - ADMIN_LOGIN_PATH=/administrator
       # Nom du container SongSurf (doit correspondre à container_name ci-dessous)
@@ -79,7 +79,7 @@ services:
       - TZ=Europe/Paris
       # SongSurf écoute sur le port 8081 (Watcher prend le 8080)
       - FLASK_PORT=8081
-      # Clé secrète Flask (différente de celle du Watcher)
+      # # Clé secrète Flask (différente de celle du Watcher)
       - FLASK_SECRET_KEY=ChangezMoiAussi-SongSurf
       # Secret partagé Watcher ↔ SongSurf (doit être identique des deux côtés)
       - WATCHER_SECRET=GenerezUnSecretAleatoire
@@ -94,12 +94,13 @@ services:
       - GUEST_SESSION_TTL=3600
 
     volumes:
+      - ./static:/app/static
       - ./data/temp:/data/temp
       - ./data/music:/data/music
       - ./data/music_guest:/data/music_guest
       - ./data/temp_guest:/data/temp_guest
       - ./logs:/app/logs
-      - ./python-server/templates:/app/templates
+      - ./server/templates:/app/templates
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/ping"]

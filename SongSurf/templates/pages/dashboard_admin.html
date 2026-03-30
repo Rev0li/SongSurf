@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — SongSurf{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/dashboard.css') }}">
+<style>
+  /* Layout 2 colonnes */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 70% 30%;
+    gap: var(--space-6);
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-5);
+  }
+  
+  .main-column { /* Colonne gauche */ }
+  .side-column { /* Colonne droite */ }
+  
+  /* Barre de progression multi-étapes */
+  .progress-steps {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  
+  .progress-step {
+    flex: 1;
+    height: 8px;
+    background: var(--color-surface-2);
+    border-radius: var(--radius-full);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .progress-step-fill {
+    height: 100%;
+    background: var(--gradient-brand);
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  
+  .progress-step.active .progress-step-fill {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  
+  .progress-step.completed .progress-step-fill {
+    width: 100%;
+  }
+  
+  .progress-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--space-2);
+  }
+  
+  .progress-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    flex: 1;
+    text-align: center;
+  }
+  
+  .progress-label.active {
+    color: var(--color-text-primary);
+    font-weight: var(--font-weight-semibold);
+  }
+  
+  @media (max-width: 1024px) {
+    .main-grid {
+      grid-template-columns: 1fr;
+    }
+    
+    .side-column {
+      order: -1; /* Afficher en premier sur mobile */
+    }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<header class="header">
+  <div class="header-brand">
+    <span class="header-logo">🎵</span>
+    <h1 class="header-title">SongSurf</h1>
+  </div>
+  <nav class="header-nav">
+    <span class="badge badge-primary">🔐 Admin</span>
+    <a href="/logout" class="btn btn-ghost btn-sm">Déconnexion</a>
+  </nav>
+</header>
+
+<div class="main-grid">
+  
+  <!-- ══════════════════════════════════════════════════════════
+       COLONNE PRINCIPALE (70%) — Téléchargement
+       ══════════════════════════════════════════════════════════ -->
+  <div class="main-column">
+    
+    <!-- Input URL -->
+    <div class="card">
+      <h2 class="card-title">🔗 Coller un lien YouTube Music</h2>
+      <div id="alert-zone"></div>
+      <div class="url-group">
+        <input type="text" class="form-input" id="url-input" 
+               placeholder="https://music.youtube.com/watch?v=..." 
+               autocomplete="off">
+        <button class="btn btn-primary" id="btn-extract">🔍 Analyser</button>
+      </div>
+
+      <!-- Métadonnées extraites -->
+      <div id="metadata-preview" class="metadata-preview">
+        <div class="metadata-card">
+          <img class="metadata-thumb" id="meta-thumb" src="" alt="" 
+               onerror="this.style.display='none'">
+          <div class="metadata-info" id="meta-fields-single">
+            <div class="form-group">
+              <label class="form-label">Titre</label>
+              <input type="text" class="form-input" id="edit-title" placeholder="Titre de la chanson">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Artiste</label>
+              <input type="text" class="form-input" id="edit-artist" placeholder="Artiste">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Album</label>
+              <input type="text" class="form-input" id="edit-album" placeholder="Album">
+            </div>
+          </div>
+          
+          <!-- Playlist : confirmation avec champs éditables -->
+          <div class="metadata-info" id="meta-fields-playlist" style="display:none">
+            <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display">—</div>
+            <div class="form-group">
+              <label class="form-label">Artiste</label>
+              <input type="text" class="form-input" id="edit-playlist-artist" placeholder="Artiste">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Album / Playlist</label>
+              <input type="text" class="form-input" id="edit-playlist-album" placeholder="Nom de l'album">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Année</label>
+              <input type="text" class="form-input" id="edit-playlist-year" placeholder="2024" style="max-width:100px">
+            </div>
+          </div>
+        </div>
+
+        <!-- Toggle Playlist Mode -->
+        <div class="toggle-row">
+          <div class="toggle-description">
+            <strong>🎵 Mode Playlist</strong>
+            <small>Actif : dossier par album, pas de tri artiste. Inactif : tri Artist/Album/Titre.</small>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="metadata-actions">
+          <button class="btn btn-brand btn-block" id="btn-dl">⬇️ Télécharger</button>
+          <button class="btn btn-danger btn-sm" onclick="resetPreview()">✕ Annuler</button>
+        </div>
+
+        <!-- Playlist info (quota warning si besoin) -->
+        <div id="playlist-info" style="display:none;">
+          <div class="alert alert-info" id="playlist-msg"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progression en cours (multi-étapes) -->
+    <div class="card" id="progress-zone" style="display:none">
+      <h2 class="card-title">⏳ Téléchargement en cours</h2>
+      <div class="progress-title" id="prog-title">—</div>
+      
+      <!-- Étapes de progression -->
+      <div class="progress-steps">
+        <div class="progress-step" id="step-download">
+          <div class="progress-step-fill"></div>
+        </div>
+        <div class="progress-step" id="step-convert">
+          <div class="progress-step-fill"></div>
+        </div>
+        <div class="progress-step" id="step-organize">
+          <div class="progress-step-fill"></div>
+        </div>
+      </div>
+      
+      <div class="progress-labels">
+        <span class="progress-label" id="label-download">Téléchargement</span>
+        <span class="progress-label" id="label-convert">Conversion MP3</span>
+        <span class="progress-label" id="label-organize">Organisation</span>
+      </div>
+      
+      <div class="progress-text">
+        <span id="prog-status">—</span>
+        <span id="prog-pct">0%</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       COLONNE LATÉRALE (30%) — Historique + Actions
+       ══════════════════════════════════════════════════════════ -->
+  <div class="side-column">
+    
+    <!-- Liste des téléchargements -->
+    <div class="card">
+      <h2 class="card-title">✅ Téléchargements récents</h2>
+      <div id="dl-list">
+        <div class="empty-state" id="dl-empty">
+          <div class="empty-state-icon">📭</div>
+          <p class="empty-state-text">Aucun téléchargement</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions rapides (Télécharger ZIP, Nettoyer) -->
+    <div class="card">
+      <h2 class="card-title">📦 Actions</h2>
+      <button class="btn btn-success btn-block" id="btn-download-zip" onclick="downloadRecentFiles()">
+        📥 Télécharger ZIP des récents
+      </button>
+      <button class="btn btn-ghost btn-block" onclick="cleanupTemp()" style="margin-top:var(--space-2)">
+        🧹 Nettoyer fichiers temporaires
+      </button>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODALE : Choix après téléchargement
+     ══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="download-complete-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-icon">✅</div>
+      <h2 class="modal-title">Téléchargement terminé !</h2>
+    </div>
+    <div class="modal-body">
+      <p><strong id="completed-file-name">—</strong> a été téléchargé avec succès.</p>
+      <p style="margin-top:var(--space-4);font-size:var(--font-size-sm);color:var(--color-text-muted);">
+        Que voulez-vous faire ?
+      </p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="keepOnNAS()">
+        💾 Garder sur le NAS
+      </button>
+      <button class="btn btn-brand" onclick="downloadAndDelete()">
+        📥 Télécharger ZIP + Supprimer du NAS
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/pages/dashboard-admin.js') }}"></script>
+{% endblock %}
