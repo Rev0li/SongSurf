@@ -79,6 +79,55 @@ class YouTubeDownloader:
     # Téléchargement
     # ──────────────────────────────────────────────────────────────
 
+    def _temp_filename_from_metadata(self, metadata):
+        return self._clean_filename(
+            f"{metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}"
+        )
+
+    def _download_to_temp(self, url, temp_filename, progress_hook=None):
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '0',
+            }],
+            'outtmpl': str(self.temp_dir / f'{temp_filename}.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+            'writethumbnail': True,
+            'nocheckcertificate': True,
+        }
+        if progress_hook is not None:
+            ydl_opts['progress_hooks'] = [progress_hook]
+        if self.ffmpeg_location:
+            ydl_opts['ffmpeg_location'] = self.ffmpeg_location
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+
+    def prefetch_first_track(self, url, metadata):
+        """Précharge une piste en MP3 dans temp pour accélérer le futur download."""
+        try:
+            url = self._normalize_url(url)
+            temp_filename = self._temp_filename_from_metadata(metadata)
+            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
+            if downloaded_file.exists():
+                return {'success': True, 'cached': True, 'file_path': str(downloaded_file)}
+
+            logger.info(f"⚡ Prefetch: {metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}")
+            self._download_to_temp(url, temp_filename, progress_hook=None)
+
+            if downloaded_file.exists():
+                logger.info(f"   ✅ Prefetch prêt: {downloaded_file.name}")
+                return {'success': True, 'cached': False, 'file_path': str(downloaded_file)}
+
+            return {'success': False, 'error': 'Prefetch incomplet'}
+        except Exception as e:
+            logger.warning(f"⚠️ Prefetch échoué: {e}")
+            return {'success': False, 'error': str(e)}
+
     def download(self, url, metadata):
         """
         Télécharge une vidéo YouTube en MP3.
@@ -97,36 +146,24 @@ class YouTubeDownloader:
             url = self._normalize_url(url)
             logger.info(f"   URL: {url}")
 
+            temp_filename = self._temp_filename_from_metadata(metadata)
+            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
+            if downloaded_file.exists():
+                self.progress.reset()
+                self.progress.status = 'completed'
+                self.progress.percent = 100
+                logger.info(f"   ♻️ Cache utilisé: {downloaded_file.name}")
+                return {
+                    'success': True,
+                    'file_path': str(downloaded_file),
+                    'metadata': metadata,
+                    'timestamp': datetime.now().isoformat()
+                }
+
             self.progress.reset()
             self.progress.status = 'downloading'
 
-            temp_filename = self._clean_filename(
-                f"{metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}"
-            )
-
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '0',
-                }],
-                'outtmpl':          str(self.temp_dir / f'{temp_filename}.%(ext)s'),
-                'quiet':            True,
-                'no_warnings':      True,
-                'progress_hooks':   [self.progress.update],
-                'noplaylist':       True,
-                'writethumbnail':   True,
-                'nocheckcertificate': True,
-            }
-
-            if self.ffmpeg_location:
-                ydl_opts['ffmpeg_location'] = self.ffmpeg_location
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(url, download=True)
-
-            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
+            self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
             if not downloaded_file.exists():
                 raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")
 
@@ -187,8 +224,7 @@ class YouTubeDownloader:
             release_date = info.get('release_date') or info.get('upload_date', '')
             year = release_date[:4] if len(release_date) >= 4 else ''
 
-            if artist.endswith(' - Topic'):
-                artist = artist[:-8]
+            artist = self._primary_artist(artist)
 
             metadata = {
                 'title':         title,
@@ -199,6 +235,19 @@ class YouTubeDownloader:
                 'duration':      info.get('duration', 0),
                 'view_count':    info.get('view_count', 0)
             }
+
+            thumbs = info.get('thumbnails') or []
+            thumb_candidates = []
+            if isinstance(thumbs, list):
+                for t in thumbs:
+                    if not isinstance(t, dict):
+                        continue
+                    u = (t.get('url') or '').strip()
+                    if u and u not in thumb_candidates:
+                        thumb_candidates.append(u)
+            if metadata['thumbnail_url'] and metadata['thumbnail_url'] not in thumb_candidates:
+                thumb_candidates.insert(0, metadata['thumbnail_url'])
+            metadata['thumbnail_candidates'] = thumb_candidates
 
             logger.info(f"   ✅ {artist} — {title} ({album}, {year})")
             return {'success': True, 'metadata': metadata, 'timestamp': datetime.now().isoformat()}
@@ -240,8 +289,22 @@ class YouTubeDownloader:
                 info.get('artist') or info.get('creator') or
                 info.get('uploader') or info.get('channel')
             )
-            if playlist_artist and playlist_artist.endswith(' - Topic'):
-                playlist_artist = playlist_artist[:-8]
+            playlist_artist = self._primary_artist(playlist_artist)
+
+            playlist_thumbnail = info.get('thumbnail') or ''
+            playlist_thumb_candidates = []
+            thumbs = info.get('thumbnails') or []
+            if isinstance(thumbs, list):
+                for t in thumbs:
+                    if not isinstance(t, dict):
+                        continue
+                    u = (t.get('url') or '').strip()
+                    if u and u not in playlist_thumb_candidates:
+                        playlist_thumb_candidates.append(u)
+            if not playlist_thumbnail:
+                if isinstance(thumbs, list) and thumbs:
+                    best = thumbs[-1] if isinstance(thumbs[-1], dict) else {}
+                    playlist_thumbnail = (best.get('url') or '').strip()
 
             playlist_year = ''
 
@@ -254,7 +317,7 @@ class YouTubeDownloader:
                         first_song_url  = f"https://www.youtube.com/watch?v={first_entry['id']}"
                         first_song_info = self.extract_metadata(first_song_url)
                         if first_song_info['success']:
-                            playlist_artist = first_song_info['metadata'].get('artist', 'Unknown Artist')
+                            playlist_artist = self._primary_artist(first_song_info['metadata'].get('artist', 'Unknown Artist'))
                             playlist_year   = first_song_info['metadata'].get('year', '')
                             logger.info(f"   ✅ Artiste via première chanson: {playlist_artist}")
                     except Exception as e:
@@ -267,7 +330,7 @@ class YouTubeDownloader:
                     if len(parts) >= 2 and parts[0].strip().lower() != 'album':
                         playlist_artist = parts[-1].strip()
 
-            playlist_artist = playlist_artist or 'Unknown Artist'
+            playlist_artist = self._primary_artist(playlist_artist)
 
             songs          = []
             total_duration = 0
@@ -275,22 +338,50 @@ class YouTubeDownloader:
             for entry in info['entries']:
                 if entry is None:
                     continue
+                entry_title = entry.get('title', 'Unknown')
                 song_artist = (
                     entry.get('artist') or entry.get('creator') or
                     entry.get('uploader') or playlist_artist
                 )
-                if song_artist.endswith(' - Topic'):
-                    song_artist = song_artist[:-8]
+                song_artist = self._primary_artist(song_artist)
+
+                # Fallback utile sur certains albums YT Music: "Artist - Title"
+                if song_artist == 'Unknown Artist' and ' - ' in entry_title:
+                    title_parts = entry_title.split(' - ', 1)
+                    maybe_artist = self._primary_artist(title_parts[0])
+                    if maybe_artist and maybe_artist != 'Unknown Artist':
+                        song_artist = maybe_artist
+                        entry_title = title_parts[1].strip() or entry_title
+
+                entry_id = (entry.get('id') or '').strip()
+                entry_url = (entry.get('url') or '').strip()
+                if entry_url and not re.match(r'^https?://', entry_url, flags=re.IGNORECASE):
+                    # yt-dlp extract_flat peut retourner seulement l'ID vidéo ici.
+                    if entry_id:
+                        entry_url = f"https://www.youtube.com/watch?v={entry_id}"
+                    else:
+                        entry_url = f"https://www.youtube.com/watch?v={entry_url}"
+                if not entry_url and entry_id:
+                    entry_url = f"https://www.youtube.com/watch?v={entry_id}"
 
                 song = {
-                    'title':    entry.get('title', 'Unknown'),
+                    'title':    entry_title,
                     'artist':   song_artist,
-                    'url':      entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id')}",
-                    'id':       entry.get('id'),
+                    'url':      entry_url,
+                    'id':       entry_id,
                     'duration': entry.get('duration', 0)
                 }
                 songs.append(song)
                 total_duration += song['duration']
+
+            if not playlist_thumbnail and songs:
+                first_song = songs[0]
+                first_id = (first_song.get('id') or '').strip()
+                if first_id:
+                    playlist_thumbnail = f"https://i.ytimg.com/vi/{first_id}/hqdefault.jpg"
+
+            if playlist_thumbnail and playlist_thumbnail not in playlist_thumb_candidates:
+                playlist_thumb_candidates.insert(0, playlist_thumbnail)
 
             logger.info(f"   ✅ {len(songs)} chansons — {playlist_title} / {playlist_artist} ({total_duration // 60}min)")
 
@@ -300,6 +391,8 @@ class YouTubeDownloader:
                 'title':          playlist_title,
                 'artist':         playlist_artist,
                 'year':           playlist_year,
+                'thumbnail_url':  playlist_thumbnail,
+                'thumbnail_candidates': playlist_thumb_candidates,
                 'songs':          songs,
                 'total_songs':    len(songs),
                 'total_duration': total_duration,
@@ -321,6 +414,22 @@ class YouTubeDownloader:
             if match:
                 return f'https://www.youtube.com/watch?v={match.group(1)}'
         return url
+
+    def _primary_artist(self, artist):
+        """Normalise l'artiste et garde le premier nom principal."""
+        if not artist:
+            return 'Unknown Artist'
+
+        artist = str(artist).strip()
+        if artist.endswith(' - Topic'):
+            artist = artist[:-8].strip()
+
+        parts = re.split(r'\s*(?:,|;|\||&|\band\b|\bet\b|/)\s*', artist, flags=re.IGNORECASE)
+        for part in parts:
+            p = part.strip()
+            if p:
+                return p
+        return artist or 'Unknown Artist'
 
     def _clean_filename(self, name):
         """Nettoie un nom de fichier (supprime les caractères interdits)."""

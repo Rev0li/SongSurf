@@ -31,8 +31,8 @@ import requests as req_lib
 import docker as docker_sdk
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-
-app = Flask(__name__)
+# login
+app = Flask(__name__, template_folder='templates', static_folder=None)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.permanent_session_lifetime = timedelta(days=7)
 
@@ -123,7 +123,8 @@ def _songsurf_running():
     if c is None:
         return True   # assume running si pas de socket Docker
     c.reload()
-    return c.status == 'running'
+    res = c.status == 'running'
+    return res
 
 def _start_songsurf():
     c = _get_container()
@@ -234,7 +235,7 @@ def admin_login():
     error = None
 
     if _is_locked(ip):
-        return render_template('login.html',
+        return render_template('pages/login.html',
                                error=f'Trop de tentatives. Réessayez dans {_lockout_remaining(ip)} min.',
                                locked=True, is_guest=False)
 
@@ -259,8 +260,7 @@ def admin_login():
                 remaining = MAX_ATTEMPTS - login_attempts.get(ip, {}).get('count', 0)
                 error = f'Mot de passe incorrect ({max(0, remaining)} essai{"s" if remaining > 1 else ""} restant{"s" if remaining > 1 else ""})'
 
-    return render_template('login.html', error=error, locked=_is_locked(ip),
-                           is_guest=False, admin_login_path=ADMIN_LOGIN_PATH)
+    return render_template('pages/login.html', error=error, locked=_is_locked(ip),is_guest=False, admin_login_path=ADMIN_LOGIN_PATH)
 
 
 @app.route('/guest/login', methods=['GET', 'POST'])
@@ -272,12 +272,12 @@ def guest_login():
     error = None
 
     if not WATCHER_GUEST_PASSWORD:
-        return render_template('login.html',
+        return render_template('pages/login.html',
                                error="L'accès guest est désactivé.",
                                locked=True, is_guest=True)
 
     if _is_locked(ip):
-        return render_template('login.html',
+        return render_template('pages/login.html',
                                error=f'Trop de tentatives. Réessayez dans {_lockout_remaining(ip)} min.',
                                locked=True, is_guest=True)
 
@@ -303,7 +303,7 @@ def guest_login():
             else:
                 error = 'Prénom ou mot de passe incorrect.'
 
-    return render_template('login.html', error=error, locked=_is_locked(ip), is_guest=True)
+    return render_template('pages/login.html', error=error, locked=_is_locked(ip), is_guest=True)
 
 
 @app.route('/logout')
@@ -321,7 +321,7 @@ def guest_logout():
 @app.route('/watcher/loading')
 def loading():
     next_url = request.args.get('next', '/')
-    return render_template('loading.html', next_url=next_url)
+    return render_template('pages/loading.html', next_url=next_url)
 
 
 @app.route('/watcher/ready')

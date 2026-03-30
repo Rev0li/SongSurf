@@ -87,9 +87,23 @@
   </div>
   <nav class="header-nav">
     <span class="badge badge-primary">🔐 Admin</span>
+    <a href="/donation" class="btn btn-ghost btn-sm">Donation</a>
     <a href="/logout" class="btn btn-ghost btn-sm">Déconnexion</a>
   </nav>
 </header>
+
+<section class="top-analyzer-wrap">
+  <div class="card top-analyzer-card">
+    <h2 class="card-title">🔗 Coller un lien YouTube Music</h2>
+    <div id="alert-zone"></div>
+    <div class="url-group">
+      <input type="text" class="form-input" id="url-input" 
+             placeholder="https://music.youtube.com/watch?v=..." 
+             autocomplete="off">
+      <button class="btn btn-primary" id="btn-extract">🔍 Analyser</button>
+    </div>
+  </div>
+</section>
 
 <div class="main-grid">
   
@@ -97,108 +111,109 @@
        COLONNE PRINCIPALE (70%) — Téléchargement
        ══════════════════════════════════════════════════════════ -->
   <div class="main-column">
-    
-    <!-- Input URL -->
-    <div class="card">
-      <h2 class="card-title">🔗 Coller un lien YouTube Music</h2>
-      <div id="alert-zone"></div>
-      <div class="url-group">
-        <input type="text" class="form-input" id="url-input" 
-               placeholder="https://music.youtube.com/watch?v=..." 
-               autocomplete="off">
-        <button class="btn btn-primary" id="btn-extract">🔍 Analyser</button>
-      </div>
 
-      <!-- Métadonnées extraites -->
+    <div class="card metadata-panel">
+      <h2 class="card-title">🎛️ Panneau d'analyse</h2>
       <div id="metadata-preview" class="metadata-preview">
-        <div class="metadata-card">
-          <img class="metadata-thumb" id="meta-thumb" src="" alt="" 
-               onerror="this.style.display='none'">
-          <div class="metadata-info" id="meta-fields-single">
-            <div class="form-group">
-              <label class="form-label">Titre</label>
-              <input type="text" class="form-input" id="edit-title" placeholder="Titre de la chanson">
+        <div class="metadata-layout">
+          <div class="metadata-main">
+            <div class="metadata-info" id="meta-fields-single">
+              <div class="form-group">
+                <label class="form-label">Titre</label>
+                <input type="text" class="form-input" id="edit-title" placeholder="Titre de la chanson">
+              </div>
+              <div class="form-group compact-row">
+                <div>
+                  <label class="form-label">Artiste</label>
+                  <input type="text" class="form-input" id="edit-artist" placeholder="Artiste">
+                </div>
+                <div>
+                  <label class="form-label">Album</label>
+                  <input type="text" class="form-input" id="edit-album" placeholder="Album">
+                </div>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Artiste</label>
-              <input type="text" class="form-input" id="edit-artist" placeholder="Artiste">
+
+            <div class="metadata-info" id="meta-fields-playlist" style="display:none">
+              <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display"></div>
+              <div class="form-group compact-row">
+                <div>
+                  <label class="form-label">Artiste</label>
+                  <input type="text" class="form-input" id="edit-playlist-artist" placeholder="Artiste">
+                </div>
+                <div>
+                  <label class="form-label">Album / Playlist</label>
+                  <input type="text" class="form-input" id="edit-playlist-album" placeholder="Nom de l'album">
+                </div>
+              </div>
+              <div class="form-group" style="max-width:130px">
+                <label class="form-label">Année</label>
+                <input type="text" class="form-input" id="edit-playlist-year" placeholder="2024">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Titres de l'album / playlist</label>
+                <div id="playlist-song-list" class="song-list-preview"></div>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Album</label>
-              <input type="text" class="form-input" id="edit-album" placeholder="Album">
+
+            <div class="metadata-actions">
+              <button class="btn btn-brand btn-block" id="btn-dl">⬇️ Télécharger</button>
+              <button class="btn btn-danger btn-sm" id="btn-reset-preview" onclick="resetPreview()">✕ Annuler</button>
             </div>
           </div>
-          
-          <!-- Playlist : confirmation avec champs éditables -->
-          <div class="metadata-info" id="meta-fields-playlist" style="display:none">
-            <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display">—</div>
-            <div class="form-group">
-              <label class="form-label">Artiste</label>
-              <input type="text" class="form-input" id="edit-playlist-artist" placeholder="Artiste">
+
+          <aside class="metadata-options-column">
+            <div class="cover-preview-box">
+              <div class="progress-subtext">Pochette</div>
+              <img class="metadata-thumb" id="meta-thumb" src="" alt="Pochette" onerror="this.style.display='none'">
+              <div class="cover-placeholder" id="meta-thumb-placeholder">Aperçu pochette</div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Album / Playlist</label>
-              <input type="text" class="form-input" id="edit-playlist-album" placeholder="Nom de l'album">
+
+            <div class="option-card">
+              <div class="toggle-row option-toggle-row">
+                <div class="toggle-description">
+                  <strong>🎵 Mode Playlist</strong>
+                  <small>Dossier par album</small>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row option-toggle-row">
+                <div class="toggle-description">
+                  <strong>🎬 Mode MP4</strong>
+                  <small>Bientôt disponible</small>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggle-mp4-mode">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Année</label>
-              <input type="text" class="form-input" id="edit-playlist-year" placeholder="2024" style="max-width:100px">
-            </div>
-          </div>
+          </aside>
         </div>
 
-        <!-- Toggle Playlist Mode -->
-        <div class="toggle-row">
-          <div class="toggle-description">
-            <strong>🎵 Mode Playlist</strong>
-            <small>Actif : dossier par album, pas de tri artiste. Inactif : tri Artist/Album/Titre.</small>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-
-        <div class="metadata-actions">
-          <button class="btn btn-brand btn-block" id="btn-dl">⬇️ Télécharger</button>
-          <button class="btn btn-danger btn-sm" onclick="resetPreview()">✕ Annuler</button>
-        </div>
-
-        <!-- Playlist info (quota warning si besoin) -->
         <div id="playlist-info" style="display:none;">
           <div class="alert alert-info" id="playlist-msg"></div>
         </div>
       </div>
     </div>
 
-    <!-- Progression en cours (multi-étapes) -->
+    <!-- Progression en cours (globale) -->
     <div class="card" id="progress-zone" style="display:none">
       <h2 class="card-title">⏳ Téléchargement en cours</h2>
-      <div class="progress-title" id="prog-title">—</div>
-      
-      <!-- Étapes de progression -->
-      <div class="progress-steps">
-        <div class="progress-step" id="step-download">
-          <div class="progress-step-fill"></div>
-        </div>
-        <div class="progress-step" id="step-convert">
-          <div class="progress-step-fill"></div>
-        </div>
-        <div class="progress-step" id="step-organize">
-          <div class="progress-step-fill"></div>
-        </div>
+
+      <div class="progress-total">
+        <div class="progress-total-fill" id="prog-fill"></div>
       </div>
-      
-      <div class="progress-labels">
-        <span class="progress-label" id="label-download">Téléchargement</span>
-        <span class="progress-label" id="label-convert">Conversion MP3</span>
-        <span class="progress-label" id="label-organize">Organisation</span>
-      </div>
-      
+
       <div class="progress-text">
         <span id="prog-status">—</span>
         <span id="prog-pct">0%</span>
       </div>
+      <div class="progress-subtext" id="prog-subtext">0 / 0 titre</div>
     </div>
 
   </div>
@@ -207,7 +222,31 @@
        COLONNE LATÉRALE (30%) — Historique + Actions
        ══════════════════════════════════════════════════════════ -->
   <div class="side-column">
-    
+
+    <div class="card">
+      <h2 class="card-title">🗂️ Bibliothèque</h2>
+      <p class="empty-state-text" style="text-align:left;margin-top:0">Glisse un titre vers un album pour le déplacer. Renomme un dossier via ✏️.</p>
+      <button class="btn btn-success btn-block" id="btn-download-zip" onclick="downloadRecentFiles()" style="margin-bottom:var(--space-3)">
+        📥 Télécharger ZIP (Puis Suppression Bibliotheque) Faite cela a la fin avant de partir
+      </button>
+      <div class="library-upload-box">
+        <div class="progress-subtext" id="library-selected-folder">Dossier cible: aucun dossier sélectionné</div>
+        <div class="library-cover-mini" id="library-cover-mini-wrap">
+          <img id="library-folder-cover" alt="Pochette dossier" style="display:none;">
+          <div id="library-folder-cover-placeholder">Aucune pochette détectée</div>
+        </div>
+        <div class="library-upload-row">
+          <input type="file" id="library-image-file" accept="image/*" class="form-input library-file-input">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-upload-folder-image">Uploader image</button>
+        </div>
+        <div class="progress-subtext">Astuce: sélectionne un dossier dans l'arborescence puis colle une image avec Ctrl+V.</div>
+      </div>
+      <div id="library-tree"></div>
+      <button class="btn btn-ghost btn-block" onclick="cleanupTemp()" style="margin-top:var(--space-3)">
+        🧹 Nettoyer fichiers temporaires
+      </button>
+    </div>
+
     <!-- Liste des téléchargements -->
     <div class="card">
       <h2 class="card-title">✅ Téléchargements récents</h2>
@@ -217,17 +256,6 @@
           <p class="empty-state-text">Aucun téléchargement</p>
         </div>
       </div>
-    </div>
-
-    <!-- Actions rapides (Télécharger ZIP, Nettoyer) -->
-    <div class="card">
-      <h2 class="card-title">📦 Actions</h2>
-      <button class="btn btn-success btn-block" id="btn-download-zip" onclick="downloadRecentFiles()">
-        📥 Télécharger ZIP des récents
-      </button>
-      <button class="btn btn-ghost btn-block" onclick="cleanupTemp()" style="margin-top:var(--space-2)">
-        🧹 Nettoyer fichiers temporaires
-      </button>
     </div>
 
   </div>

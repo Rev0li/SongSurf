@@ -1,14 +1,9 @@
-# Dockerfile - SongSurf Bot Music
-# Basé sur Python 3.11 slim pour un conteneur léger
-
 FROM python:3.11-slim
 
-# Métadonnées
 LABEL maintainer="SongSurf"
 LABEL description="Bot de téléchargement de musique YouTube avec yt-dlp"
 LABEL version="1.0"
 
-# Variables d'environnement
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -20,6 +15,9 @@ RUN useradd -m -u 1000 songsurf && \
     mkdir -p /app /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music && \
     chown -R songsurf:songsurf /app /data
 
+# ✅ CORRECTION : Créer le dossier logs avec les bonnes permissions
+RUN mkdir -p /app/logs && chown -R songsurf:songsurf /app/logs
+
 # Installer les dépendances système (FFmpeg + outils)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -28,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Définir le répertoire de travail
 WORKDIR /app
 
 # Copier le requirements.txt en premier (pour cache Docker)
@@ -47,8 +44,8 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 # Changer vers l'utilisateur non-root
 USER songsurf
 
-# Exposer les ports possibles du serveur Flask (8080 standalone / 8081 derrière Watcher)
-EXPOSE 8080 8081
+# Exposer le port du serveur Flask
+EXPOSE 8080
 
 # Volumes pour persistance des données
 VOLUME ["/data/temp", "/data/music"]

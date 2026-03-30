@@ -890,12 +890,70 @@
       const meta = data.metadata ? { ...data, ...data.metadata } : data;
       currentMeta = meta;
 
+      const thumbEl = document.getElementById('meta-thumb');
+      const thumbCandidates = [];
+      const pushThumb = (u) => {
+        if (!u || typeof u !== 'string') return;
+        const clean = u.trim();
+        if (!clean) return;
+        if (!thumbCandidates.includes(clean)) thumbCandidates.push(clean);
+      };
+
+      pushThumb(meta.thumbnail_url || '');
+      if (Array.isArray(meta.thumbnail_candidates)) {
+        meta.thumbnail_candidates.forEach(pushThumb);
+      }
+
+      const fromUrl = (val) => {
+        const raw = String(val || '');
+        const m = raw.match(/[?&]v=([^&]+)/i);
+        return m && m[1] ? m[1] : '';
+      };
+
+      const firstSong = Array.isArray(meta.songs) && meta.songs.length ? meta.songs[0] : null;
+      const firstId = (firstSong && (firstSong.id || fromUrl(firstSong.url || ''))) || '';
+      if (firstId) {
+        pushThumb(`https://i.ytimg.com/vi/${firstId}/hqdefault.jpg`);
+        pushThumb(`https://i.ytimg.com/vi/${firstId}/mqdefault.jpg`);
+      }
+
+      const shouldCacheBust = (u) => {
+        const raw = String(u || '');
+        if (!raw) return false;
+        if (/\/s_p\//i.test(raw)) return false;
+        if (/[?&](?:rs|sqp)=/i.test(raw)) return false;
+        return true;
+      };
+
+      let thumbIdx = 0;
+      const showNextThumb = () => {
+        if (thumbIdx >= thumbCandidates.length) {
+          thumbEl.removeAttribute('src');
+          thumbEl.style.display = 'none';
+          return;
+        }
+        const base = thumbCandidates[thumbIdx++];
+        if (shouldCacheBust(base)) {
+          const sep = base.includes('?') ? '&' : '?';
+          thumbEl.src = `${base}${sep}t=${Date.now()}_${thumbIdx}`;
+        } else {
+          thumbEl.src = base;
+        }
+      };
+
+      thumbEl.onload = () => {
+        thumbEl.style.display = 'block';
+      };
+      thumbEl.onerror = () => {
+        showNextThumb();
+      };
+      showNextThumb();
+
       if (meta.songs) {
         // ── Playlist / album ──
         isPlaylist = true;
         document.getElementById('meta-fields-single').style.display   = 'none';
         document.getElementById('meta-fields-playlist').style.display = 'flex';
-        document.getElementById('meta-thumb').style.display           = 'none';
         document.getElementById('playlist-title-display').textContent = `💿 ${meta.songs.length} chanson(s) détectée(s)`;
         document.getElementById('playlist-info').style.display        = 'none';
         document.getElementById('btn-dl').textContent = '⬇️ Tout télécharger';
@@ -924,9 +982,6 @@
         document.getElementById('edit-title').value  = meta.title  || '';
         document.getElementById('edit-artist').value = meta.artist || '';
         document.getElementById('edit-album').value  = meta.album  || '';
-
-        document.getElementById('meta-thumb').src = meta.thumbnail_url || '';
-        document.getElementById('meta-thumb').style.display = meta.thumbnail_url ? 'block' : 'none';
       }
 
       document.getElementById('metadata-preview').style.display = 'block';
