@@ -4,6 +4,73 @@ Déploiement sur NAS Synology via Docker Compose, accessible depuis l'extérieur
 
 ---
 
+## 0. Toggle global Local/NAS (recommandé)
+
+Le projet intègre un switch global via variables d'environnement :
+
+- `DEPLOY_TARGET=local` : mode dev/local (bridge + ports publiés)
+- `DEPLOY_TARGET=nas` : mode NAS/live (`network_mode: host`)
+
+Fichiers utilisés :
+
+- `docker-compose.yml` (base commune)
+- `docker-compose.nas.yml` (override NAS)
+- `docker/compose-switch.sh` (lance le bon combo automatiquement)
+
+### Configuration rapide
+
+1. Copier l'exemple d'environnement :
+
+```bash
+cp .env.example .env
+```
+
+2. Éditer `.env` et définir au minimum :
+
+- `DEPLOY_TARGET=local` ou `DEPLOY_TARGET=nas`
+- `WATCHER_FLASK_SECRET_KEY`
+- `SONGSURF_FLASK_SECRET_KEY`
+- `WATCHER_SECRET`
+- `WATCHER_PASSWORD`
+- `WATCHER_GUEST_PASSWORD`
+
+3. Vérifier la config résolue :
+
+```bash
+./docker/compose-switch.sh config
+```
+
+### Commandes standard
+
+```bash
+# Démarrer selon DEPLOY_TARGET défini dans .env
+./docker/compose-switch.sh up -d --build
+
+# Voir les logs
+./docker/compose-switch.sh logs -f
+
+# Arrêter
+./docker/compose-switch.sh down
+```
+
+### Forcer un mode ponctuel sans modifier .env
+
+```bash
+DEPLOY_TARGET=local ./docker/compose-switch.sh up -d
+DEPLOY_TARGET=nas   ./docker/compose-switch.sh up -d
+```
+
+### Rollback de mode (NAS -> Local ou Local -> NAS)
+
+```bash
+./docker/compose-switch.sh down
+DEPLOY_TARGET=local ./docker/compose-switch.sh up -d
+```
+
+Remplace `local` par `nas` pour l'opération inverse.
+
+---
+
 ## Prérequis
 
 - NAS Synology avec Docker (DSM 7+)
@@ -29,57 +96,36 @@ mkdir -p data/music data/music_guest data/temp data/temp_guest logs
 
 ## 2. Cloner / Copier les fichiers
 
-Copier tout le contenu du projet dans `/volume1/docker/SongSurf/` :
+La méthode recommandée est de copier (ou cloner) le dépôt complet dans `/volume1/docker/SongSurf/`.
 
-```
-SongSurf/
-├── Dockerfile
-├── docker-compose.yml
-├── docker/
-│   └── entrypoint.sh
-└── python-server/
-    ├── app.py
-    ├── downloader.py
-    ├── organizer.py
-    ├── requirements.txt
-    └── templates/
-        ├── dashboard.html
-        ├── guest_dashboard.html
-        └── login.html
-```
-```bash
-cp SongSurf/Dockerfile SongSurf/docker-compose.yml /volume1/docker/SongSurf/ && \
-cp SongSurf/docker/entrypoint.sh /volume1/docker/SongSurf/docker/ && \
-cp SongSurf/python-server/app.py \
-   SongSurf/python-server/downloader.py \
-   SongSurf/python-server/organizer.py \
-   SongSurf/python-server/requirements.txt \
-   /volume1/docker/SongSurf/python-server/ && \
-cp SongSurf/python-server/templates/dashboard.html \
-   SongSurf/python-server/templates/guest_dashboard.html \
-   SongSurf/python-server/templates/login.html \
-   /volume1/docker/SongSurf/python-server/templates/
-```
-
-Pense à créer les dossiers d'abord si ils n'existent pas encore :
+Exemple en Git :
 
 ```bash
-mkdir -p /volume1/docker/SongSurf/docker \
-         /volume1/docker/SongSurf/python-server/templates
+cd /volume1/docker
+git clone <url-du-repo> SongSurf
+cd SongSurf
 ```
+
+Exemple sans Git (depuis une machine locale) :
+
+```bash
+rsync -av --delete SongSurf/ <user>@<nas>:/volume1/docker/SongSurf/
+```
+
+Ensuite, configure simplement `.env` puis utilise `docker/compose-switch.sh`.
 ---
 
 ## 3. Configurer les mots de passe
 
-Éditer `docker-compose.yml` et changer les valeurs suivantes :
+Ne modifie pas directement `docker-compose.yml`.
+Configure les secrets dans `.env` (copié depuis `.env.example`) :
 
-```yaml
-environment:
-  - SONGSURF_PASSWORD=VotreMotDePasseAdmin        # ← OBLIGATOIRE
-  - FLASK_SECRET_KEY=UneCléAléatoireSecurisée     # ← OBLIGATOIRE (32+ chars)
-  - SONGSURF_GUEST_PASSWORD=MotDePasseInvité      # ← laisser vide pour désactiver les guests
-  - GUEST_MAX_SONGS=10
-  - GUEST_SESSION_TTL=3600
+```dotenv
+WATCHER_FLASK_SECRET_KEY=...      # 32+ chars
+SONGSURF_FLASK_SECRET_KEY=...     # 32+ chars
+WATCHER_SECRET=...                # secret partagé watcher <-> songsurf
+WATCHER_PASSWORD=...              # mot de passe admin portail
+WATCHER_GUEST_PASSWORD=...        # mot de passe guest portail
 ```
 
 > ⚠️ Ne jamais laisser les valeurs par défaut en production.
@@ -109,19 +155,14 @@ ls -la /volume1/plex_media/music
 ```bash
 cd /volume1/docker/SongSurf
 
-# Build de l'image
-docker compose build
-
-# Démarrage en arrière-plan
-docker compose up -d
+# Démarrage en arrière-plan (respecte DEPLOY_TARGET)
+./docker/compose-switch.sh up -d --build
 
 # Voir les logs
-docker compose logs -f
-
- sudo docker-compose up -d && sudo docker logs -f songsurf
+./docker/compose-switch.sh logs -f
 ```
 
-Le serveur est disponible sur : `http://<IP-NAS>:8080`
+Le portail Watcher est disponible sur : `http://<IP-NAS>:8080`
 
 ---
 
@@ -130,9 +171,8 @@ Le serveur est disponible sur : `http://<IP-NAS>:8080`
 Quand vous modifiez `app.py`, `downloader.py` ou `organizer.py` :
 
 ```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+./docker/compose-switch.sh down
+./docker/compose-switch.sh up -d --build
 ```
 
 Quand vous modifiez uniquement les templates HTML (pas de rebuild nécessaire car monté en volume) :
@@ -144,8 +184,9 @@ Quand vous modifiez uniquement les templates HTML (pas de rebuild nécessaire ca
 
 ## 7. Accès Tailscale / VPN
 
-SongSurf utilise `network_mode: host` pour accéder directement au réseau du NAS.  
-Avec Tailscale installé sur le NAS, il est accessible via l'IP Tailscale : `http://<tailscale-ip>:8080`
+En mode `nas`, les services utilisent `network_mode: host` pour accéder directement au réseau du NAS.  
+En mode `local`, les services restent en bridge Docker avec ports publiés.  
+Avec Tailscale installé sur le NAS, le portail est accessible via l'IP Tailscale : `http://<tailscale-ip>:8080`
 
 ---
 
@@ -225,7 +266,7 @@ server {
 
 ```bash
 # Logs techniques en temps réel
-docker compose logs -f
+./docker/compose-switch.sh logs -f
 
 # Journal d'activité lisible
 cat /volume1/docker/SongSurf/logs/activity.log

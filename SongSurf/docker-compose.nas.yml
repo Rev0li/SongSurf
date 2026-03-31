@@ -1,0 +1,12 @@
+services:
+  watcher:
+    network_mode: host
+    ports: !reset []
+    networks: !reset []
+    environment:
+      - TARGET_URL=${TARGET_URL_NAS:-http://localhost:8081}
+
+  songsurf:
+    network_mode: host
+    ports: !reset []
+    networks: !reset []
