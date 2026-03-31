@@ -1,0 +1,8 @@
+services:
+  watcher:
+    ports:
+      - "${WATCHER_PORT:-8080}:8080"
+
+  songsurf:
+    ports:
+      - "${SONGSURF_PORT:-8081}:8081"

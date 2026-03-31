@@ -20,6 +20,7 @@ fi
 
 case "$TARGET" in
   local)
+    FILES+=(-f docker-compose.local.yml)
     ;;
   nas|live|prod)
     FILES+=(-f docker-compose.nas.yml)

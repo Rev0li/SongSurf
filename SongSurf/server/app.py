@@ -1391,6 +1391,255 @@ def guest_status():
     return jsonify(status)
 
 
+@app.route('/api/guest/library', methods=['GET'])
+@guest_required
+def guest_library_tree():
+    """Retourne l'arborescence musique de la session guest."""
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid, {})
+        music_dir = Path(sess.get('music_dir', ''))
+
+        artists = []
+        playlists = []
+        if not music_dir.exists():
+            return jsonify({'success': True, 'artists': artists, 'playlists': playlists})
+
+        for top in sorted([d for d in music_dir.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
+            direct_songs = sorted(top.glob('*.mp3'), key=lambda p: p.name.lower())
+            if direct_songs:
+                playlists.append({
+                    'name': top.name,
+                    'path': str(top.relative_to(music_dir)),
+                    'songs': [
+                        {
+                            'name': s.name,
+                            'path': str(s.relative_to(music_dir)),
+                        }
+                        for s in direct_songs
+                    ]
+                })
+                continue
+
+            albums = []
+            for album_dir in sorted([d for d in top.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
+                songs = sorted(album_dir.glob('*.mp3'), key=lambda p: p.name.lower())
+                albums.append({
+                    'name': album_dir.name,
+                    'path': str(album_dir.relative_to(music_dir)),
+                    'songs': [
+                        {
+                            'name': s.name,
+                            'path': str(s.relative_to(music_dir)),
+                        }
+                        for s in songs
+                    ]
+                })
+
+            artists.append({
+                'name': top.name,
+                'path': str(top.relative_to(music_dir)),
+                'albums': albums,
+            })
+
+        return jsonify({'success': True, 'artists': artists, 'playlists': playlists})
+    except Exception as e:
+        logger.error(f"❌ /api/guest/library: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/library/move', methods=['POST'])
+@guest_required
+def guest_library_move_song():
+    """Déplace un MP3 dans la bibliothèque de la session guest."""
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid, {})
+        music_dir = Path(sess.get('music_dir', '')).resolve()
+
+        data = request.get_json() or {}
+        source = (data.get('source') or '').strip()
+        target_folder = (data.get('target_folder') or '').strip()
+        if not source or not target_folder:
+            return jsonify({'success': False, 'error': 'source/target_folder requis'}), 400
+
+        src = (music_dir / source).resolve()
+        dst_dir = (music_dir / target_folder).resolve()
+        base = music_dir
+
+        if not str(src).startswith(str(base)) or not str(dst_dir).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not src.exists() or src.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier source invalide'}), 404
+
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        target = dst_dir / src.name
+        if target.exists():
+            stem = src.stem
+            suffix = src.suffix
+            i = 1
+            while target.exists():
+                target = dst_dir / f"{stem} ({i}){suffix}"
+                i += 1
+
+        shutil.move(str(src), str(target))
+        rel = str(target.relative_to(music_dir))
+        return jsonify({'success': True, 'final_path': rel})
+    except Exception as e:
+        logger.error(f"❌ /api/guest/library/move: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/library/rename-folder', methods=['POST'])
+@guest_required
+def guest_library_rename_folder():
+    """Renomme un dossier de la bibliothèque guest."""
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid, {})
+        music_dir = Path(sess.get('music_dir', '')).resolve()
+
+        data = request.get_json() or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        new_name = (data.get('new_name') or '').strip()
+        if not folder_path or not new_name:
+            return jsonify({'success': False, 'error': 'folder_path/new_name requis'}), 400
+
+        src = (music_dir / folder_path).resolve()
+        base = music_dir
+        if not str(src).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not src.exists() or not src.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        cleaned = ''.join(ch for ch in new_name if ch not in '<>:"/\\|?*').strip()
+        if not cleaned:
+            return jsonify({'success': False, 'error': 'Nom invalide'}), 400
+
+        dst = src.parent / cleaned
+        if dst.exists():
+            return jsonify({'success': False, 'error': 'Un dossier avec ce nom existe déjà'}), 409
+
+        src.rename(dst)
+        return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
+    except Exception as e:
+        logger.error(f"❌ /api/guest/library/rename-folder: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/library/upload-image', methods=['POST'])
+@guest_required
+def guest_library_upload_image():
+    """Upload une image dans un dossier guest (folder.<ext>)."""
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid, {})
+        music_dir = Path(sess.get('music_dir', '')).resolve()
+
+        target_folder = (request.form.get('target_folder') or '').strip()
+        image = request.files.get('image')
+
+        if not target_folder:
+            return jsonify({'success': False, 'error': 'Dossier cible requis'}), 400
+        if image is None:
+            return jsonify({'success': False, 'error': 'Fichier image requis'}), 400
+
+        dst_dir = (music_dir / target_folder).resolve()
+        base = music_dir
+        if not str(dst_dir).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not dst_dir.exists() or not dst_dir.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier cible introuvable'}), 404
+
+        filename = (image.filename or '').lower()
+        ext = ''
+        if '.' in filename:
+            ext = '.' + filename.rsplit('.', 1)[1]
+        if ext not in {'.jpg', '.jpeg', '.png', '.webp'}:
+            ctype = (image.content_type or '').lower()
+            if 'jpeg' in ctype or 'jpg' in ctype:
+                ext = '.jpg'
+            elif 'png' in ctype:
+                ext = '.png'
+            elif 'webp' in ctype:
+                ext = '.webp'
+            else:
+                return jsonify({'success': False, 'error': 'Format image non supporté (jpg, png, webp)'}), 400
+
+        for old in ('folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp'):
+            old_path = dst_dir / old
+            if old_path.exists():
+                old_path.unlink()
+
+        out_name = f"folder{ext}"
+        out_path = dst_dir / out_name
+        image.save(out_path)
+
+        rel_path = str(out_path.relative_to(music_dir))
+        logger.info(f"[GUEST:{sid[:8]}] 🖼️ Image dossier uploadée: {rel_path}")
+        return jsonify({'success': True, 'path': rel_path})
+    except Exception as e:
+        logger.error(f"❌ /api/guest/library/upload-image: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/guest/library/folder-cover', methods=['GET'])
+@guest_required
+def guest_library_folder_cover():
+    """Retourne la pochette d'un dossier de session guest."""
+    try:
+        sid = session['guest_session_id']
+        with guest_sessions_lock:
+            sess = guest_sessions.get(sid, {})
+        music_dir = Path(sess.get('music_dir', '')).resolve()
+
+        folder_path = (request.args.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        base = music_dir
+        if not str(folder).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        for name, mime in (
+            ('cover.jpg', 'image/jpeg'),
+            ('cover.jpeg', 'image/jpeg'),
+            ('folder.jpg', 'image/jpeg'),
+            ('folder.jpeg', 'image/jpeg'),
+            ('folder.png', 'image/png'),
+            ('folder.webp', 'image/webp'),
+        ):
+            p = folder / name
+            if p.exists() and p.is_file():
+                return send_file(p, mimetype=mime)
+
+        mp3s = sorted(folder.rglob('*.mp3'), key=lambda p: p.name.lower())
+        if not mp3s:
+            return '', 204
+
+        audio = MP3(mp3s[0])
+        tags = getattr(audio, 'tags', None)
+        if not tags:
+            return '', 204
+
+        for frame in tags.values():
+            if isinstance(frame, APIC) and getattr(frame, 'data', None):
+                mime = frame.mime or 'image/jpeg'
+                return send_file(io.BytesIO(frame.data), mimetype=mime)
+
+        return '', 204
+    except Exception as e:
+        logger.error(f"❌ /api/guest/library/folder-cover: {e}")
+        return '', 204
+
+
 @app.route('/api/guest/extend-session', methods=['POST'])
 @guest_required
 def guest_extend_session():
@@ -1643,6 +1892,31 @@ def guest_cancel():
         return jsonify({'success': False, 'error': 'Session expirée'}), 401
     sess['cancel_flag'].set()
     return jsonify({'success': True, 'message': 'Annulation demandée'})
+
+
+@app.route('/api/guest/cleanup', methods=['POST'])
+@guest_required
+def guest_cleanup():
+    """Nettoie les fichiers temporaires de la session guest."""
+    sid = session['guest_session_id']
+    with guest_sessions_lock:
+        sess = guest_sessions.get(sid)
+    if not sess:
+        return jsonify({'success': False, 'error': 'Session expirée'}), 401
+
+    deleted = []
+    temp_dir = Path(sess.get('temp_dir', ''))
+    if temp_dir.exists():
+        for f in temp_dir.iterdir():
+            if f.is_file():
+                f.unlink()
+                deleted.append(f.name)
+
+    sess_status = sess.get('status', {})
+    sess_status['in_progress'] = False
+    sess_status['current_download'] = None
+    sess_status['last_error'] = None
+    return jsonify({'success': True, 'deleted': len(deleted)})
 
 
 # ============================================

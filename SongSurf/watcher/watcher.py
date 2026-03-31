@@ -29,6 +29,7 @@ import secrets
 import logging
 import requests as req_lib
 import docker as docker_sdk
+from urllib.parse import urlparse
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 # login
@@ -47,6 +48,8 @@ if not ADMIN_LOGIN_PATH.startswith('/'):
 TARGET_CONTAINER   = os.getenv('TARGET_CONTAINER', 'songsurf')
 TARGET_URL         = os.getenv('TARGET_URL', 'http://songsurf:8080').rstrip('/')
 INACTIVITY_TIMEOUT = int(os.getenv('INACTIVITY_TIMEOUT', '1800'))   # 30 min
+PROXY_CONNECT_TIMEOUT = float(os.getenv('PROXY_CONNECT_TIMEOUT', '2.5'))
+PROXY_READ_TIMEOUT    = float(os.getenv('PROXY_READ_TIMEOUT', '30'))
 
 MAX_ATTEMPTS     = 5
 LOCKOUT_MINUTES  = 15
@@ -126,6 +129,46 @@ def _songsurf_running():
     res = c.status == 'running'
     return res
 
+
+def _target_port(default=8081):
+    try:
+        parsed = urlparse(TARGET_URL)
+        return int(parsed.port or default)
+    except Exception:
+        return default
+
+
+def _candidate_target_urls():
+    """Retourne des URLs candidates pour joindre SongSurf."""
+    urls = []
+
+    def _add(u):
+        if u and u not in urls:
+            urls.append(u)
+
+    _add(TARGET_URL)
+
+    # Optionnel: URL(s) de fallback explicites via env (séparées par des virgules)
+    extra = os.getenv('TARGET_URL_FALLBACKS', '')
+    for raw in extra.split(','):
+        _add(raw.strip().rstrip('/'))
+
+    # Fallback auto: IP du container SongSurf via Docker socket
+    c = _get_container()
+    if c is not None:
+        try:
+            c.reload()
+            networks = (c.attrs.get('NetworkSettings', {}) or {}).get('Networks', {}) or {}
+            port = _target_port()
+            for net in networks.values():
+                ip = (net or {}).get('IPAddress')
+                if ip:
+                    _add(f"http://{ip}:{port}")
+        except Exception:
+            pass
+
+    return urls
+
 def _start_songsurf():
     c = _get_container()
     if c is None:
@@ -147,13 +190,15 @@ def _stop_songsurf():
 def _songsurf_ready(timeout=2):
     """Teste si SongSurf répond sur /ping."""
     deadline = time.time() + timeout
+    urls = _candidate_target_urls()
     while time.time() < deadline:
-        try:
-            r = req_lib.get(f"{TARGET_URL}/ping", timeout=1.5)
-            if r.status_code == 200:
-                return True
-        except Exception:
-            pass
+        for base_url in urls:
+            try:
+                r = req_lib.get(f"{base_url}/ping", timeout=1.5)
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
         time.sleep(0.5)
     return False
 
@@ -186,6 +231,9 @@ _HOP_HEADERS = {
 
 def _proxy():
     """Proxyfie la requête courante vers SongSurf avec enrichissement des headers."""
+    if request.path == '/favicon.ico':
+        return Response(status=204)
+
     _update_activity()
 
     # Construire les headers enrichis
@@ -197,20 +245,33 @@ def _proxy():
         fwd_headers['X-Guest-Name']       = session.get('guest_name', '')
 
     # URL cible : conserver le path + query string
-    url = TARGET_URL + request.full_path.rstrip('?')
+    path_qs = request.full_path.rstrip('?')
+    resp = None
+    last_conn_error = None
 
-    try:
-        resp = req_lib.request(
-            method=request.method,
-            url=url,
-            headers=fwd_headers,
-            data=request.get_data(),
-            params={},            # déjà inclus dans full_path
-            allow_redirects=False,
-            stream=True,
-            timeout=120,
-        )
-    except req_lib.exceptions.ConnectionError:
+    for base_url in _candidate_target_urls():
+        url = base_url + path_qs
+        try:
+            resp = req_lib.request(
+                method=request.method,
+                url=url,
+                headers=fwd_headers,
+                data=request.get_data(),
+                params={},            # déjà inclus dans full_path
+                allow_redirects=False,
+                stream=True,
+                timeout=(PROXY_CONNECT_TIMEOUT, PROXY_READ_TIMEOUT),
+            )
+            break
+        except req_lib.exceptions.RequestException as e:
+            last_conn_error = e
+            continue
+
+    if resp is None:
+        if last_conn_error:
+            logger.warning(f"⚠️ Proxy SongSurf indisponible: {last_conn_error}")
+        if request.path == '/favicon.ico':
+            return Response(status=204)
         # SongSurf pas encore prêt → page de chargement
         return redirect(f'/watcher/loading?next={request.path}')
 
@@ -342,6 +403,9 @@ def ping():
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
 def proxy(path):
     # Routes système Watcher déjà gérées ci-dessus
+
+    if path == 'favicon.ico':
+        return Response(status=204)
 
     # Vérification auth
     role = session.get('role')
