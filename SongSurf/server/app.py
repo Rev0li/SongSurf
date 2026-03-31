@@ -488,7 +488,8 @@ def guest_queue_worker(sid):
             logger.info(f"[GUEST:{sid[:8]}] ⬇️  {metadata['artist']} - {metadata['title']}")
 
             try:
-                result = dl.download(url, metadata)
+                mp4_mode = bool(item.get('mp4_mode', False))
+                result = dl.download(url, metadata, mp4_mode=mp4_mode)
 
                 if cancel.is_set():
                     raise Exception("Annulé par l'utilisateur")
@@ -496,7 +497,8 @@ def guest_queue_worker(sid):
                     raise Exception(result.get('error', 'Erreur inconnue'))
 
                 playlist_mode = item.get('playlist_mode', False)
-                org_result = org.organize(result['file_path'], metadata, playlist_mode=playlist_mode)
+                media_mode = result.get('media_mode', 'mp3')
+                org_result = org.organize(result['file_path'], metadata, playlist_mode=playlist_mode, media_mode=media_mode)
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
 
@@ -1084,6 +1086,8 @@ def library_folder_cover():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
 
         for name, mime in (
+            ('cover.jpg', 'image/jpeg'),
+            ('cover.jpeg', 'image/jpeg'),
             ('folder.jpg', 'image/jpeg'),
             ('folder.jpeg', 'image/jpeg'),
             ('folder.png', 'image/png'),
@@ -1117,6 +1121,21 @@ def library_folder_cover():
 @login_required
 def get_stats():
     return jsonify(organizer.get_stats())
+
+
+@app.route('/api/admin/extract-covers', methods=['POST'])
+@login_required
+def admin_extract_covers():
+    """Extrait/écrit cover.jpg dans chaque dossier album."""
+    try:
+        data = request.get_json(silent=True) or {}
+        overwrite = bool(data.get('overwrite', False))
+        result = organizer.extract_album_covers(overwrite=overwrite)
+        code = 200 if result.get('success') else 500
+        return jsonify(result), code
+    except Exception as e:
+        logger.error(f"❌ /api/admin/extract-covers: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/admin/prepare-zip', methods=['POST'])
@@ -1273,15 +1292,16 @@ def start_download():
             return jsonify({'success': False, 'error': 'Un téléchargement est déjà en cours. Attendez qu\'il se termine.'}), 429
 
         playlist_mode = bool(data.get('playlist_mode', False))
+        mp4_mode = bool(data.get('mp4_mode', False))
         metadata = {
             'artist': data.get('artist', 'Unknown Artist'),
             'album':  data.get('album',  'Unknown Album'),
             'title':  data.get('title',  'Unknown Title'),
             'year':   data.get('year',   '')
         }
-        download_queue.put({'url': url, 'metadata': metadata, 'playlist_mode': playlist_mode, 'added_at': datetime.now().isoformat()})
+        download_queue.put({'url': url, 'metadata': metadata, 'playlist_mode': playlist_mode, 'mp4_mode': mp4_mode, 'added_at': datetime.now().isoformat()})
         _start_or_extend_batch(1)
-        logger.info(f"➕ Admin queue: {metadata['artist']} - {metadata['title']} [playlist_mode={playlist_mode}]")
+        logger.info(f"➕ Admin queue: {metadata['artist']} - {metadata['title']} [playlist_mode={playlist_mode}, mp4_mode={mp4_mode}]")
         return jsonify({'success': True, 'message': 'Ajouté à la queue', 'queue_size': download_queue.qsize()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1301,6 +1321,7 @@ def download_playlist():
             return jsonify({'success': False, 'error': 'Un téléchargement est déjà en cours. Attendez qu\'il se termine.'}), 429
 
         playlist_mode = bool(data.get('playlist_mode', False))
+        mp4_mode = bool(data.get('mp4_mode', False))
         songs = playlist.get('songs', [])
         added = 0
         for song in songs:
@@ -1312,7 +1333,7 @@ def download_playlist():
                 'title':  song['title'],
                 'year':   playlist.get('year', '')
             }
-            download_queue.put({'url': song['url'], 'metadata': metadata, 'playlist_mode': playlist_mode, 'added_at': datetime.now().isoformat()})
+            download_queue.put({'url': song['url'], 'metadata': metadata, 'playlist_mode': playlist_mode, 'mp4_mode': mp4_mode, 'added_at': datetime.now().isoformat()})
             added += 1
 
         _start_or_extend_batch(added)
@@ -1460,6 +1481,7 @@ def guest_download():
             return jsonify({'success': False, 'error': 'URL invalide. Veuillez coller un lien YouTube Music valide.'}), 400
 
         playlist_mode = bool(data.get('playlist_mode', False))
+        mp4_mode = bool(data.get('mp4_mode', False))
         metadata = {
             'artist': data.get('artist', 'Unknown Artist'),
             'album':  data.get('album',  'Unknown Album'),
@@ -1467,7 +1489,7 @@ def guest_download():
             'year':   data.get('year',   '')
         }
 
-        sess['queue'].put({'url': url, 'metadata': metadata, 'playlist_mode': playlist_mode, 'added_at': datetime.now().isoformat()})
+        sess['queue'].put({'url': url, 'metadata': metadata, 'playlist_mode': playlist_mode, 'mp4_mode': mp4_mode, 'added_at': datetime.now().isoformat()})
         logger.info(f"[GUEST:{sid[:8]}] ➕ {metadata['artist']} - {metadata['title']}")
 
         return jsonify({
@@ -1496,6 +1518,7 @@ def guest_download_playlist():
         playlist = data.get('playlist_metadata', {})
         songs    = playlist.get('songs', [])
         playlist_mode = bool(data.get('playlist_mode', False))
+        mp4_mode = bool(data.get('mp4_mode', False))
 
         # Calculer combien on peut encore ajouter
         already = sess['songs_downloaded'] + sess['queue'].qsize()
@@ -1512,7 +1535,7 @@ def guest_download_playlist():
                 'title':  song['title'],
                 'year':   playlist.get('year', '')
             }
-            sess['queue'].put({'url': song['url'], 'metadata': metadata, 'playlist_mode': playlist_mode, 'added_at': datetime.now().isoformat()})
+            sess['queue'].put({'url': song['url'], 'metadata': metadata, 'playlist_mode': playlist_mode, 'mp4_mode': mp4_mode, 'added_at': datetime.now().isoformat()})
             added += 1
 
         return jsonify({
@@ -1650,14 +1673,16 @@ def queue_worker():
             logger.info(f"🎵 Admin: {metadata['artist']} - {metadata['title']}")
 
             try:
-                result = downloader.download(url, metadata)
+                mp4_mode = bool(item.get('mp4_mode', False))
+                result = downloader.download(url, metadata, mp4_mode=mp4_mode)
                 if cancel_flag.is_set():
                     raise Exception("Annulé par l'utilisateur")
                 if not result['success']:
                     raise Exception(result.get('error', 'Erreur inconnue'))
 
                 playlist_mode = item.get('playlist_mode', False)
-                org_result = organizer.organize(result['file_path'], metadata, playlist_mode=playlist_mode)
+                media_mode = result.get('media_mode', 'mp3')
+                org_result = organizer.organize(result['file_path'], metadata, playlist_mode=playlist_mode, media_mode=media_mode)
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
 

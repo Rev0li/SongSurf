@@ -707,9 +707,6 @@
 		try {
 			const playlistMode = !!(els.playlistMode && els.playlistMode.checked);
 			const mp4Mode = !!(els.mp4Mode && els.mp4Mode.checked);
-			if (mp4Mode) {
-				showAlert('Mode MP4 en préparation. Téléchargement lancé en MP3 pour le moment.', 'info');
-			}
 			let res;
 			if (currentExtract && currentExtract.is_playlist) {
 				res = await window.api.downloadPlaylist({

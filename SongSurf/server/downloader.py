@@ -107,6 +107,26 @@ class YouTubeDownloader:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
 
+    def _download_mp4_to_temp(self, url, temp_filename, progress_hook=None):
+        """Télécharge la vidéo en MP4 dans temp."""
+        ydl_opts = {
+            'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+            'outtmpl': str(self.temp_dir / f'{temp_filename}.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+            'writethumbnail': True,
+            'merge_output_format': 'mp4',
+            'nocheckcertificate': True,
+        }
+        if progress_hook is not None:
+            ydl_opts['progress_hooks'] = [progress_hook]
+        if self.ffmpeg_location:
+            ydl_opts['ffmpeg_location'] = self.ffmpeg_location
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+
     def prefetch_first_track(self, url, metadata):
         """Précharge une piste en MP3 dans temp pour accélérer le futur download."""
         try:
@@ -128,16 +148,16 @@ class YouTubeDownloader:
             logger.warning(f"⚠️ Prefetch échoué: {e}")
             return {'success': False, 'error': str(e)}
 
-    def download(self, url, metadata):
+    def download(self, url, metadata, mp4_mode=False):
         """
-        Télécharge une vidéo YouTube en MP3.
+        Télécharge une vidéo YouTube en MP3 ou MP4.
 
         Args:
             url (str): URL YouTube ou YouTube Music
             metadata (dict): {artist, album, title, year}
 
         Returns:
-            dict: {success, file_path, error}
+            dict: {success, file_path, media_mode, error}
         """
         try:
             logger.info(f"⬇️  Téléchargement: {metadata.get('title', 'Unknown')}")
@@ -147,7 +167,8 @@ class YouTubeDownloader:
             logger.info(f"   URL: {url}")
 
             temp_filename = self._temp_filename_from_metadata(metadata)
-            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
+            media_mode = 'mp4' if mp4_mode else 'mp3'
+            downloaded_file = self.temp_dir / f"{temp_filename}.{media_mode}"
             if downloaded_file.exists():
                 self.progress.reset()
                 self.progress.status = 'completed'
@@ -156,6 +177,7 @@ class YouTubeDownloader:
                 return {
                     'success': True,
                     'file_path': str(downloaded_file),
+                    'media_mode': media_mode,
                     'metadata': metadata,
                     'timestamp': datetime.now().isoformat()
                 }
@@ -163,9 +185,13 @@ class YouTubeDownloader:
             self.progress.reset()
             self.progress.status = 'downloading'
 
-            self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+            if mp4_mode:
+                self._download_mp4_to_temp(url, temp_filename, progress_hook=self.progress.update)
+            else:
+                self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+
             if not downloaded_file.exists():
-                raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")
+                raise FileNotFoundError(f"Fichier {media_mode.upper()} introuvable après conversion: {downloaded_file}")
 
             self.progress.status  = 'completed'
             self.progress.percent = 100
@@ -174,6 +200,7 @@ class YouTubeDownloader:
             return {
                 'success':   True,
                 'file_path': str(downloaded_file),
+                'media_mode': media_mode,
                 'metadata':  metadata,
                 'timestamp': datetime.now().isoformat()
             }

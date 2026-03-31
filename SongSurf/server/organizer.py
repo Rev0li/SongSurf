@@ -13,6 +13,7 @@ from pathlib import Path
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC
 import shutil
+import subprocess
 from datetime import datetime
 import mimetypes
 from PIL import Image
@@ -28,6 +29,7 @@ class MusicOrganizer:
     def __init__(self, music_dir):
         self.music_dir = Path(music_dir)
         self.music_dir.mkdir(exist_ok=True, parents=True)
+        self.ffmpeg_bin = shutil.which('ffmpeg')
 
     def detect_featuring(self, title, artist):
         """
@@ -82,9 +84,9 @@ class MusicOrganizer:
             'has_feat': len(feat_artists) > 0
         }
 
-    def organize(self, file_path, metadata, playlist_mode=False):
+    def organize(self, file_path, metadata, playlist_mode=False, media_mode='mp3'):
         """
-        Organise un fichier MP3.
+        Organise un fichier audio/vidéo téléchargé.
 
         Mode normal (playlist_mode=False) :
             Structure  Artist/Album/Title.mp3
@@ -95,9 +97,10 @@ class MusicOrganizer:
             Pas de tri par artiste, chaque chanson garde ses propres tags ID3.
 
         Args:
-            file_path (str): Chemin du fichier MP3 temporaire
+            file_path (str): Chemin du fichier temporaire
             metadata (dict): {artist, album, title, year}
             playlist_mode (bool): True = mode playlist (dossier plat par album)
+            media_mode (str): 'mp3' ou 'mp4'
 
         Returns:
             dict: {success, final_path, error}
@@ -109,6 +112,9 @@ class MusicOrganizer:
                 raise FileNotFoundError(f"Fichier non trouvé: {file_path}")
 
             logger.info(f"📁 Organisation: {file_path.name}")
+
+            media_mode = str(media_mode or 'mp3').lower().strip()
+            extension = '.mp4' if media_mode == 'mp4' else '.mp3'
 
             raw_artist = metadata.get('artist', 'Unknown Artist')
             album      = metadata.get('album',  'Unknown Album')
@@ -127,23 +133,27 @@ class MusicOrganizer:
 
                 dest_dir = self.music_dir / album
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                final_path = dest_dir / f"{title}.mp3"
+                final_path = dest_dir / f"{title}{extension}"
 
                 if final_path.exists():
                     counter = 1
                     while final_path.exists():
-                        final_path = dest_dir / f"{title} ({counter}).mp3"
+                        final_path = dest_dir / f"{title} ({counter}){extension}"
                         counter += 1
 
                 shutil.copy2(file_path, final_path)
                 thumbnail_path = self._find_thumbnail(file_path)
 
-                self._update_tags(final_path, {
-                    'artist': artist,
-                    'album':  album,
-                    'title':  title,
-                    'year':   year,
-                }, thumbnail_path)
+                if media_mode == 'mp3':
+                    self._update_tags(final_path, {
+                        'artist': artist,
+                        'album':  album,
+                        'title':  title,
+                        'year':   year,
+                    }, thumbnail_path)
+                    self._ensure_album_cover(dest_dir, final_path, thumbnail_path)
+                else:
+                    self._ensure_album_cover_from_thumbnail(dest_dir, final_path, thumbnail_path)
 
             else:
                 # ── MODE NORMAL : Artist/Album/Title.mp3 ─────────────────
@@ -164,24 +174,28 @@ class MusicOrganizer:
 
                 album_dir = self.music_dir / artist / album
                 album_dir.mkdir(parents=True, exist_ok=True)
-                final_path = album_dir / f"{title}.mp3"
+                final_path = album_dir / f"{title}{extension}"
 
                 if final_path.exists():
                     logger.debug(f"   ⚠️ Doublon détecté, ajout d'un suffixe")
                     counter = 1
                     while final_path.exists():
-                        final_path = album_dir / f"{title} ({counter}).mp3"
+                        final_path = album_dir / f"{title} ({counter}){extension}"
                         counter += 1
 
                 shutil.copy2(file_path, final_path)
                 thumbnail_path = self._find_thumbnail(file_path)
 
-                self._update_tags(final_path, {
-                    'artist': artist,
-                    'album':  album,
-                    'title':  title,
-                    'year':   year,
-                }, thumbnail_path)
+                if media_mode == 'mp3':
+                    self._update_tags(final_path, {
+                        'artist': artist,
+                        'album':  album,
+                        'title':  title,
+                        'year':   year,
+                    }, thumbnail_path)
+                    self._ensure_album_cover(album_dir, final_path, thumbnail_path)
+                else:
+                    self._ensure_album_cover_from_thumbnail(album_dir, final_path, thumbnail_path)
 
             # ── Nettoyage commun ──────────────────────────────────────────
             file_path.unlink()
@@ -256,6 +270,224 @@ class MusicOrganizer:
 
         except Exception as e:
             logger.warning(f"⚠️ Erreur tags ID3: {e}")
+
+    def _ensure_album_cover(self, album_dir, track_path, thumbnail_path=None, overwrite=False):
+        """Crée cover.jpg dans le dossier album si absent (ou overwrite=True)."""
+        try:
+            album_dir = Path(album_dir)
+            cover_path = album_dir / 'cover.jpg'
+            if not overwrite and cover_path.exists() and cover_path.stat().st_size > 0:
+                return False
+
+            img_data = None
+
+            # Priorité: image sidecar yt-dlp (souvent de meilleure qualité)
+            if thumbnail_path and Path(thumbnail_path).exists():
+                img_data, _ = self._convert_image_to_jpeg(thumbnail_path)
+
+            # Fallback: extraire l'APIC embarqué du MP3
+            if not img_data:
+                apic_data = self._extract_apic_bytes(track_path)
+                if apic_data:
+                    img_data = self._convert_image_bytes_to_jpeg(apic_data)
+
+            # Dernier fallback: extraction via ffmpeg (utile pour MP4 et certains flux)
+            if not img_data and self._extract_cover_with_ffmpeg(track_path, cover_path):
+                logger.debug(f"   🖼️ cover.jpg extrait via ffmpeg: {cover_path.relative_to(self.music_dir)}")
+                return True
+
+            if img_data:
+                cover_path.write_bytes(img_data)
+                logger.debug(f"   🖼️ cover.jpg créé: {cover_path.relative_to(self.music_dir)}")
+                return True
+
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur création cover.jpg: {e}")
+
+        return False
+
+    def _ensure_album_cover_from_thumbnail(self, album_dir, track_path, thumbnail_path, overwrite=False):
+        """Crée cover.jpg à partir du sidecar yt-dlp, sinon fallback ffmpeg."""
+        try:
+            album_dir = Path(album_dir)
+            cover_path = album_dir / 'cover.jpg'
+            if not overwrite and cover_path.exists() and cover_path.stat().st_size > 0:
+                return False
+
+            if thumbnail_path and Path(thumbnail_path).exists():
+                img_data, _ = self._convert_image_to_jpeg(Path(thumbnail_path))
+                if img_data:
+                    cover_path.write_bytes(img_data)
+                    logger.debug(f"   🖼️ cover.jpg créé depuis thumbnail: {cover_path.relative_to(self.music_dir)}")
+                    return True
+
+            if self._extract_cover_with_ffmpeg(track_path, cover_path):
+                logger.debug(f"   🖼️ cover.jpg extrait via ffmpeg: {cover_path.relative_to(self.music_dir)}")
+                return True
+
+            return False
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur création cover sidecar: {e}")
+            return False
+
+    def _extract_cover_with_ffmpeg(self, media_path, cover_path):
+        """Extrait une image cover.jpg depuis un média avec ffmpeg."""
+        try:
+            media_path = Path(media_path)
+            cover_path = Path(cover_path)
+            if not media_path.exists() or not self.ffmpeg_bin:
+                return False
+
+            cmd = [
+                self.ffmpeg_bin,
+                '-y',
+                '-i', str(media_path),
+                '-map', '0:v:0',
+                '-frames:v', '1',
+                '-q:v', '2',
+                str(cover_path),
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+            if proc.returncode == 0 and cover_path.exists() and cover_path.stat().st_size > 0:
+                return True
+
+            # Fallback si aucun stream vidéo détecté avec map strict
+            cmd_fallback = [
+                self.ffmpeg_bin,
+                '-y',
+                '-i', str(media_path),
+                '-frames:v', '1',
+                '-q:v', '2',
+                str(cover_path),
+            ]
+            proc2 = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=25)
+            return proc2.returncode == 0 and cover_path.exists() and cover_path.stat().st_size > 0
+        except Exception:
+            return False
+
+    def extract_album_covers(self, overwrite=False):
+        """
+        Génère cover.jpg dans chaque dossier album de la bibliothèque.
+
+        Structure gérée:
+                    - Mode normal   : Artist/Album/*.(mp3|mp4)
+                    - Mode playlist : Album/*.(mp3|mp4)
+        """
+        scanned = 0
+        created = 0
+        skipped = 0
+
+        try:
+            if not self.music_dir.exists():
+                return {
+                    'success': False,
+                    'error': f"Dossier musique introuvable: {self.music_dir}",
+                    'albums_scanned': 0,
+                    'covers_created': 0,
+                    'covers_skipped': 0,
+                }
+
+            for subdir in self.music_dir.iterdir():
+                if not subdir.is_dir():
+                    continue
+
+                direct_media = sorted(
+                    [p for p in subdir.iterdir() if p.is_file() and p.suffix.lower() in ('.mp3', '.mp4')],
+                    key=lambda p: p.name.lower()
+                )
+                subdirs = [d for d in subdir.iterdir() if d.is_dir()]
+
+                # Mode playlist: Album/*.(mp3|mp4)
+                if direct_media:
+                    scanned += 1
+                    if self._ensure_album_cover(subdir, direct_media[0], overwrite=overwrite):
+                        created += 1
+                    else:
+                        skipped += 1
+                    continue
+
+                # Mode normal: Artist/Album/*.(mp3|mp4)
+                for album_dir in subdirs:
+                    media_files = sorted(
+                        [p for p in album_dir.iterdir() if p.is_file() and p.suffix.lower() in ('.mp3', '.mp4')],
+                        key=lambda p: p.name.lower()
+                    )
+                    if not media_files:
+                        continue
+                    scanned += 1
+                    if self._ensure_album_cover(album_dir, media_files[0], overwrite=overwrite):
+                        created += 1
+                    else:
+                        skipped += 1
+
+            logger.info(
+                f"🖼️ Covers extraites: {created} créées, {skipped} ignorées, {scanned} albums analysés"
+            )
+            return {
+                'success': True,
+                'albums_scanned': scanned,
+                'covers_created': created,
+                'covers_skipped': skipped,
+                'overwrite': bool(overwrite),
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f"❌ extract_album_covers: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'albums_scanned': scanned,
+                'covers_created': created,
+                'covers_skipped': skipped,
+                'overwrite': bool(overwrite),
+                'timestamp': datetime.now().isoformat(),
+            }
+
+    def _extract_apic_bytes(self, mp3_path):
+        """Retourne les bytes APIC embarqués dans un MP3, sinon None."""
+        try:
+            audio = MP3(mp3_path, ID3=ID3)
+            if not audio.tags:
+                return None
+            for frame in audio.tags.values():
+                if isinstance(frame, APIC) and getattr(frame, 'data', None):
+                    return frame.data
+        except Exception:
+            return None
+        return None
+
+    def _convert_image_bytes_to_jpeg(self, image_bytes):
+        """Convertit des bytes image en JPEG compatible players."""
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                width, height = img.size
+                if width != height:
+                    min_dim = min(width, height)
+                    left = (width - min_dim) // 2
+                    top = (height - min_dim) // 2
+                    right = left + min_dim
+                    bottom = top + min_dim
+                    img = img.crop((left, top, right, bottom))
+
+                max_size = 1000
+                if img.width > max_size or img.height > max_size:
+                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=90, optimize=True)
+                return buffer.getvalue()
+        except Exception:
+            return None
 
     def _convert_image_to_jpeg(self, image_path):
         """Convertit une image en JPEG pour compatibilité maximale"""
