@@ -53,3 +53,5 @@ chrome-extension/config.js
 # Docker - Configuration privée (SECRETS)
 .env
 docker/.env
+*/node_modules/*
+**/node_modules/

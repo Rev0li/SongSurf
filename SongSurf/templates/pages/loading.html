@@ -65,6 +65,17 @@
       color: rgba(255,255,255,0.45);
     }
 
+    .idle-warning {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255, 181, 71, 0.15);
+      border: 1px solid rgba(255, 181, 71, 0.35);
+      color: #ffd48f;
+      font-size: 13px;
+      display: none;
+    }
+
     @keyframes move {
       0% { transform: translateX(-120%); }
       100% { transform: translateX(320%); }
@@ -77,22 +88,60 @@
     <p class="subtitle">Le service se réveille. Cette page se recharge automatiquement.</p>
     <div class="bar" aria-hidden="true"><span></span></div>
     <p class="hint">Redirection vers: {{ next_url }}</p>
+    <p class="idle-warning" id="idle-warning">Inactivité détectée. Arrêt automatique dans <strong id="idle-countdown">15:00</strong>.</p>
   </main>
 
   <script>
-    (function pollReady() {
-      const nextUrl = {{ next_url|tojson }};
-      fetch('/watcher/ready', { credentials: 'same-origin' })
-        .then(r => r.json())
-        .then(data => {
-          if (data && data.ready) {
-            window.location.href = nextUrl;
-            return;
-          }
-          setTimeout(pollReady, 1200);
-        })
-        .catch(() => setTimeout(pollReady, 1500));
-    })();
+    const _nextUrl = {{ next_url|tojson }};
+    const _retries = {{ retries | default(0) }};
+
+    function fmt(sec) {
+      const s = Math.max(0, Number(sec || 0));
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return String(m) + ':' + String(r).padStart(2, '0');
+    }
+
+    // If we've been bounced back to loading 3+ times, SongSurf is not responding.
+    // Show a clear error instead of polling forever.
+    if (_retries >= 3) {
+      document.querySelector('.subtitle').textContent =
+        'Le service ne répond pas après plusieurs tentatives.';
+      document.querySelector('.bar').style.display = 'none';
+      document.querySelector('.hint').innerHTML =
+        '<a href="' + _nextUrl + '" style="color:#ff3b6d">Réessayer manuellement</a>';
+    } else {
+      function pollInactivity() {
+        fetch('/watcher/inactivity-status', { credentials: 'same-origin' })
+          .then(r => (r.ok ? r.json() : null))
+          .then(data => {
+            const box = document.getElementById('idle-warning');
+            const cd = document.getElementById('idle-countdown');
+            if (!box || !cd || !data) return;
+            if (data.warned) {
+              box.style.display = 'block';
+              cd.textContent = fmt(data.grace_remaining_seconds || data.force_stop_in_seconds || 0);
+            } else {
+              box.style.display = 'none';
+            }
+          })
+          .catch(() => {});
+      }
+
+      (function pollReady() {
+        fetch('/watcher/ready', { credentials: 'same-origin' })
+          .then(r => r.json())
+          .then(data => {
+            if (data && data.ready) {
+              window.location.href = _nextUrl;
+              return;
+            }
+            pollInactivity();
+            setTimeout(pollReady, 1200);
+          })
+          .catch(() => setTimeout(pollReady, 1500));
+      })();
+    }
   </script>
 </body>
 </html>

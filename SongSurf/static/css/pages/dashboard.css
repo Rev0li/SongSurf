@@ -107,6 +107,19 @@
 	border-bottom: none;
 }
 
+.toggle-description {
+	flex: 1;
+	font-size: 13px;
+	color: var(--color-text-secondary);
+}
+
+.toggle-description small {
+	display: block;
+	font-size: 11px;
+	color: var(--color-text-muted);
+	margin-top: 2px;
+}
+
 #dl-list {
 	max-height: 360px;
 	overflow: auto;

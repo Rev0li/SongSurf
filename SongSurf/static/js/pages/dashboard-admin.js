@@ -25,8 +25,12 @@
 		editTitle: document.getElementById('edit-title'),
 		editArtist: document.getElementById('edit-artist'),
 		editAlbum: document.getElementById('edit-album'),
+		singleArtistGroup: document.getElementById('single-artist-group'),
+		singleAlbumGroup: document.getElementById('single-album-group'),
 		editPlaylistArtist: document.getElementById('edit-playlist-artist'),
 		editPlaylistAlbum: document.getElementById('edit-playlist-album'),
+		playlistArtistGroup: document.getElementById('playlist-artist-group'),
+		playlistAlbumGroup: document.getElementById('playlist-album-group'),
 		editPlaylistYear: document.getElementById('edit-playlist-year'),
 		playlistMetaSummary: document.getElementById('playlist-meta-summary'),
 		playlistSongList: document.getElementById('playlist-song-list'),
@@ -298,8 +302,26 @@
 		els.playlistSongList.innerHTML = songs.map(function (song, idx) {
 			const a = primaryArtist(song.artist || 'Unknown Artist');
 			const t = asText(song.title, 'Unknown Title');
-			return '<div class="song-row">' + (idx + 1) + '. ' + htmlEscape(a) + ' - ' + htmlEscape(t) + '</div>';
+			return '<div class="song-row">' + (idx + 1) + '. ' + htmlEscape(t) + '</div>';
 		}).join('');
+	}
+
+	function applyPlaylistModeVisibility() {
+		const playlistMode = !!(els.playlistMode && els.playlistMode.checked);
+
+		if (els.singleArtistGroup) {
+			els.singleArtistGroup.style.display = playlistMode ? 'none' : '';
+		}
+		if (els.playlistArtistGroup) {
+			els.playlistArtistGroup.style.display = playlistMode ? 'none' : '';
+		}
+
+		if (els.singleAlbumGroup) {
+			els.singleAlbumGroup.style.gridColumn = playlistMode ? '1 / -1' : '';
+		}
+		if (els.playlistAlbumGroup) {
+			els.playlistAlbumGroup.style.gridColumn = playlistMode ? '1 / -1' : '';
+		}
 	}
 
 	function updateCoverPreview(urlOrCandidates) {
@@ -625,6 +647,9 @@
 	}
 
 	async function refreshLibrary() {
+		if (!els.libraryTree) {
+			return;
+		}
 		if (isDraggingLibrary) {
 			return;
 		}
@@ -793,7 +818,9 @@
 		}
 	}
 
-	window.onPlaylistModeChange = function () {};
+	window.onPlaylistModeChange = function () {
+		applyPlaylistModeVisibility();
+	};
 	window.resetPreview = async function () {
 		await cancelCurrentPrefetch();
 		currentExtract = null;
@@ -801,26 +828,18 @@
 		clearAnalysisFields();
 		setAnalysisPanelActive(false);
 	};
-	window.cleanupTemp = async function () {
-		try {
-			const res = await window.api.cleanup();
-			showAlert('Nettoyage termine (' + (res.deleted || 0) + ' fichiers).', 'info');
-		} catch (err) {
-			showAlert(err.message || 'Erreur nettoyage.', 'error');
-		}
-	};
 	window.downloadRecentFiles = function () {
 		(async function () {
 			try {
-				const res = await window.api.prepareAdminZip();
+				const res = await window.api.prepareZip();
 				if (!res.success) {
 					showAlert(res.error || 'Impossible de créer le ZIP.', 'error');
 					return;
 				}
-				showAlert('ZIP prêt: ' + res.count + ' fichiers (' + res.size_mb + ' MB). Téléchargement en cours...', 'info');
-				window.location.href = (res.download_url || '/api/admin/download-zip') + '?t=' + Date.now();
+				showAlert('ZIP prêt : ' + res.count + ' fichiers (' + res.size_mb + ' MB). Téléchargement en cours...', 'info');
+				window.location.href = (res.download_url || '/api/download-zip') + '?t=' + Date.now();
 			} catch (err) {
-				showAlert(err.message || 'Erreur ZIP admin.', 'error');
+				showAlert(err.message || 'Erreur ZIP.', 'error');
 			}
 		})();
 	};
@@ -860,6 +879,7 @@
 	bindLibraryToolbar();
 	updateSelectedFolderUI();
 	clearAnalysisFields();
+	applyPlaylistModeVisibility();
 	setAnalysisPanelActive(false);
 	refreshLibrary();
 	pollStatus();

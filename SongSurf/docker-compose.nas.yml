@@ -8,3 +8,6 @@ services:
   songsurf:
     network_mode: host
     ports: []
+    # WARNING: host network exposes :8081 on all interfaces.
+    # Block it at the NAS firewall — only :8080 (Watcher) should be reachable externally.
+    # Synology: Control Panel → Security → Firewall → deny port 8081 from WAN.

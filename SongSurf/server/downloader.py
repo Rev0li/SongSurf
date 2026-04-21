@@ -71,6 +71,8 @@ class YouTubeDownloader:
         self.temp_dir  = Path(temp_dir)
         self.music_dir = Path(music_dir)
         self.progress  = DownloadProgress()
+        # 2h30 par défaut pour autoriser les mix DJ.
+        self.max_duration_seconds = int(os.getenv('MAX_DURATION_SECONDS', '9000'))
         self.temp_dir.mkdir(exist_ok=True, parents=True)
         self.music_dir.mkdir(exist_ok=True, parents=True)
         self.ffmpeg_location = self._find_ffmpeg()
@@ -243,6 +245,12 @@ class YouTubeDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
+            duration = int(info.get('duration') or 0)
+            if self.max_duration_seconds > 0 and duration > self.max_duration_seconds:
+                raise ValueError(
+                    f"Vidéo trop longue ({duration}s > {self.max_duration_seconds}s max)"
+                )
+
             title    = info.get('title', 'Unknown Title')
             uploader = info.get('uploader', 'Unknown Artist')
             artist   = info.get('artist') or info.get('creator') or uploader
@@ -259,7 +267,7 @@ class YouTubeDownloader:
                 'album':         album,
                 'year':          year,
                 'thumbnail_url': info.get('thumbnail', ''),
-                'duration':      info.get('duration', 0),
+                'duration':      duration,
                 'view_count':    info.get('view_count', 0)
             }
 
@@ -441,6 +449,25 @@ class YouTubeDownloader:
             if match:
                 return f'https://www.youtube.com/watch?v={match.group(1)}'
         return url
+
+    def _detect_type(self, url: str) -> str:
+        """Retourne 'song' ou 'playlist' à partir de l'URL YouTube."""
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse((url or '').strip())
+            qs = parse_qs(parsed.query or '')
+
+            if 'v' in qs and qs.get('v'):
+                return 'song'
+            if 'list' in qs and qs.get('list'):
+                return 'playlist'
+            if '/browse/' in (parsed.path or '').lower():
+                return 'playlist'
+        except Exception:
+            return 'song'
+
+        return 'song'
 
     def _primary_artist(self, artist):
         """Normalise l'artiste et garde le premier nom principal."""

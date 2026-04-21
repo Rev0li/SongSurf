@@ -43,8 +43,11 @@ window.api = {
 			body: JSON.stringify({ folder_path: folderPath, new_name: newName }),
 		});
 	},
+	prepareZip() {
+		return jsonRequest('/api/prepare-zip', { method: 'POST' });
+	},
 	prepareAdminZip() {
-		return jsonRequest('/api/admin/prepare-zip', { method: 'POST' });
+		return this.prepareZip();
 	},
 	uploadLibraryImage(file, targetFolder) {
 		const form = new FormData();
@@ -97,8 +100,5 @@ window.api = {
 			method: 'POST',
 			body: JSON.stringify(payload),
 		});
-	},
-	cleanup() {
-		return jsonRequest('/api/cleanup', { method: 'POST' });
 	},
 };

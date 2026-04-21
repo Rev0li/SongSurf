@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block title %}Donation — SongSurf{% endblock %}
+
+{% block extra_css %}
+<style>
+  .donation-wrap {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-5);
+  }
+  .donation-header {
+    text-align: center;
+    margin-bottom: var(--space-8);
+  }
+  .donation-title {
+    font-size: 28px;
+    font-weight: 700;
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: var(--space-2);
+  }
+  .donation-subtitle {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .crypto-grid {
+    display: grid;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+  .crypto-card {
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+  .crypto-icon { font-size: 28px; flex-shrink: 0; }
+  .crypto-info { flex: 1; min-width: 0; }
+  .crypto-name { font-weight: 600; font-size: var(--font-size-sm); margin-bottom: 4px; }
+  .crypto-address {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    word-break: break-all;
+    line-height: 1.4;
+  }
+  .crypto-copy {
+    background: none;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+    border-radius: var(--radius-md);
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+  }
+  .crypto-copy:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
+  .crypto-copy.copied { border-color: #4ade80; color: #4ade80; }
+
+  .pcs-section {
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-6);
+  }
+  .pcs-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin-bottom: var(--space-2);
+  }
+  .pcs-subtitle {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    margin-bottom: var(--space-4);
+  }
+  .pcs-form { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pcs-note {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-top: var(--space-2);
+  }
+  #pcs-alert { margin-top: var(--space-3); }
+</style>
+{% endblock %}
+
+{% block body %}
+<header class="header">
+  <div class="header-brand">
+    <span class="header-logo">🎵</span>
+    <h1 class="header-title">SongSurf</h1>
+  </div>
+  <nav class="header-nav">
+    <a href="/" class="btn btn-ghost btn-sm">← Dashboard</a>
+  </nav>
+</header>
+
+<div class="donation-wrap">
+
+  <div class="donation-header">
+    <h1 class="donation-title">❤️ Soutenir SongSurf</h1>
+    <p class="donation-subtitle">Si le service te rend service, un petit geste est toujours apprécié.</p>
+  </div>
+
+  <!-- ── Crypto ── -->
+  {% set cryptos = [
+    ('BTC', '₿ Bitcoin', btc_address),
+    ('ETH', 'Ξ Ethereum', eth_address),
+    ('SOL', '◎ Solana', sol_address),
+    ('XMR', 'ɱ Monero', xmr_address),
+  ] %}
+
+  <div class="crypto-grid">
+    {% for symbol, label, address in cryptos %}
+      {% if address %}
+      <div class="crypto-card">
+        <div class="crypto-icon">
+          {% if symbol == 'BTC' %}₿
+          {% elif symbol == 'ETH' %}Ξ
+          {% elif symbol == 'SOL' %}◎
+          {% else %}ɱ
+          {% endif %}
+        </div>
+        <div class="crypto-info">
+          <div class="crypto-name">{{ label }}</div>
+          <div class="crypto-address" id="addr-{{ symbol }}">{{ address }}</div>
+        </div>
+        <button class="crypto-copy" onclick="copyAddress('{{ symbol }}', this)">Copier</button>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- ── PCS Coupon ── -->
+  <div class="pcs-section">
+    <h2 class="pcs-title">🎁 Coupon PCS / carte cadeau</h2>
+    <p class="pcs-subtitle">
+      Tu peux aussi envoyer un coupon PCS (carte prépayée). Saisis le code et joins une photo si tu veux.
+    </p>
+
+    <form class="pcs-form" id="pcs-form" onsubmit="submitCoupon(event)">
+      <div class="form-group">
+        <label class="form-label">Code coupon <span style="color:#ff3b6d">*</span></label>
+        <input type="text" class="form-input" id="pcs-code"
+               placeholder="Ex: XXXX-XXXX-XXXX-XXXX"
+               required autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Note (optionnelle)</label>
+        <input type="text" class="form-input" id="pcs-note"
+               placeholder="Un mot sympa..."
+               autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Photo du coupon (optionnelle)</label>
+        <input type="file" class="form-input" id="pcs-image"
+               accept="image/jpeg,image/png,image/webp">
+        <p class="pcs-note">jpg, png ou webp uniquement</p>
+      </div>
+
+      <div id="pcs-alert"></div>
+
+      <button type="submit" class="btn btn-brand" id="pcs-submit">Envoyer le coupon</button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function copyAddress(symbol, btn) {
+  const el = document.getElementById('addr-' + symbol);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+    btn.textContent = '✓ Copié';
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.textContent = 'Copier';
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch(function () {
+    btn.textContent = 'Erreur';
+  });
+}
+
+async function submitCoupon(ev) {
+  ev.preventDefault();
+  const alertEl = document.getElementById('pcs-alert');
+  const submitBtn = document.getElementById('pcs-submit');
+  const code = (document.getElementById('pcs-code').value || '').trim();
+  const note = (document.getElementById('pcs-note').value || '').trim();
+  const imageFile = document.getElementById('pcs-image').files[0];
+
+  if (!code) {
+    alertEl.innerHTML = '<div class="alert alert-error">Le code coupon est requis.</div>';
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Envoi en cours...';
+  alertEl.innerHTML = '';
+
+  const form = new FormData();
+  form.append('coupon_code', code);
+  if (note) form.append('note', note);
+  if (imageFile) form.append('coupon_image', imageFile);
+
+  try {
+    const res = await fetch('/api/donation/upload-coupon', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    });
+    const data = await res.json().catch(function () { return {}; });
+    if (res.ok && data.success) {
+      alertEl.innerHTML = '<div class="alert alert-info">' + (data.message || 'Merci !') + '</div>';
+      document.getElementById('pcs-form').reset();
+    } else {
+      alertEl.innerHTML = '<div class="alert alert-error">' + (data.error || 'Erreur lors de l\'envoi.') + '</div>';
+    }
+  } catch (err) {
+    alertEl.innerHTML = '<div class="alert alert-error">Impossible de contacter le serveur.</div>';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Envoyer le coupon';
+  }
+}
+</script>
+{% endblock %}

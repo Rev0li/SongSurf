@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — SongSurf{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/dashboard.css') }}">
+<style>
+  .main-grid {
+    display: grid;
+    grid-template-columns: 70% 30%;
+    gap: var(--space-6);
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-5);
+  }
+  .main-column { }
+  .side-column { }
+
+  .progress-steps {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .progress-step {
+    flex: 1;
+    height: 8px;
+    background: var(--color-surface-2);
+    border-radius: var(--radius-full);
+    position: relative;
+    overflow: hidden;
+  }
+  .progress-step-fill {
+    height: 100%;
+    background: var(--gradient-brand);
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  .progress-step.active .progress-step-fill { animation: pulse 1.5s ease-in-out infinite; }
+  .progress-step.completed .progress-step-fill { width: 100%; }
+
+  .progress-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--space-2);
+  }
+  .progress-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    flex: 1;
+    text-align: center;
+  }
+  .progress-label.active {
+    color: var(--color-text-primary);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  @media (max-width: 1024px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .side-column { order: -1; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<header class="header">
+  <div class="header-brand">
+    <span class="header-logo">🎵</span>
+    <h1 class="header-title">SongSurf</h1>
+  </div>
+  <nav class="header-nav">
+    {% if user and user.email %}
+      <span class="badge badge-primary" title="{{ user.sub }}">{{ user.email }}</span>
+    {% endif %}
+    <a href="/donation" class="btn btn-ghost btn-sm">Donation</a>
+  </nav>
+</header>
+
+<section class="top-analyzer-wrap">
+  <div class="card top-analyzer-card">
+    <h2 class="card-title">🔗 Coller un lien YouTube Music</h2>
+    <div id="alert-zone"></div>
+    <div class="url-group">
+      <input type="text" class="form-input" id="url-input"
+             placeholder="https://music.youtube.com/watch?v=..."
+             autocomplete="off">
+      <button class="btn btn-primary" id="btn-extract">🔍 Analyser</button>
+    </div>
+  </div>
+</section>
+
+<div class="main-grid">
+
+  <!-- ══ COLONNE PRINCIPALE (70%) — Téléchargement ══ -->
+  <div class="main-column">
+
+    <div class="card metadata-panel">
+      <h2 class="card-title">🎛️ Panneau d'analyse</h2>
+      <div id="metadata-preview" class="metadata-preview">
+        <div class="metadata-layout">
+          <div class="metadata-main">
+            <div class="metadata-info" id="meta-fields-single">
+              <div class="form-group">
+                <label class="form-label">Titre</label>
+                <input type="text" class="form-input" id="edit-title" placeholder="Titre de la chanson">
+              </div>
+              <div class="form-group compact-row">
+                <div id="single-artist-group">
+                  <label class="form-label">Artiste</label>
+                  <input type="text" class="form-input" id="edit-artist" placeholder="Artiste">
+                </div>
+                <div id="single-album-group">
+                  <label class="form-label">Album</label>
+                  <input type="text" class="form-input" id="edit-album" placeholder="Album">
+                </div>
+              </div>
+            </div>
+
+            <div class="metadata-info" id="meta-fields-playlist" style="display:none">
+              <div style="font-weight:600;font-size:14px;margin-bottom:10px;" id="playlist-title-display"></div>
+              <div class="form-group compact-row">
+                <div id="playlist-artist-group">
+                  <label class="form-label">Artiste</label>
+                  <input type="text" class="form-input" id="edit-playlist-artist" placeholder="Artiste">
+                </div>
+                <div id="playlist-album-group">
+                  <label class="form-label">Album / Playlist</label>
+                  <input type="text" class="form-input" id="edit-playlist-album" placeholder="Nom de l'album">
+                </div>
+              </div>
+              <div class="form-group" style="max-width:130px">
+                <label class="form-label">Année</label>
+                <input type="text" class="form-input" id="edit-playlist-year" placeholder="2024">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Titres de l'album / playlist</label>
+                <div id="playlist-song-list" class="song-list-preview"></div>
+              </div>
+            </div>
+
+            <div class="metadata-actions">
+              <button class="btn btn-brand btn-block" id="btn-dl">⬇️ Télécharger</button>
+              <button class="btn btn-danger btn-sm" id="btn-reset-preview" onclick="resetPreview()">✕ Annuler</button>
+            </div>
+          </div>
+
+          <aside class="metadata-options-column">
+            <div class="cover-preview-box">
+              <div class="progress-subtext">Pochette</div>
+              <img class="metadata-thumb" id="meta-thumb" src="" alt="Pochette" onerror="this.style.display='none'">
+              <div class="cover-placeholder" id="meta-thumb-placeholder">Aperçu pochette</div>
+            </div>
+
+            <div class="option-card">
+              <div class="toggle-row option-toggle-row">
+                <div class="toggle-description">
+                  <strong>🎵 Mode Playlist</strong>
+                  <small>Actif : pas de tri artiste. </small>
+                  <small>Inactif : tri Artist/Album/Titre.</small>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggle-playlist-mode" onchange="onPlaylistModeChange()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row option-toggle-row">
+                <div class="toggle-description">
+                  <strong>🎬 Mode MP4 (max 1080p)</strong>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggle-mp4-mode">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div id="playlist-info" style="display:none;">
+          <div class="alert alert-info" id="playlist-msg"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progression en cours -->
+    <div class="card" id="progress-zone" style="display:none">
+      <h2 class="card-title">⏳ Téléchargement en cours</h2>
+      <div class="progress-total">
+        <div class="progress-total-fill" id="prog-fill"></div>
+      </div>
+      <div class="progress-text">
+        <span id="prog-status">—</span>
+        <span id="prog-pct">0%</span>
+      </div>
+      <div class="progress-subtext" id="prog-subtext">0 / 0 titre</div>
+    </div>
+
+  </div>
+
+  <!-- ══ COLONNE LATÉRALE (30%) — Historique + ZIP ══ -->
+  <div class="side-column">
+    <div class="card">
+      <h2 class="card-title">✅ Téléchargements récents</h2>
+      <button class="btn btn-success btn-block" id="btn-download-zip"
+              onclick="downloadRecentFiles()"
+              style="margin-bottom:var(--space-3)">
+        📥 Télécharger mon ZIP
+      </button>
+      <div id="dl-list">
+        <div class="empty-state" id="dl-empty">
+          <div class="empty-state-icon">📭</div>
+          <p class="empty-state-text">Aucun téléchargement</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/pages/dashboard-admin.js') }}"></script>
+{% endblock %}
