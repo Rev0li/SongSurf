@@ -3,6 +3,7 @@
 	import { user, lastCompleted } from '$lib/stores.js';
 	import DownloadPanel from '$lib/components/DownloadPanel.svelte';
 	import ProgressZone from '$lib/components/ProgressZone.svelte';
+	import UrlQueue from '$lib/components/UrlQueue.svelte';
 	import LibraryTree from '$lib/components/LibraryTree.svelte';
 
 	let libraryRef;
@@ -38,6 +39,7 @@
 
 <div class="page-body">
 	<ProgressZone />
+	<UrlQueue />
 	<LibraryTree bind:this={libraryRef} />
 </div>
 
