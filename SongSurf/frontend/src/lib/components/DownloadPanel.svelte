@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import {
-		asText, primaryArtist, inferPlaylistArtist,
+		asText, inferPlaylistArtist,
 		resolveCoverCandidates, bustUrl,
 	} from '$lib/utils.js';
 
@@ -156,7 +156,7 @@
 				}
 			} else {
 				title = asText(data.title, 'Unknown Title');
-				artist = primaryArtist(data.artist);
+				artist = asText(data.artist, 'Unknown Artist');
 				album = asText(data.album, 'Unknown Album');
 				const candidates = resolveCoverCandidates(data, raw);
 				panelActive = true;

@@ -416,7 +416,7 @@ class YouTubeDownloader:
                     'artist':   song_artist,
                     'url':      entry_url,
                     'id':       entry_id,
-                    'duration': entry.get('duration', 0)
+                    'duration': entry.get('duration') or 0,
                 }
                 songs.append(song)
                 total_duration += song['duration']

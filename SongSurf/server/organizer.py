@@ -68,14 +68,7 @@ class MusicOrganizer:
                 feat_artists.extend([a.strip() for a in feat_list if a.strip()])
                 clean_title = re.sub(pattern, '', clean_title, flags=re.IGNORECASE).strip()
 
-        # Check artist field for multiple artists
-        if ' & ' in artist or ' and ' in artist or ', ' in artist or ' et ' in artist:
-            artist_list = re.split(r'\s*(?:&|and|et|,)\s*', artist, flags=re.IGNORECASE)
-            main_artist = artist_list[0].strip()
-            feat_artists.extend([a.strip() for a in artist_list[1:] if a.strip()])
-            logger.debug(f"Multiple artists: {artist} → main={main_artist}, feat={artist_list[1:]}")
-        else:
-            main_artist = artist
+        main_artist = artist
 
         return {
             'main_artist': main_artist,

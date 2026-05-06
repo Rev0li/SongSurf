@@ -29,7 +29,7 @@
 	function toggleExpand(path) {
 		if (expanded.has(path)) expanded.delete(path);
 		else expanded.add(path);
-		expanded = expanded; // trigger reactivity
+		expanded = expanded;
 	}
 
 	function selectFolder(path, name) {
@@ -53,25 +53,54 @@
 	}
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────
-	let dragSongPath = '';
+	let dragSongPath  = '';
+	let dragAlbumPath = '';
+	let dragType      = ''; // 'song' | 'album'
 
-	function dragStart(e, songPath) {
-		dragging = true;
-		dragSongPath = songPath;
-		e.dataTransfer.setData('text/plain', songPath);
+	function dragStart(e, path, type) {
+		dragging  = true;
+		dragType  = type;
+		if (type === 'song')  dragSongPath  = path;
+		else                  dragAlbumPath = path;
+		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.setData('text/plain', path);
 	}
 
 	function dragEnd() {
-		dragging = false;
+		dragging      = false;
+		dragType      = '';
+		dragSongPath  = '';
+		dragAlbumPath = '';
 	}
 
-	async function drop(e, targetFolder) {
+	// dragOver for album drop zones (accepts songs)
+	function dragOverAlbum(e) {
+		if (dragType !== 'song') return;
+		e.preventDefault();
+		e.currentTarget.classList.add('drop-target');
+	}
+
+	// dragOver for artist drop zones (accepts albums)
+	function dragOverArtist(e) {
+		if (dragType !== 'album') return;
+		e.preventDefault();
+		e.currentTarget.classList.add('drop-target');
+	}
+
+	function dragLeave(e) {
+		// Ignore if pointer moved to a child of the same container
+		if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+		e.currentTarget.classList.remove('drop-target');
+	}
+
+	async function dropOnAlbum(e, albumPath) {
 		e.preventDefault();
 		e.currentTarget.classList.remove('drop-target');
+		if (dragType !== 'song') return;
 		const source = e.dataTransfer.getData('text/plain') || dragSongPath;
-		if (!source || !targetFolder) return;
+		if (!source || !albumPath || source === albumPath) return;
 		try {
-			await api.moveSong(source, targetFolder);
+			await api.moveSong(source, albumPath);
 			addToast('Titre déplacé.', 'info');
 			await refresh();
 		} catch (err) {
@@ -79,13 +108,19 @@
 		}
 	}
 
-	function dragOver(e) {
+	async function dropOnArtist(e, artistPath) {
 		e.preventDefault();
-		e.currentTarget.classList.add('drop-target');
-	}
-
-	function dragLeave(e) {
 		e.currentTarget.classList.remove('drop-target');
+		if (dragType !== 'album') return;
+		const source = e.dataTransfer.getData('text/plain') || dragAlbumPath;
+		if (!source || !artistPath) return;
+		try {
+			await api.moveFolder(source, artistPath);
+			addToast('Album déplacé.', 'info');
+			await refresh();
+		} catch (err) {
+			addToast(err.message || 'Déplacement impossible.', 'error');
+		}
 	}
 
 	// ── Rename ────────────────────────────────────────────────────────────────
@@ -93,11 +128,34 @@
 		const newName = prompt('Nouveau nom du dossier :', currentName);
 		if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
 		try {
-			await api.renameFolder(path, newName.trim());
-			addToast('Dossier renommé.', 'info');
+			const res = await api.renameFolder(path, newName.trim());
+			const msg = res.merged ? 'Dossiers fusionnés.' : 'Dossier renommé.';
+			if (selectedFolderPath === path) {
+				selectedFolderPath = res.new_path ?? '';
+				selectedFolderName = newName.trim();
+			}
+			addToast(msg, 'info');
 			await refresh();
 		} catch (err) {
 			addToast(err.message || 'Renommage impossible.', 'error');
+		}
+	}
+
+	// ── Delete ────────────────────────────────────────────────────────────────
+	async function deleteFolder(path, name, type) {
+		const label = type === 'artist' ? 'artiste' : 'album';
+		if (!confirm(`Supprimer ${label} "${name}" et tous ses fichiers ?\n\nCette action est irréversible.`)) return;
+		try {
+			await api.deleteFolder(path);
+			if (selectedFolderPath === path || selectedFolderPath.startsWith(path + '/')) {
+				selectedFolderPath = '';
+				selectedFolderName = '';
+				coverSrc = '';
+			}
+			addToast(`"${name}" supprimé.`, 'info');
+			await refresh();
+		} catch (err) {
+			addToast(err.message || 'Suppression impossible.', 'error');
 		}
 	}
 
@@ -254,6 +312,9 @@
 					open={q ? true : expanded.has(artist.path)}
 					on:toggle={(e) => { if (!q) { if (e.currentTarget.open) expanded.add(artist.path); else expanded.delete(artist.path); expanded = expanded; }}}
 					class:selected-folder={selectedFolderPath === artist.path}
+					on:dragover={dragOverArtist}
+					on:dragleave={dragLeave}
+					on:drop={(e) => dropOnArtist(e, artist.path)}
 				>
 					<summary on:click|preventDefault={() => { toggleExpand(artist.path); selectFolder(artist.path, artist.name); }}>
 						<div class="lib-summary-row">
@@ -263,10 +324,18 @@
 								<span class="lib-name">{artist.name}</span>
 								<span class="lib-count">{artist.albums.reduce((n, al) => n + al.songs.length, 0)}</span>
 							</span>
-							<button
-								class="folder-actions"
-								on:click|stopPropagation={() => renameFolder(artist.path, artist.name)}
-							>✏️</button>
+							<span class="folder-actions">
+								<button
+									class="lib-action-btn"
+									title="Renommer"
+									on:click|stopPropagation={() => renameFolder(artist.path, artist.name)}
+								>✏️</button>
+								<button
+									class="lib-action-btn lib-action-btn--danger"
+									title="Supprimer"
+									on:click|stopPropagation={() => deleteFolder(artist.path, artist.name, 'artist')}
+								>🗑️</button>
+							</span>
 						</div>
 					</summary>
 
@@ -275,29 +344,44 @@
 							open={q ? true : expanded.has(album.path)}
 							on:toggle={(e) => { if (!q) { if (e.currentTarget.open) expanded.add(album.path); else expanded.delete(album.path); expanded = expanded; }}}
 							class:selected-folder={selectedFolderPath === album.path}
-							on:dragover={dragOver}
+							on:dragover={dragOverAlbum}
 							on:dragleave={dragLeave}
-							on:drop={(e) => drop(e, album.path)}
+							on:drop={(e) => dropOnAlbum(e, album.path)}
 						>
 							<summary on:click|preventDefault={() => { toggleExpand(album.path); selectFolder(album.path, album.name); }}>
 								<div class="lib-summary-row">
 									<span class="lib-summary-left">
+										<span
+											class="lib-drag-handle"
+											draggable="true"
+											title="Glisser l'album vers un autre artiste"
+											on:dragstart|stopPropagation={(e) => dragStart(e, album.path, 'album')}
+											on:dragend|stopPropagation={dragEnd}
+										>⠿</span>
 										<span class="lib-caret">{expanded.has(album.path) || q ? '▾' : '▸'}</span>
 										<span class="lib-icon">💿</span>
 										<span class="lib-name">{album.name}</span>
 										<span class="lib-count">{album.songs.length}</span>
 									</span>
-									<button
-										class="folder-actions"
-										on:click|stopPropagation={() => renameFolder(album.path, album.name)}
-									>✏️</button>
+									<span class="folder-actions">
+										<button
+											class="lib-action-btn"
+											title="Renommer"
+											on:click|stopPropagation={() => renameFolder(album.path, album.name)}
+										>✏️</button>
+										<button
+											class="lib-action-btn lib-action-btn--danger"
+											title="Supprimer"
+											on:click|stopPropagation={() => deleteFolder(album.path, album.name, 'album')}
+										>🗑️</button>
+									</span>
 								</div>
 							</summary>
 							{#each album.songs as song (song.path)}
 								<div
 									class="song-item lib-song-row"
 									draggable="true"
-									on:dragstart={(e) => dragStart(e, song.path)}
+									on:dragstart={(e) => dragStart(e, song.path, 'song')}
 									on:dragend={dragEnd}
 								>
 									<span class="lib-song-name">{song.name}</span>
@@ -315,9 +399,9 @@
 					open={q ? true : expanded.has(pl.path)}
 					on:toggle={(e) => { if (!q) { if (e.currentTarget.open) expanded.add(pl.path); else expanded.delete(pl.path); expanded = expanded; }}}
 					class:selected-folder={selectedFolderPath === pl.path}
-					on:dragover={dragOver}
+					on:dragover={dragOverAlbum}
 					on:dragleave={dragLeave}
-					on:drop={(e) => drop(e, pl.path)}
+					on:drop={(e) => dropOnAlbum(e, pl.path)}
 				>
 					<summary on:click|preventDefault={() => { toggleExpand(pl.path); selectFolder(pl.path, pl.name); }}>
 						<div class="lib-summary-row">
@@ -327,17 +411,25 @@
 								<span class="lib-name">{pl.name}</span>
 								<span class="lib-count">{pl.songs.length}</span>
 							</span>
-							<button
-								class="folder-actions"
-								on:click|stopPropagation={() => renameFolder(pl.path, pl.name)}
-							>✏️</button>
+							<span class="folder-actions">
+								<button
+									class="lib-action-btn"
+									title="Renommer"
+									on:click|stopPropagation={() => renameFolder(pl.path, pl.name)}
+								>✏️</button>
+								<button
+									class="lib-action-btn lib-action-btn--danger"
+									title="Supprimer"
+									on:click|stopPropagation={() => deleteFolder(pl.path, pl.name, 'album')}
+								>🗑️</button>
+							</span>
 						</div>
 					</summary>
 					{#each pl.songs as song (song.path)}
 						<div
 							class="song-item lib-song-row"
 							draggable="true"
-							on:dragstart={(e) => dragStart(e, song.path)}
+							on:dragstart={(e) => dragStart(e, song.path, 'song')}
 							on:dragend={dragEnd}
 						>
 							<span class="lib-song-name">{song.name}</span>
@@ -357,4 +449,44 @@
 		justify-content: space-between;
 		margin-bottom: var(--s4);
 	}
+
+	/* Drop zone highlight */
+	:global(.drop-target) {
+		outline: 2px dashed var(--blue) !important;
+		outline-offset: -2px;
+		background: rgba(10, 132, 255, 0.08) !important;
+	}
+
+	/* Album drag handle */
+	.lib-drag-handle {
+		cursor: grab;
+		color: var(--text-3);
+		font-size: 14px;
+		padding: 0 4px;
+		flex-shrink: 0;
+		user-select: none;
+		line-height: 1;
+	}
+	.lib-drag-handle:active { cursor: grabbing; }
+
+	/* Folder action buttons (rename + delete) */
+	.folder-actions {
+		display: flex;
+		gap: 2px;
+		flex-shrink: 0;
+	}
+	.lib-action-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		font-size: 13px;
+		padding: 2px 4px;
+		border-radius: var(--r-sm);
+		opacity: 0;
+		transition: opacity .15s, background .15s;
+		line-height: 1;
+	}
+	.lib-summary-row:hover .lib-action-btn { opacity: 1; }
+	.lib-action-btn:hover { background: rgba(255,255,255,.1); }
+	.lib-action-btn--danger:hover { background: rgba(255, 59, 48, .2); }
 </style>

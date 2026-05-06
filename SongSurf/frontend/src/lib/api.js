@@ -54,6 +54,18 @@ export const api = {
 			body: JSON.stringify({ folder_path: folderPath, new_name: newName }),
 		});
 	},
+	moveFolder(folderPath, newParent) {
+		return request('/api/library/move-folder', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath, new_parent: newParent }),
+		});
+	},
+	deleteFolder(folderPath) {
+		return request('/api/library/delete-folder', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath }),
+		});
+	},
 	uploadLibraryImage(file, targetFolder) {
 		const form = new FormData();
 		form.append('image', file);

@@ -435,7 +435,10 @@ def _build_library_tree(music_dir: Path) -> dict:
     if not music_dir.exists():
         return {'artists': artists, 'playlists': playlists}
     for top in sorted([d for d in music_dir.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
-        direct_songs = sorted(top.glob('*.mp3'), key=lambda p: p.name.lower())
+        direct_songs = sorted(
+            [f for f in top.iterdir() if f.is_file() and f.suffix.lower() in ('.mp3', '.mp4')],
+            key=lambda p: p.name.lower()
+        )
         if direct_songs:
             playlists.append({
                 'name':  top.name,
@@ -445,7 +448,10 @@ def _build_library_tree(music_dir: Path) -> dict:
             continue
         albums = []
         for album_dir in sorted([d for d in top.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
-            songs = sorted(album_dir.glob('*.mp3'), key=lambda p: p.name.lower())
+            songs = sorted(
+                [f for f in album_dir.iterdir() if f.is_file() and f.suffix.lower() in ('.mp3', '.mp4')],
+                key=lambda p: p.name.lower()
+            )
             albums.append({
                 'name':  album_dir.name,
                 'path':  str(album_dir.relative_to(music_dir)),
@@ -485,7 +491,7 @@ def library_move_song():
 
         if not str(src).startswith(str(base)) or not str(dst_dir).startswith(str(base)):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
-        if not src.exists() or src.suffix.lower() != '.mp3':
+        if not src.exists() or src.suffix.lower() not in ('.mp3', '.mp4'):
             return jsonify({'success': False, 'error': 'Fichier source invalide'}), 404
 
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -525,13 +531,117 @@ def library_rename_folder():
             return jsonify({'success': False, 'error': 'Nom invalide'}), 400
 
         dst = src.parent / cleaned
-        if dst.exists():
-            return jsonify({'success': False, 'error': 'Un dossier avec ce nom existe déjà'}), 409
-
-        src.rename(dst)
-        return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
+        merged = False
+        if dst.exists() and dst != src:
+            # Merge: move all contents of src into dst
+            for item in list(src.iterdir()):
+                target = dst / item.name
+                if target.exists():
+                    counter = 1
+                    stem = item.stem if item.is_file() else item.name
+                    suffix = item.suffix if item.is_file() else ''
+                    base_name = item.name if item.is_dir() else ''
+                    while target.exists():
+                        if item.is_dir():
+                            target = dst / f"{item.name} ({counter})"
+                        else:
+                            target = dst / f"{stem} ({counter}){suffix}"
+                        counter += 1
+                shutil.move(str(item), str(target))
+            src.rmdir()
+            merged = True
+        elif dst != src:
+            src.rename(dst)
+        return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir)), 'merged': merged})
     except Exception as e:
         logger.error(f"❌ /api/library/rename-folder: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/move-folder', methods=['POST'])
+@auth_required
+def library_move_folder():
+    """Move an album folder to a different artist folder."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+        data        = request.get_json() or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        new_parent  = (data.get('new_parent') or '').strip()
+        if not folder_path or not new_parent:
+            return jsonify({'success': False, 'error': 'folder_path/new_parent requis'}), 400
+
+        src        = (music_dir / folder_path).resolve()
+        dst_parent = (music_dir / new_parent).resolve()
+        base       = music_dir.resolve()
+
+        if not str(src).startswith(str(base)) or not str(dst_parent).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not src.exists() or not src.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier source introuvable'}), 404
+        if not dst_parent.exists() or not dst_parent.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier cible introuvable'}), 404
+        if src.parent == dst_parent:
+            return jsonify({'success': False, 'error': 'Album déjà dans cet artiste'}), 400
+
+        dst = dst_parent / src.name
+        if dst.exists():
+            for item in list(src.iterdir()):
+                target = dst / item.name
+                if target.exists():
+                    counter = 1
+                    while target.exists():
+                        if item.is_dir():
+                            target = dst / f"{item.name} ({counter})"
+                        else:
+                            target = dst / f"{item.stem} ({counter}){item.suffix}"
+                        counter += 1
+                shutil.move(str(item), str(target))
+            src.rmdir()
+        else:
+            shutil.move(str(src), str(dst))
+
+        old_parent = src.parent
+        if old_parent != base and old_parent.exists() and not any(old_parent.iterdir()):
+            old_parent.rmdir()
+
+        return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
+    except Exception as e:
+        logger.error(f"❌ /api/library/move-folder: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/delete-folder', methods=['POST'])
+@auth_required
+def library_delete_folder():
+    """Delete an artist or album folder and all its contents."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+        data        = request.get_json() or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        target = (music_dir / folder_path).resolve()
+        base   = music_dir.resolve()
+
+        if not str(target).startswith(str(base) + os.sep):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+        if not target.is_dir():
+            return jsonify({'success': False, 'error': 'Cible n\'est pas un dossier'}), 400
+
+        shutil.rmtree(str(target))
+
+        parent = target.parent
+        if parent != base and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/library/delete-folder: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -709,7 +819,7 @@ def download_playlist():
             if download_queue.full():
                 break
             metadata = {
-                'artist': song.get('artist', playlist.get('artist', 'Unknown')),
+                'artist': playlist.get('artist') or song.get('artist') or 'Unknown Artist',
                 'album':  playlist.get('title', 'Unknown Album'),
                 'title':  song['title'],
                 'year':   playlist.get('year', ''),
