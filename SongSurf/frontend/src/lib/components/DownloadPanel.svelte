@@ -97,7 +97,13 @@
 					coverSrc = newUrl;
 				}
 			};
-			img.onerror = () => { if (tries >= maxTries) stopPrefetchPolling(); };
+			img.onerror = () => {
+				if (tries >= maxTries) {
+					stopPrefetchPolling();
+					// Prefetch gave up — fall back to CDN candidates as last resort
+					if (!coverSrc) tryNextCover();
+				}
+			};
 			img.src = probeUrl;
 		}
 
@@ -138,8 +144,17 @@
 				prefetchToken = asText(data.prefetch_token);
 				panelActive = true;
 				await tick();
-				setCoverCandidates(candidates);
-				if (prefetchToken) startPrefetchPolling(prefetchToken, candidates);
+				if (prefetchToken) {
+					// Skip grey CDN probes — spinner until prefetch delivers the real cover
+					coverCandidates = candidates; // kept as fallback if prefetch times out
+					coverIdx = 0;
+					coverSrc = '';
+					coverLoading = true;
+					await new Promise(r => requestAnimationFrame(r));
+					startPrefetchPolling(prefetchToken, candidates);
+				} else {
+					setCoverCandidates(candidates);
+				}
 			} else {
 				title = asText(data.title, 'Unknown Title');
 				artist = primaryArtist(data.artist);
