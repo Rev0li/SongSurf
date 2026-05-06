@@ -258,9 +258,15 @@ class YouTubeDownloader:
                 )
 
             title    = info.get('title', 'Unknown Title')
-            uploader = info.get('uploader', 'Unknown Artist')
+            uploader = info.get('uploader') or info.get('channel') or 'Unknown Artist'
             artist   = info.get('artist') or info.get('creator') or uploader
             album    = info.get('album', 'Unknown Album')
+
+            logger.debug(
+                f"   yt-dlp raw: artist={info.get('artist')!r} "
+                f"creator={info.get('creator')!r} uploader={info.get('uploader')!r} "
+                f"channel={info.get('channel')!r} → resolved={artist!r}"
+            )
 
             release_date = info.get('release_date') or info.get('upload_date', '')
             year = release_date[:4] if len(release_date) >= 4 else ''
@@ -382,7 +388,7 @@ class YouTubeDownloader:
                 entry_title = entry.get('title', 'Unknown')
                 song_artist = (
                     entry.get('artist') or entry.get('creator') or
-                    entry.get('uploader') or playlist_artist
+                    entry.get('channel') or entry.get('uploader') or playlist_artist
                 )
                 song_artist = self._primary_artist(song_artist)
 
