@@ -206,105 +206,34 @@
 	$: dlLabel = downloading ? '⏳ Envoi…' : ($workerBusy ? '⏳ En attente de Worker' : '⬇️ Télécharger');
 </script>
 
-<!-- ── URL Bar ───────────────────────────────────────────────────────────── -->
+<!-- ── URL Bar (sticky) ──────────────────────────────────────────────────── -->
 <section class="top-analyzer-wrap">
 	<div class="card top-analyzer-card">
-		<h2 class="card-title">🔗 Coller un lien YouTube Music</h2>
 		<div class="url-group">
 			<input
 				type="text"
 				class="form-input"
 				bind:value={url}
-				placeholder="https://music.youtube.com/watch?v=..."
+				placeholder="Coller un lien YouTube Music…"
 				autocomplete="off"
 				on:keydown={onKeydown}
 				disabled={extracting}
 			/>
 			<button class="btn btn-primary" on:click={onExtract} disabled={extracting}>
-				{extracting ? '⏳ Analyse…' : '🔍 Analyser'}
+				{extracting ? 'Analyse…' : 'Analyser'}
 			</button>
 		</div>
 	</div>
 </section>
 
-<!-- ── Metadata Panel ────────────────────────────────────────────────────── -->
-<div class="card metadata-panel">
-	<h2 class="card-title">🎛️ Panneau d'analyse</h2>
-	<div class="metadata-preview" class:analysis-disabled={!panelActive}>
+<!-- ── Metadata Panel (only when a URL has been analysed) ───────────────── -->
+{#if panelActive}
+<div class="page-body" style="padding-bottom:0">
+	<div class="card metadata-panel">
 		<div class="metadata-layout">
-			<div class="metadata-main">
-
-				<!-- Single song fields -->
-				{#if !extract?.is_playlist}
-					<div class="metadata-info">
-						<div class="form-group">
-							<label class="form-label">Titre</label>
-							<input class="form-input" bind:value={title} placeholder="Titre" disabled={!panelActive} />
-						</div>
-						<div class="form-group compact-row">
-							{#if !playlistMode}
-								<div>
-									<label class="form-label">Artiste</label>
-									<input class="form-input" bind:value={artist} placeholder="Artiste" disabled={!panelActive} />
-								</div>
-							{/if}
-							<div style={playlistMode ? 'grid-column: 1 / -1' : ''}>
-								<label class="form-label">Album</label>
-								<input class="form-input" bind:value={album} placeholder="Album" disabled={!panelActive} />
-							</div>
-						</div>
-					</div>
-				{/if}
-
-				<!-- Playlist fields -->
-				{#if extract?.is_playlist}
-					<div class="metadata-info">
-						<div style="font-weight:600;font-size:14px;margin-bottom:10px;">
-							{extract.title ?? ''}
-						</div>
-						<div class="form-group compact-row">
-							{#if !playlistMode}
-								<div>
-									<label class="form-label">Artiste</label>
-									<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" disabled={!panelActive} />
-								</div>
-							{/if}
-							<div style={playlistMode ? 'grid-column: 1 / -1' : ''}>
-								<label class="form-label">Album / Playlist</label>
-								<input class="form-input" bind:value={playlistAlbum} placeholder="Nom de l'album" disabled={!panelActive} />
-							</div>
-						</div>
-						<div class="form-group" style="max-width:130px">
-							<label class="form-label">Année</label>
-							<input class="form-input" bind:value={playlistYear} placeholder="2024" disabled={!panelActive} />
-						</div>
-						{#if (extract?.songs?.length ?? 0) > 0}
-							<div class="form-group">
-								<label class="form-label">Titres ({extract.songs.length})</label>
-								<div class="song-list-preview">
-									{#each extract.songs as song, i}
-										<div class="song-row">{i + 1}. {song.title ?? ''}</div>
-									{/each}
-								</div>
-							</div>
-						{/if}
-					</div>
-				{/if}
-
-				<div class="metadata-actions">
-					<button class="btn btn-brand btn-block" on:click={onDownload} disabled={dlDisabled}>
-						{dlLabel}
-					</button>
-					<button class="btn btn-danger btn-sm" on:click={reset} disabled={!panelActive}>
-						✕ Annuler
-					</button>
-				</div>
-			</div>
-
-			<!-- Options + Cover -->
+			<!-- Cover -->
 			<aside class="metadata-options-column">
 				<div class="cover-preview-box">
-					<div class="progress-subtext">Pochette</div>
 					{#if coverSrc}
 						<img
 							class="metadata-thumb"
@@ -315,36 +244,113 @@
 							on:error={handleCoverError}
 						/>
 						{#if !coverVisible}
-							<div class="cover-spinner" aria-label="Chargement pochette…"></div>
+							<div class="cover-spinner" aria-label="Chargement…"></div>
 						{/if}
 					{:else}
-						<div class="cover-placeholder">Aperçu pochette</div>
+						<div class="cover-placeholder">Pochette</div>
 					{/if}
 				</div>
 
 				<div class="option-card">
 					<div class="toggle-row option-toggle-row">
 						<div class="toggle-description">
-							<strong>🎵 Mode Playlist</strong>
-							<small>Actif : pas de tri artiste.</small>
-							<small>Inactif : tri Artist/Album/Titre.</small>
+							<strong>Mode Playlist</strong>
+							<small>Pas de tri artiste.</small>
 						</div>
 						<label class="toggle-switch">
-							<input type="checkbox" bind:checked={playlistMode} disabled={!panelActive} />
+							<input type="checkbox" bind:checked={playlistMode} />
 							<span class="toggle-slider"></span>
 						</label>
 					</div>
 					<div class="toggle-row option-toggle-row">
 						<div class="toggle-description">
-							<strong>🎬 Mode MP4 (max 1080p)</strong>
+							<strong>Mode MP4</strong>
+							<small>Vidéo max 1080p</small>
 						</div>
 						<label class="toggle-switch">
-							<input type="checkbox" bind:checked={mp4Mode} disabled={!panelActive} />
+							<input type="checkbox" bind:checked={mp4Mode} />
 							<span class="toggle-slider"></span>
 						</label>
 					</div>
 				</div>
 			</aside>
+
+			<!-- Fields -->
+			<div class="metadata-main">
+				{#if !extract?.is_playlist}
+					<div class="form-group">
+						<label class="form-label">Titre</label>
+						<input class="form-input" bind:value={title} placeholder="Titre" />
+					</div>
+					<div class="form-group compact-row">
+						{#if !playlistMode}
+							<div>
+								<label class="form-label">Artiste</label>
+								<input class="form-input" bind:value={artist} placeholder="Artiste" />
+							</div>
+						{/if}
+						<div style={playlistMode ? 'grid-column:1/-1' : ''}>
+							<label class="form-label">Album</label>
+							<input class="form-input" bind:value={album} placeholder="Album" />
+						</div>
+					</div>
+				{:else}
+					<div class="playlist-title">{extract.title ?? ''}</div>
+					<div class="form-group compact-row">
+						{#if !playlistMode}
+							<div>
+								<label class="form-label">Artiste</label>
+								<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
+							</div>
+						{/if}
+						<div style={playlistMode ? 'grid-column:1/-1' : ''}>
+							<label class="form-label">Album / Playlist</label>
+							<input class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
+						</div>
+					</div>
+					<div class="form-group" style="max-width:120px">
+						<label class="form-label">Année</label>
+						<input class="form-input" bind:value={playlistYear} placeholder="2024" />
+					</div>
+					{#if (extract?.songs?.length ?? 0) > 0}
+						<div class="form-group">
+							<label class="form-label">{extract.songs.length} titres</label>
+							<div class="song-list-preview">
+								{#each extract.songs as song, i}
+									<div class="song-row">{i + 1}. {song.title ?? ''}</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				{/if}
+
+				<div class="metadata-actions">
+					<button class="btn btn-primary btn-block" on:click={onDownload} disabled={$workerBusy || downloading}>
+						{downloading ? 'Envoi…' : $workerBusy ? 'Worker occupé…' : '⬇  Télécharger'}
+					</button>
+					<button class="btn btn-ghost btn-sm" on:click={reset}>Annuler</button>
+				</div>
+			</div>
 		</div>
 	</div>
 </div>
+{/if}
+
+
+<style>
+.playlist-title {
+	font-weight: 600;
+	font-size: 15px;
+	margin-bottom: 12px;
+	color: var(--text);
+}
+.metadata-layout {
+	display: grid;
+	grid-template-columns: 200px 1fr;
+	gap: 20px;
+	align-items: start;
+}
+@media (max-width: 900px) {
+	.metadata-layout { grid-template-columns: 1fr; }
+}
+</style>

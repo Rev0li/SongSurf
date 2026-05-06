@@ -23,35 +23,22 @@
 	</div>
 	<nav class="header-nav">
 		{#if $user?.email}
-			<span class="badge badge-primary" title={$user.sub}>{$user.email}</span>
+			<span class="badge" title={$user.sub}>{$user.email}</span>
 		{/if}
-		<a href="/donation" class="btn btn-ghost btn-sm">Donation</a>
+		<a href="/donation" class="btn btn-ghost btn-sm">Soutenir</a>
 	</nav>
 </header>
 
 <DownloadPanel onDownloadQueued={onDownloadQueued} />
 
-<div class="main-grid">
-	<div class="main-column">
-		<ProgressZone />
-		<LibraryTree bind:this={libraryRef} />
-	</div>
-	<div class="side-column">
-		<RecentDownloads />
+<div class="page-body">
+	<div class="main-grid">
+		<div class="main-column">
+			<ProgressZone />
+			<LibraryTree bind:this={libraryRef} />
+		</div>
+		<div class="side-column">
+			<RecentDownloads />
+		</div>
 	</div>
 </div>
-
-<style>
-	.main-grid {
-		display: grid;
-		grid-template-columns: 70% 30%;
-		gap: var(--space-6);
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: var(--space-8) var(--space-5);
-	}
-	@media (max-width: 1024px) {
-		.main-grid { grid-template-columns: 1fr; }
-		.side-column { order: -1; }
-	}
-</style>

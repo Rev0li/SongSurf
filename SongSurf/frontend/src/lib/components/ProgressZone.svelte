@@ -20,14 +20,25 @@
 
 {#if $workerBusy}
 	<div class="card" id="progress-zone">
-		<h2 class="card-title">⏳ Téléchargement en cours</h2>
+		<div class="pz-header">
+			<span class="pz-label">Téléchargement</span>
+			<span class="pz-count">{done} / {total}</span>
+		</div>
 		<div class="progress-total">
 			<div class="progress-total-fill" style="width: {pct}%"></div>
 		</div>
-		<div class="progress-text">
-			<span>{statusLabel}</span>
-			<span>{pct.toFixed(1)}%</span>
-		</div>
-		<div class="progress-subtext">{done} / {total} titre{total > 1 ? 's' : ''}</div>
+		<div class="pz-track">{statusLabel}</div>
 	</div>
 {/if}
+
+<style>
+.pz-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: var(--s2);
+}
+.pz-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.pz-count  { font-size: 12px; color: var(--text-3); }
+.pz-track  { font-size: 13px; color: var(--text-2); margin-top: var(--s2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>

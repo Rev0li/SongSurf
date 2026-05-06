@@ -282,7 +282,7 @@ def auth_required(f):
         if not user or not user.get('sub'):
             if request.is_json or 'application/json' in request.headers.get('Accept', ''):
                 return jsonify({'success': False, 'error': 'Non authentifié'}), 401
-            return render_template('pages/unavailable.html'), 503
+            return 'Service unavailable', 503
         return f(*args, **kwargs)
     return decorated
 

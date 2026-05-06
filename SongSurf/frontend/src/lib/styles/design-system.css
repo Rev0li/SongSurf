@@ -1,47 +1,58 @@
 :root {
-	--color-bg: #0a0a0f;
-	--color-surface: #171724;
-	--color-surface-2: #23233a;
-	--color-border: rgba(255, 255, 255, 0.12);
-	--color-text-primary: #f5f7ff;
-	--color-text-muted: #a8acc4;
-	--color-success: #16a34a;
-	--color-danger: #ef4444;
-	--color-brand-1: #ff3b6d;
-	--color-brand-2: #7c3aed;
-	--gradient-brand: linear-gradient(135deg, var(--color-brand-1), var(--color-brand-2));
+  /* ── Apple iOS dark mode palette ──────────────────────────────────── */
+  --bg:      #000000;
+  --bg-2:    #1c1c1e;
+  --bg-3:    #2c2c2e;
+  --bg-4:    #3a3a3c;
 
-	--space-1: 4px;
-	--space-2: 8px;
-	--space-3: 12px;
-	--space-4: 16px;
-	--space-5: 20px;
-	--space-6: 24px;
-	--space-8: 32px;
+  --text:    #ffffff;
+  --text-2:  rgba(235, 235, 245, 0.6);
+  --text-3:  rgba(235, 235, 245, 0.3);
 
-	--radius-sm: 8px;
-	--radius-md: 12px;
-	--radius-lg: 16px;
-	--radius-full: 999px;
+  --sep:     rgba(84, 84, 88, 0.65);
 
-	--font-size-xs: 12px;
-	--font-size-sm: 14px;
-	--font-size-md: 16px;
-	--font-size-lg: 20px;
-	--font-weight-semibold: 600;
+  /* ── System accent colors ─────────────────────────────────────────── */
+  --blue:    #0a84ff;
+  --green:   #30d158;
+  --red:     #ff453a;
+  --orange:  #ff9f0a;
+  --purple:  #bf5af2;
+
+  /* ── Spacing scale ────────────────────────────────────────────────── */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s8: 32px;
+
+  /* ── Radius scale ─────────────────────────────────────────────────── */
+  --r-sm:   8px;
+  --r-md:   12px;
+  --r-lg:   16px;
+  --r-full: 9999px;
+
+  /* ── Legacy aliases (used by older selectors) ─────────────────────── */
+  --color-bg:           var(--bg);
+  --color-surface:      var(--bg-2);
+  --color-surface-2:    var(--bg-3);
+  --color-border:       var(--sep);
+  --color-text-primary: var(--text);
+  --color-text-muted:   var(--text-2);
+  --color-success:      var(--green);
+  --color-danger:       var(--red);
+  --color-primary:      var(--blue);
+  --gradient-brand:     var(--blue);
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-full: 9999px;
+  --font-size-xs: 12px; --font-size-sm: 13px; --font-size-md: 15px;
 }
 
-* {
-	box-sizing: border-box;
-}
+*, *::before, *::after { box-sizing: border-box; }
 
 html, body {
-	margin: 0;
-	padding: 0;
-}
-
-body {
-	background: radial-gradient(circle at top right, #191933 0%, var(--color-bg) 60%);
-	color: var(--color-text-primary);
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }

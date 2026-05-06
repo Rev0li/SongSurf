@@ -1,16 +1,9 @@
 .container {
-	max-width: 1200px;
-	margin: 0 auto;
-	padding: 0 var(--space-5);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--s5);
 }
 
 @media (max-width: 900px) {
-	.url-group {
-		grid-template-columns: 1fr;
-	}
-
-	.metadata-actions,
-	.modal-actions {
-		flex-direction: column;
-	}
+  .url-group { grid-template-columns: 1fr; }
 }
