@@ -7,9 +7,13 @@
 	$: total = Number($downloadStatus.batch_total ?? 0);
 	$: done = Number($downloadStatus.batch_done ?? 0);
 
+	const PHASE_LABEL = { converting: ' · Conversion MP3…', organizing: ' · Organisation…' };
+	$: phase = $downloadStatus.progress?.phase ?? '';
+	$: phaseLabel = PHASE_LABEL[phase] ?? '';
+
 	$: statusLabel = $workerBusy
 		? (current.artist
-			? `${primaryArtist(current.artist)} — ${asText(current.title, '…')}`
+			? `${primaryArtist(current.artist)} — ${asText(current.title, '…')}${phaseLabel}`
 			: asText(current.title, 'En attente…'))
 		: 'En attente…';
 </script>

@@ -314,8 +314,10 @@
 							on:load={handleCoverLoad}
 							on:error={handleCoverError}
 						/>
-					{/if}
-					{#if !coverVisible}
+						{#if !coverVisible}
+							<div class="cover-spinner" aria-label="Chargement pochette…"></div>
+						{/if}
+					{:else}
 						<div class="cover-placeholder">Aperçu pochette</div>
 					{/if}
 				</div>

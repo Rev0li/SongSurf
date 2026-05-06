@@ -33,12 +33,14 @@ class DownloadProgress:
         self.total      = 0
         self.speed      = "0 KB/s"
         self.eta        = "0s"
-        self.status     = "idle"  # idle, downloading, processing, completed, error
+        self.status     = "idle"
+        self.phase      = "idle"  # idle | downloading | converting | organizing | completed | error
 
     def update(self, d):
         """Callback appelé par yt-dlp pour mettre à jour la progression"""
         if d['status'] == 'downloading':
             self.status     = 'downloading'
+            self.phase      = 'downloading'
             self.downloaded = d.get('downloaded_bytes', 0)
             self.total      = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
             if self.total > 0:
@@ -50,12 +52,14 @@ class DownloadProgress:
             if eta:
                 self.eta = f"{eta}s"
         elif d['status'] == 'finished':
-            self.status  = 'processing'
-            self.percent = 100
+            # Bytes downloaded — FFmpeg conversion starts now, not yet complete
+            self.phase   = 'converting'
+            self.percent = 50  # midpoint: download done, conversion in progress
 
     def to_dict(self):
         return {
             'status':     self.status,
+            'phase':      self.phase,
             'percent':    self.percent,
             'downloaded': self.downloaded,
             'total':      self.total,
@@ -173,8 +177,8 @@ class YouTubeDownloader:
             downloaded_file = self.temp_dir / f"{temp_filename}.{media_mode}"
             if downloaded_file.exists():
                 self.progress.reset()
-                self.progress.status = 'completed'
-                self.progress.percent = 100
+                self.progress.phase   = 'organizing'
+                self.progress.percent = 90
                 logger.info(f"   ♻️ Cache utilisé: {downloaded_file.name}")
                 return {
                     'success': True,
@@ -186,6 +190,7 @@ class YouTubeDownloader:
 
             self.progress.reset()
             self.progress.status = 'downloading'
+            self.progress.phase  = 'downloading'
 
             if mp4_mode:
                 self._download_mp4_to_temp(url, temp_filename, progress_hook=self.progress.update)
@@ -195,8 +200,9 @@ class YouTubeDownloader:
             if not downloaded_file.exists():
                 raise FileNotFoundError(f"Fichier {media_mode.upper()} introuvable après conversion: {downloaded_file}")
 
-            self.progress.status  = 'completed'
-            self.progress.percent = 100
+            # FFmpeg conversion complete — organizer runs next (handled by queue_worker)
+            self.progress.phase   = 'organizing'
+            self.progress.percent = 90
             logger.info(f"   ✅ Téléchargé: {downloaded_file.name}")
 
             return {

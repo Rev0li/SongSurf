@@ -1,61 +1,60 @@
+# ── Stage 1: Build SvelteKit frontend ────────────────────────────────────────
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --frozen-lockfile
+COPY frontend/ .
+RUN npm run build
+
+# ── Stage 2: Python server ────────────────────────────────────────────────────
 FROM python:3.11-slim
 
 LABEL maintainer="SongSurf"
-LABEL description="Bot de téléchargement de musique YouTube avec yt-dlp"
-LABEL version="1.0"
+LABEL description="YouTube Music downloader — yt-dlp + FFmpeg + Flask"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    PATH="/home/songsurf/.local/bin:$PATH" \
+    FRONTEND_BUILD_PATH=/app/frontend/build
 
-# Créer un utilisateur non-root pour la sécurité
-RUN useradd -m -u 1000 songsurf && \
-    mkdir -p /app /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music && \
-    chown -R songsurf:songsurf /app /data
-
-# ✅ CORRECTION : Créer le dossier logs avec les bonnes permissions
-RUN mkdir -p /app/logs && chown -R songsurf:songsurf /app/logs
-
-# Installer les dépendances système (FFmpeg + outils)
+# System deps: FFmpeg (audio conversion) + curl (healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+        ffmpeg \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user + data directories in one layer
+RUN useradd -m -u 1000 songsurf && \
+    mkdir -p /app/logs /app/frontend/build /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music && \
+    chown -R songsurf:songsurf /app /data
 
 WORKDIR /app
 
-# Copier le requirements.txt en premier (pour cache Docker)
+# Python deps (cached separately from app code)
 COPY --chown=songsurf:songsurf server/requirements.txt .
-
-# Installer les dépendances Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copier le code de l'application
+# App code
 COPY --chown=songsurf:songsurf server/ .
 
-# Copier le script entrypoint (sed corrige les fins de ligne CRLF → LF au cas où)
+# SvelteKit build output
+COPY --from=frontend-builder --chown=songsurf:songsurf /frontend/build /app/frontend/build
+
+# Entrypoint (fix CRLF → LF in case of Windows checkout)
 COPY --chown=songsurf:songsurf docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Changer vers l'utilisateur non-root
 USER songsurf
 
-# Exposer le port du serveur Flask
-EXPOSE 8080
+EXPOSE 8081
 
-# Volumes pour persistance des données
-VOLUME ["/data/temp", "/data/music"]
-
-# Healthcheck pour vérifier que le serveur répond
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${FLASK_PORT:-8080}/ping || exit 1
+    CMD curl -f http://localhost:${FLASK_PORT:-8081}/ping || exit 1
 
-# Point d'entrée qui met à jour yt-dlp avant de démarrer
 ENTRYPOINT ["/entrypoint.sh"]
-
-# Commande par défaut
 CMD ["python", "app.py"]

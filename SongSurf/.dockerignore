@@ -42,16 +42,19 @@ data/
 temp/
 music/
 
-# Chrome Extension (pas nécessaire dans le conteneur)
-chrome-extension/
+# Frontend — exclude dev artifacts, keep build output for multi-stage copy
+frontend/node_modules/
+frontend/.svelte-kit/
+# frontend/build/ must NOT be excluded (used by Dockerfile stage 1 directly)
 
 # Docker
 .dockerignore
 Dockerfile*
 docker-compose*.yml
 
-# Configuration locale
+# Configuration locale et secrets
 .env
+.secrets
 env.example
 
 # Tests

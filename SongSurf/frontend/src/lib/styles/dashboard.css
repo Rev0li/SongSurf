@@ -90,6 +90,20 @@
 	text-align: center;
 }
 
+.cover-spinner {
+	margin: 18px auto 10px;
+	width: 32px;
+	height: 32px;
+	border: 3px solid rgba(255, 255, 255, 0.15);
+	border-top-color: var(--color-primary, #7c6aff);
+	border-radius: 50%;
+	animation: cover-spin 0.8s linear infinite;
+}
+
+@keyframes cover-spin {
+	to { transform: rotate(360deg); }
+}
+
 .option-card {
 	padding: 10px;
 	border: 1px solid rgba(255, 255, 255, 0.1);

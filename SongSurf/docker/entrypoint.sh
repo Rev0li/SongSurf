@@ -1,34 +1,28 @@
 #!/bin/bash
-# entrypoint.sh - Point d'entrée du conteneur SongSurf
-# Met à jour yt-dlp avant chaque démarrage pour garantir la compatibilité YouTube
+# entrypoint.sh — SongSurf container startup
+# Updates yt-dlp before launch to stay compatible with YouTube changes.
+set -euo pipefail
 
 echo "=============================================="
-echo "🎵 SongSurf - Démarrage du conteneur"
+echo "SongSurf - starting container"
 echo "=============================================="
+echo "Python : $(python --version)"
+echo "FFmpeg : $(ffmpeg -version 2>&1 | head -n1)"
 
-echo "📦 Python: $(python --version)"
-echo "🎬 FFmpeg: $(ffmpeg -version 2>&1 | head -n1)"
-
-echo "🔄 Mise à jour de yt-dlp..."
-if pip install \
-    --no-cache-dir \
-    --upgrade \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    yt-dlp 2>&1; then
-    echo "✅ yt-dlp mis à jour: $(yt-dlp --version)"
+# yt-dlp is installed as the songsurf user (--user), so it lands in
+# ~/.local/lib/... which is writable. PATH already includes ~/.local/bin.
+echo "Updating yt-dlp..."
+if pip install --user --no-cache-dir --upgrade yt-dlp 2>&1; then
+    echo "yt-dlp $(yt-dlp --version)"
 else
-    echo "⚠️  Mise à jour échouée - version existante: $(yt-dlp --version)"
+    echo "WARNING: yt-dlp update failed — running existing version: $(yt-dlp --version 2>/dev/null || echo 'unknown')"
 fi
 
-# Créer les dossiers de données si absents (sécurité au démarrage)
-mkdir -p /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music 2>/dev/null || true
+# Ensure data directories exist (bind-mount might not pre-create them)
+mkdir -p /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music
 
-echo ""
 echo "=============================================="
-echo "🚀 Démarrage de l'application..."
+echo "Starting application..."
 echo "=============================================="
-echo ""
 
 exec "$@"

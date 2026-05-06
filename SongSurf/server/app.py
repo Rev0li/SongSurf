@@ -16,7 +16,7 @@ Storage: /data/music/<user_sub>/
 Phase 3: see documentation/CONNECTOR.md
 """
 
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -289,7 +289,12 @@ def auth_required(f):
 
 # ── SPA ───────────────────────────────────────────────────────────────────────
 
-_FRONTEND_BUILD = (Path(__file__).parent.parent / 'frontend' / 'build').resolve()
+# In Docker: FRONTEND_BUILD_PATH=/app/frontend/build (set in Dockerfile).
+# In local dev: falls back to sibling of server/ directory.
+_FRONTEND_BUILD = Path(
+    os.environ.get('FRONTEND_BUILD_PATH') or
+    str(Path(__file__).parent.parent / 'frontend' / 'build')
+).resolve()
 
 
 def _spa():
@@ -297,9 +302,7 @@ def _spa():
     index = _FRONTEND_BUILD / 'index.html'
     if index.exists():
         return send_file(index)
-    # Fallback to Jinja template during development before first build
-    user = _get_current_user()
-    return render_template('pages/dashboard.html', user=user)
+    return 'Frontend not built. Run: make build', 503
 
 
 @app.route('/')
@@ -401,7 +404,17 @@ def get_status():
         current_pct = 0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
-            current_pct = max(0, min(100, int(status['progress'].get('percent', 0))))
+            phase   = status['progress'].get('phase', '')
+            raw_pct = max(0, min(100, int(status['progress'].get('percent', 0))))
+            # Map phase → weighted percent: download=0-50, converting=55, organizing=90, completed=100
+            if phase == 'converting':
+                current_pct = 55
+            elif phase == 'organizing':
+                current_pct = 90
+            elif phase == 'completed':
+                current_pct = 100
+            else:  # downloading or unknown
+                current_pct = int(raw_pct * 0.5)
         if status.get('batch_active'):
             total    = max(1, int(status.get('batch_total', 0) or 0))
             done     = max(0, min(total, int(status.get('batch_done', 0) or 0)))
@@ -888,11 +901,6 @@ def admin_prefetch_cancel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# ── Static ─────────────────────────────────────────────────────────────────────
-
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
 
 
 # ── Queue worker ───────────────────────────────────────────────────────────────
@@ -936,10 +944,14 @@ def queue_worker():
 
                 playlist_mode = item.get('playlist_mode', False)
                 media_mode    = result.get('media_mode', 'mp3')
+                # phase already set to 'organizing' by downloader
                 org_result    = org.organize(result['file_path'], metadata,
                                              playlist_mode=playlist_mode, media_mode=media_mode)
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
+
+                downloader.progress.phase   = 'completed'
+                downloader.progress.percent = 100
 
                 with queue_lock:
                     download_status['in_progress']    = False

@@ -1,6 +1,7 @@
 # Dockerfile — SongSurf Watcher
-# Portail d'authentification léger, toujours actif
-# Accès au Docker socket pour démarrer/arrêter SongSurf
+# Lightweight auth proxy, always running.
+# Needs Docker socket access to start/stop the songsurf container.
+# Runs as root intentionally (docker.sock requires it).
 
 FROM python:3.11-slim
 
@@ -10,18 +11,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Dépendances Python
 COPY watcher/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Code du Watcher
 COPY watcher/watcher.py .
-
-# Templates : propres au watcher + login partagé avec SongSurf
-# # Code du Watcher
-COPY watcher/watcher.py .
-
-# Templates (TOUT)
 COPY templates/ templates/
 
 EXPOSE 8080

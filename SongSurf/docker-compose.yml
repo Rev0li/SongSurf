@@ -1,0 +1,96 @@
+# SongSurf — Docker Compose
+#
+# Architecture:
+#   [Watcher :8080]  ← always running, auth proxy, container lifecycle
+#        │
+#        └── starts/stops on demand → [SongSurf :8081 internal]
+#
+# Usage:
+#   make secrets    ← generate .env + .secrets
+#   make up         ← build + start
+#   make logs       ← stream logs
+#   make down       ← stop
+#
+# Config split:
+#   .env     → non-secret config (DEPLOY_TARGET, ports, timeouts…)
+#   .secrets → all key material (chmod 600, never commit)
+
+services:
+
+  # ── Watcher — always-on auth proxy (~15 MB RAM) ───────────────────────────
+  watcher:
+    container_name: watcher
+    build:
+      context: .
+      dockerfile: watcher/Dockerfile
+    image: watcher:latest
+    restart: on-failure
+    # Root needed for Docker socket access (starts/stops songsurf container)
+    user: root
+
+    env_file:
+      - .env
+      - .secrets
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+      - FLASK_SECRET_KEY=${WATCHER_FLASK_SECRET_KEY:?WATCHER_FLASK_SECRET_KEY is required}
+      - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
+      - DEV_MODE=${DEV_MODE:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      - AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL:-}
+      - TARGET_CONTAINER=songsurf
+      - TARGET_URL=${TARGET_URL:-http://songsurf:8081}
+      - INACTIVITY_WARN_TIMEOUT=${INACTIVITY_WARN_TIMEOUT:-3600}
+      - INACTIVITY_GRACE_TIMEOUT=${INACTIVITY_GRACE_TIMEOUT:-900}
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── SongSurf — main app, started on demand ────────────────────────────────
+  songsurf:
+    container_name: songsurf
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: songsurf:latest
+    restart: on-failure
+
+    env_file:
+      - .env
+      - .secrets
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+      - FLASK_PORT=8081
+      - FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY:?SONGSURF_FLASK_SECRET_KEY is required}
+      - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
+      - DEV_MODE=${DEV_MODE:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      - DONATION_BTC=${DONATION_BTC:-}
+      - DONATION_ETH=${DONATION_ETH:-}
+      - DONATION_SOL=${DONATION_SOL:-}
+      - DONATION_XMR=${DONATION_XMR:-}
+
+    volumes:
+      - ./data/music:/data/music
+      - ./data/music_guest:/data/music_guest
+      - ./data/temp:/data/temp
+      - ./data/temp_guest:/data/temp_guest
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

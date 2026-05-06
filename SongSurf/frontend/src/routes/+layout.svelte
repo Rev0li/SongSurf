@@ -1,4 +1,9 @@
 <script>
+	import '$lib/styles/design-system.css';
+	import '$lib/styles/components.css';
+	import '$lib/styles/layouts.css';
+	import '$lib/styles/dashboard.css';
+
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { user, downloadStatus, recentDownloads, addToast } from '$lib/stores.js';
