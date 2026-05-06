@@ -52,10 +52,10 @@ frontend-dev:                     ## SvelteKit hot-reload dev server (port 5173)
 
 .PHONY: build up down restart logs ps config
 
-build: frontend-build             ## Build frontend then Docker images (respects TARGET)
+build: init-dirs                  ## Build Docker images (frontend built inside Docker)
 	DEPLOY_TARGET=$(TARGET) $(COMPOSE) build
 
-up: frontend-build init-dirs       ## Build frontend + start containers in background
+up: init-dirs                     ## Start containers — Docker handles the frontend build
 	DEPLOY_TARGET=$(TARGET) $(COMPOSE) up -d --build
 
 down:                             ## Stop and remove containers

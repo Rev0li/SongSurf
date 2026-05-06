@@ -15,7 +15,7 @@ COPY watcher/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY watcher/watcher.py .
-COPY templates/ templates/
+COPY watcher/templates/ templates/
 
 EXPOSE 8080
 
