@@ -67,11 +67,11 @@
   padding: var(--s4);
 }
 .cover-spinner {
-  width: 28px; height: 28px;
-  border: 2px solid var(--bg-4);
+  width: 36px; height: 36px;
+  border: 3px solid rgba(235, 235, 245, 0.18);
   border-top-color: var(--blue);
   border-radius: 50%;
-  animation: spin .8s linear infinite;
+  animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 

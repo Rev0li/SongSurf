@@ -32,7 +32,7 @@
 	let coverCandidates = [];
 	let coverIdx = 0;
 	let coverSrc = '';
-	let coverVisible = false;
+	let coverLoading = false;
 
 	// prefetch
 	let prefetchToken = '';
@@ -43,26 +43,23 @@
 		coverCandidates = candidates ?? [];
 		coverIdx = 0;
 		coverSrc = '';
-		coverVisible = false;
+		coverLoading = false;
 		tryNextCover();
 	}
 
 	function tryNextCover() {
 		if (coverIdx >= coverCandidates.length) {
 			coverSrc = '';
-			coverVisible = false;
+			coverLoading = false;
 			return;
 		}
-		coverSrc = bustUrl(coverCandidates[coverIdx]);
+		coverLoading = true;
+		const url = bustUrl(coverCandidates[coverIdx]);
 		coverIdx++;
-	}
-
-	function handleCoverLoad() {
-		coverVisible = true;
-	}
-
-	function handleCoverError() {
-		tryNextCover();
+		const img = new Image();
+		img.onload = () => { coverSrc = url; coverLoading = false; };
+		img.onerror = tryNextCover;
+		img.src = url;
 	}
 
 	function stopPrefetchPolling() {
@@ -113,7 +110,7 @@
 			const data = await api.extract(raw);
 			if (!data.success) { addToast(data.error || 'Extraction impossible.', 'error'); return; }
 
-			extract = data;
+			extract = { ...data, url: raw };
 			url = '';
 
 			if (data.is_playlist) {
@@ -194,7 +191,7 @@
 		title = artist = album = playlistArtist = playlistAlbum = playlistYear = '';
 		playlistMode = mp4Mode = false;
 		coverSrc = '';
-		coverVisible = false;
+		coverLoading = false;
 	}
 
 	// ── Keyboard shortcut: Enter on URL input ────────────────────────────────
@@ -234,18 +231,10 @@
 			<!-- Cover -->
 			<aside class="metadata-options-column">
 				<div class="cover-preview-box">
-					{#if coverSrc}
-						<img
-							class="metadata-thumb"
-							src={coverSrc}
-							alt="Pochette"
-							style={coverVisible ? '' : 'display:none'}
-							on:load={handleCoverLoad}
-							on:error={handleCoverError}
-						/>
-						{#if !coverVisible}
-							<div class="cover-spinner" aria-label="Chargement…"></div>
-						{/if}
+					{#if coverLoading}
+						<div class="cover-spinner"></div>
+					{:else if coverSrc}
+						<img class="metadata-thumb" src={coverSrc} alt="Pochette" />
 					{:else}
 						<div class="cover-placeholder">Pochette</div>
 					{/if}
