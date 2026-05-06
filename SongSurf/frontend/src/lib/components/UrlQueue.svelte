@@ -1,125 +1,113 @@
 <script>
+	import { onDestroy } from 'svelte';
 	import { workerBusy } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
-	import { asText, primaryArtist, inferPlaylistArtist } from '$lib/utils.js';
 
-	// queue items: { id, url, status, label, error }
-	// status: 'pending' | 'extracting' | 'submitted' | 'done' | 'error'
+	// queue items: { id, label, status, error, isPlaylist, ...download params }
+	// status: 'pending' | 'submitting' | 'waiting' | 'done' | 'error'
 	let queue = [];
-	let inputUrl = '';
-	let processing = false;
+	let processing = false; // true from start-of-submit until server worker finishes
 	let idCounter = 0;
 
-	// ── Add URLs ──────────────────────────────────────────────────────────────
-	function add() {
-		const lines = inputUrl.split('\n').map(l => l.trim()).filter(Boolean);
-		if (!lines.length) return;
-		queue = [
-			...queue,
-			...lines.map(url => ({ id: ++idCounter, url, status: 'pending', label: url, error: '' })),
-		];
-		inputUrl = '';
-		maybeProcess();
+	// ── Public API ────────────────────────────────────────────────────────────
+	export function enqueue(item) {
+		queue = [...queue, { ...item, id: ++idCounter, status: 'pending', error: '' }];
+		processNext();
 	}
 
-	function remove(id) {
-		queue = queue.filter(q => !(q.id === id && q.status === 'pending'));
+	// ── Worker-free transition detector ──────────────────────────────────────
+	// Subscribe manually to detect busy→free transition without $: loop risk
+	let _prevBusy = false;
+	const _unsubBusy = workerBusy.subscribe(busy => {
+		if (_prevBusy && !busy) onWorkerFree();
+		_prevBusy = busy;
+	});
+	onDestroy(_unsubBusy);
+
+	function onWorkerFree() {
+		// The item that was 'waiting' is now complete
+		const waiting = queue.find(q => q.status === 'waiting');
+		if (waiting) { waiting.status = 'done'; queue = queue; }
+		processing = false;
+		processNext();
 	}
 
-	function clearDone() {
-		queue = queue.filter(q => q.status !== 'done' && q.status !== 'error');
-	}
-
-	function onKeydown(e) {
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(); }
-	}
-
-	// ── Processing ────────────────────────────────────────────────────────────
-	// When worker finishes or processing flag clears, check queue
-	$: if (!$workerBusy && !processing) maybeProcess();
-
-	function maybeProcess() {
-		// Any submitted item whose server download just completed → mark done
-		let changed = false;
-		for (const item of queue) {
-			if (item.status === 'submitted') { item.status = 'done'; changed = true; }
-		}
-		if (changed) queue = queue;
-
-		// Start next pending if free
+	// ── Sequential processing ─────────────────────────────────────────────────
+	function processNext() {
+		// Guards: one item at a time, don't send while server is busy
+		if (processing || $workerBusy) return;
 		const next = queue.find(q => q.status === 'pending');
-		if (next && !processing && !$workerBusy) processItem(next);
-	}
+		if (!next) return;
 
-	async function processItem(item) {
-		processing = true;
-		item.status = 'extracting';
+		processing = true;      // MUST be first — prevents any re-entrant call
+		next.status = 'submitting';
 		queue = queue;
 
+		_submit(next);           // fire-and-forget async
+	}
+
+	async function _submit(item) {
 		try {
-			const data = await api.extract(item.url);
-			if (!data.success) throw new Error(data.error || 'Extraction impossible');
-
-			item.label = data.is_playlist
-				? asText(data.title, item.url)
-				: `${primaryArtist(data.artist)} — ${asText(data.title, '…')}`;
-			item.status = 'downloading';
-			queue = queue;
-
 			let res;
-			if (data.is_playlist) {
+			if (item.isPlaylist) {
 				res = await api.downloadPlaylist({
-					playlist_mode: false,
-					mp4_mode: false,
-					playlist_metadata: {
-						title:  asText(data.title, 'Unknown Album'),
-						artist: inferPlaylistArtist(data),
-						year:   asText(data.year),
-						songs:  data.songs ?? [],
-					},
+					playlist_mode: item.playlistMode ?? false,
+					mp4_mode:      item.mp4Mode ?? false,
+					playlist_metadata: item.playlistMetadata,
 				});
 			} else {
 				res = await api.download({
 					url:           item.url,
-					playlist_mode: false,
-					mp4_mode:      false,
-					title:         asText(data.title,  'Unknown Title'),
-					artist:        primaryArtist(data.artist),
-					album:         asText(data.album,  'Unknown Album'),
-					year:          asText(data.year),
+					playlist_mode: item.playlistMode ?? false,
+					mp4_mode:      item.mp4Mode ?? false,
+					title:         item.title,
+					artist:        item.artist,
+					album:         item.album,
+					year:          item.year ?? '',
 				});
 			}
+
 			if (!res.success) throw new Error(res.error || 'Erreur téléchargement');
 
-			// 'submitted' → becomes 'done' when workerBusy goes false (maybeProcess)
-			item.status = 'submitted';
+			// Submitted — now wait for workerBusy → false (handled by onWorkerFree)
+			item.status = 'waiting';
+			queue = queue;
+			// processing stays true until onWorkerFree releases it
+
 		} catch (err) {
 			item.status = 'error';
 			item.error = err.message;
-		} finally {
 			processing = false;
 			queue = queue;
+			// Try next item after a short pause
+			setTimeout(processNext, 400);
 		}
 	}
 
-	// ── Derived ───────────────────────────────────────────────────────────────
-	$: pending   = queue.filter(q => q.status === 'pending').length;
-	$: hasQueue  = queue.length > 0;
-	$: hasClear  = queue.some(q => q.status === 'done' || q.status === 'error');
+	// ── UI helpers ────────────────────────────────────────────────────────────
+	function remove(id) {
+		queue = queue.filter(q => !(q.id === id && q.status === 'pending'));
+	}
 
-	const ICON = {
+	function clearFinished() {
+		queue = queue.filter(q => q.status !== 'done' && q.status !== 'error');
+	}
+
+	$: pending    = queue.filter(q => q.status === 'pending').length;
+	$: hasQueue   = queue.length > 0;
+	$: hasFinished = queue.some(q => q.status === 'done' || q.status === 'error');
+
+	const STATUS_ICON = {
 		pending:    '⏳',
-		extracting: '🔍',
-		downloading:'⬇️',
-		submitted:  '⬇️',
+		submitting: '📤',
+		waiting:    '⬇️',
 		done:       '✅',
 		error:      '❌',
 	};
-	const LABEL = {
+	const STATUS_LABEL = {
 		pending:    'En attente',
-		extracting: 'Analyse…',
-		downloading:'Téléchargement…',
-		submitted:  'En cours…',
+		submitting: 'Envoi…',
+		waiting:    'Téléchargement…',
 		done:       'Terminé',
 		error:      'Erreur',
 	};
@@ -131,35 +119,34 @@
 		{#if pending > 0}
 			<span class="queue-badge">{pending} en attente</span>
 		{/if}
-		{#if hasClear}
-			<button class="btn btn-ghost btn-sm" on:click={clearDone}>Vider</button>
+		{#if hasFinished}
+			<button class="btn btn-ghost btn-sm" style="margin-left:auto" on:click={clearFinished}>
+				Vider
+			</button>
 		{/if}
 	</div>
 
-	<div class="queue-input-row">
-		<textarea
-			class="form-input queue-textarea"
-			bind:value={inputUrl}
-			placeholder="Coller un ou plusieurs liens YouTube Music (un par ligne)…"
-			rows="1"
-			on:keydown={onKeydown}
-		></textarea>
-		<button class="btn btn-primary btn-sm" on:click={add} disabled={!inputUrl.trim()}>
-			Ajouter
-		</button>
-	</div>
-
-	{#if hasQueue}
+	{#if !hasQueue}
+		<p class="empty-state-text" style="margin:0">
+			Analyse un lien, puis clique sur « Ajouter à la file ».
+		</p>
+	{:else}
 		<ul class="queue-list">
 			{#each queue as item (item.id)}
-				<li class="queue-item" class:is-done={item.status === 'done'} class:is-error={item.status === 'error'}>
-					<span class="queue-icon">{ICON[item.status]}</span>
-					<span class="queue-label" title={item.url}>
-						{item.label !== item.url ? item.label : ''}
-						{#if item.label === item.url}<span class="queue-url">{item.url}</span>{/if}
-						{#if item.status === 'error'}<span class="queue-error">{item.error}</span>{/if}
+				<li
+					class="queue-item"
+					class:is-done={item.status === 'done'}
+					class:is-error={item.status === 'error'}
+					class:is-active={item.status === 'submitting' || item.status === 'waiting'}
+				>
+					<span class="queue-icon">{STATUS_ICON[item.status]}</span>
+					<span class="queue-label" title={item.label}>
+						{item.label}
+						{#if item.status === 'error'}
+							<span class="queue-error">{item.error}</span>
+						{/if}
 					</span>
-					<span class="queue-status-text">{LABEL[item.status]}</span>
+					<span class="queue-status-text">{STATUS_LABEL[item.status]}</span>
 					{#if item.status === 'pending'}
 						<button class="queue-remove" on:click={() => remove(item.id)}>✕</button>
 					{/if}
@@ -186,57 +173,44 @@
 		border-radius: var(--r-full);
 		font-weight: 600;
 	}
-	.queue-header .btn { margin-left: auto; }
-
-	.queue-input-row {
-		display: flex;
-		gap: var(--s2);
-		align-items: flex-start;
-		margin-bottom: var(--s3);
-	}
-	.queue-textarea {
-		flex: 1;
-		resize: none;
-		font-size: 13px;
-		line-height: 1.5;
-		min-height: 36px;
-		max-height: 120px;
-		overflow-y: auto;
-		field-sizing: content; /* auto-grow in modern browsers */
-	}
 
 	.queue-list {
 		list-style: none;
 		margin: 0; padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 3px;
 	}
 	.queue-item {
 		display: flex;
 		align-items: center;
 		gap: var(--s2);
-		padding: 6px var(--s2);
+		padding: 7px var(--s2);
 		border-radius: var(--r-sm);
 		background: var(--bg-3);
 		font-size: 13px;
 		min-width: 0;
+		transition: opacity .2s;
 	}
-	.queue-item.is-done   { opacity: .55; }
-	.queue-item.is-error  { background: rgba(255, 59, 48, .1); }
+	.queue-item.is-done   { opacity: .5; }
+	.queue-item.is-error  { background: rgba(255, 59, 48, .12); }
+	.queue-item.is-active { background: rgba(10, 132, 255, .1); }
 
-	.queue-icon  { flex-shrink: 0; font-size: 14px; }
+	.queue-icon  { flex-shrink: 0; font-size: 14px; width: 20px; text-align: center; }
 	.queue-label {
-		flex: 1;
-		min-width: 0;
+		flex: 1; min-width: 0;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		color: var(--text);
 	}
-	.queue-url   { color: var(--text-3); font-size: 12px; }
-	.queue-error { display: block; color: #ff3b30; font-size: 11px; white-space: normal; margin-top: 2px; }
-
+	.queue-error {
+		display: block;
+		color: #ff453a;
+		font-size: 11px;
+		white-space: normal;
+		margin-top: 2px;
+	}
 	.queue-status-text {
 		flex-shrink: 0;
 		font-size: 11px;
@@ -247,9 +221,8 @@
 		flex-shrink: 0;
 		background: none; border: none;
 		color: var(--text-3); cursor: pointer;
-		font-size: 11px; padding: 2px 4px;
-		border-radius: 4px;
-		line-height: 1;
+		font-size: 11px; padding: 2px 5px;
+		border-radius: 4px; line-height: 1;
 	}
 	.queue-remove:hover { color: var(--text); background: var(--bg-4); }
 </style>

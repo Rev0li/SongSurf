@@ -7,6 +7,7 @@
 	import LibraryTree from '$lib/components/LibraryTree.svelte';
 
 	let libraryRef;
+	let queueRef;
 	let completedSong = null;
 	let dismissTimer = null;
 
@@ -15,6 +16,10 @@
 		libraryRef?.refresh();
 		clearTimeout(dismissTimer);
 		dismissTimer = setTimeout(() => { completedSong = null; }, 4500);
+	}
+
+	function handleAddToQueue(item) {
+		queueRef?.enqueue(item);
 	}
 </script>
 
@@ -35,11 +40,11 @@
 	</nav>
 </header>
 
-<DownloadPanel />
+<DownloadPanel onAddToQueue={handleAddToQueue} />
 
 <div class="page-body">
 	<ProgressZone />
-	<UrlQueue />
+	<UrlQueue bind:this={queueRef} />
 	<LibraryTree bind:this={libraryRef} />
 </div>
 

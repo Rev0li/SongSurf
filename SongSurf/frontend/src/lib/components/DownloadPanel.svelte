@@ -1,6 +1,5 @@
 <script>
 	import { tick } from 'svelte';
-	import { workerBusy } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import {
@@ -8,7 +7,7 @@
 		resolveCoverCandidates, bustUrl,
 	} from '$lib/utils.js';
 
-	export let onDownloadQueued = () => {};
+	export let onAddToQueue = () => {};
 
 	// ── State ──────────────────────────────────────────────────────────────────
 	let url = '';
@@ -173,50 +172,37 @@
 		}
 	}
 
-	// ── Download ──────────────────────────────────────────────────────────────
-	let downloading = false;
+	// ── Add to queue ─────────────────────────────────────────────────────────
+	function addToQueue() {
+		if (!extract) return;
 
-	async function onDownload() {
-		if (!extract) { addToast('Commence par analyser un lien.', 'error'); return; }
+		const item = extract.is_playlist ? {
+			isPlaylist: true,
+			label: asText(playlistAlbum, extract.title ?? 'Playlist'),
+			playlistMode,
+			mp4Mode,
+			playlistMetadata: {
+				title:  asText(playlistAlbum, 'Unknown Album'),
+				artist: asText(playlistArtist, 'Unknown Artist'),
+				year:   asText(playlistYear),
+				songs:  extract.songs ?? [],
+			},
+		} : {
+			isPlaylist: false,
+			label: `${asText(artist, '?')} — ${asText(title, '?')}`,
+			url:          extract.url ?? '',
+			playlistMode,
+			mp4Mode,
+			title:        asText(title,  'Unknown Title'),
+			artist:       asText(artist, 'Unknown Artist'),
+			album:        asText(album,  'Unknown Album'),
+			year:         '',
+		};
 
-		downloading = true;
-		try {
-			let res;
-			if (extract.is_playlist) {
-				res = await api.downloadPlaylist({
-					playlist_mode: playlistMode,
-					mp4_mode: mp4Mode,
-					playlist_metadata: {
-						title: asText(playlistAlbum, 'Unknown Album'),
-						artist: asText(playlistArtist, 'Unknown Artist'),
-						year: asText(playlistYear),
-						songs: extract.songs ?? [],
-					},
-				});
-			} else {
-				res = await api.download({
-					url: extract.url ?? '',
-					playlist_mode: playlistMode,
-					mp4_mode: mp4Mode,
-					title: asText(title, 'Unknown Title'),
-					artist: asText(artist, 'Unknown Artist'),
-					album: asText(album, 'Unknown Album'),
-					year: '',
-				});
-			}
-
-			if (!res.success) { addToast(res.error || 'Échec du téléchargement.', 'error'); return; }
-
-			stopPrefetchPolling();
-			prefetchToken = '';
-			addToast('Ajouté à la file de téléchargement.', 'info');
-			reset();
-			onDownloadQueued();
-		} catch (err) {
-			addToast(err.message || 'Erreur téléchargement.', 'error');
-		} finally {
-			downloading = false;
-		}
+		stopPrefetchPolling();
+		prefetchToken = '';
+		onAddToQueue(item);
+		reset();
 	}
 
 	// ── Reset ─────────────────────────────────────────────────────────────────
@@ -235,8 +221,6 @@
 		if (e.key === 'Enter') onExtract();
 	}
 
-	$: dlDisabled = !panelActive || $workerBusy || downloading;
-	$: dlLabel = downloading ? '⏳ Envoi…' : ($workerBusy ? '⏳ En attente de Worker' : '⬇️ Télécharger');
 </script>
 
 <!-- ── URL Bar (sticky) ──────────────────────────────────────────────────── -->
@@ -350,8 +334,8 @@
 				{/if}
 
 				<div class="metadata-actions">
-					<button class="btn btn-primary btn-block" on:click={onDownload} disabled={$workerBusy || downloading}>
-						{downloading ? 'Envoi…' : $workerBusy ? 'Worker occupé…' : '⬇  Télécharger'}
+					<button class="btn btn-primary btn-block" on:click={addToQueue}>
+						➕ Ajouter à la file
 					</button>
 					<button class="btn btn-ghost btn-sm" on:click={reset}>Annuler</button>
 				</div>
