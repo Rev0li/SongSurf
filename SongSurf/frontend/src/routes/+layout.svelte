@@ -6,7 +6,7 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, recentDownloads, addToast } from '$lib/stores.js';
+	import { user, downloadStatus, lastCompleted } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
@@ -25,15 +25,11 @@
 			) {
 				lastCompletedTimestamp = st.last_completed.timestamp;
 				const meta = st.last_completed.metadata ?? {};
-				recentDownloads.update((list) => [
-					{
-						artist: primaryArtist(meta.artist ?? 'Unknown Artist'),
-						title: asText(meta.title, 'Unknown Title'),
-						filePath: st.last_completed.file_path ?? '',
-						timestamp: st.last_completed.timestamp,
-					},
-					...list,
-				]);
+				lastCompleted.set({
+					artist: primaryArtist(meta.artist ?? 'Unknown Artist'),
+					title: asText(meta.title, 'Unknown Title'),
+					timestamp: st.last_completed.timestamp,
+				});
 			}
 		} catch {
 			// ignore transient errors

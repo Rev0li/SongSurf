@@ -20,7 +20,7 @@ export const workerBusy = derived(
 	($s) => !!$s.in_progress || ($s.queue_size ?? 0) > 0 || !!$s.batch_active
 );
 
-export const recentDownloads = writable([]); // [{ artist, title, filePath }]
+export const lastCompleted = writable(null); // { artist, title, timestamp } | null
 
 // ── Toasts ────────────────────────────────────────────────────────────────────
 
