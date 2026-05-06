@@ -1,4 +1,5 @@
 <script>
+	import { tick } from 'svelte';
 	import { workerBusy } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
@@ -47,13 +48,19 @@
 		tryNextCover();
 	}
 
-	function tryNextCover() {
+	async function tryNextCover() {
 		if (coverIdx >= coverCandidates.length) {
 			coverSrc = '';
 			coverLoading = false;
 			return;
 		}
 		coverLoading = true;
+		// Flush Svelte's DOM update so the spinner is in the DOM,
+		// then wait for the browser to actually paint it before starting
+		// the image probe — otherwise fast/cached images resolve before
+		// the spinner ever reaches the screen.
+		await tick();
+		await new Promise(r => requestAnimationFrame(r));
 		const url = bustUrl(coverCandidates[coverIdx]);
 		coverIdx++;
 		const img = new Image();
@@ -118,17 +125,21 @@
 				playlistAlbum = asText(data.title, 'Unknown Album');
 				playlistYear = asText(data.year, '');
 				const candidates = resolveCoverCandidates(data, raw);
-				setCoverCandidates(candidates);
 				prefetchToken = asText(data.prefetch_token);
+				panelActive = true;
+				await tick();
+				setCoverCandidates(candidates);
 				if (prefetchToken) startPrefetchPolling(prefetchToken, candidates);
 			} else {
 				title = asText(data.title, 'Unknown Title');
 				artist = primaryArtist(data.artist);
 				album = asText(data.album, 'Unknown Album');
-				setCoverCandidates(resolveCoverCandidates(data, raw));
+				const candidates = resolveCoverCandidates(data, raw);
+				panelActive = true;
+				await tick();
+				setCoverCandidates(candidates);
 			}
 
-			panelActive = true;
 			addToast('Métadonnées chargées. Ajuste puis télécharge.', 'info');
 		} catch (err) {
 			addToast(err.message || 'Erreur extraction.', 'error');

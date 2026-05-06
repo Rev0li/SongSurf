@@ -1,6 +1,7 @@
 <script>
+	import { onMount, tick } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, user } from '$lib/stores.js';
 	import { matchesFilter, nrm } from '$lib/utils.js';
 
 	let tree = null;        // { artists: [], playlists: [] }
@@ -11,7 +12,9 @@
 	let dragging = false;
 	let imageFile = null;
 	let coverSrc = '';
-	let coverVisible = false;
+	let coverLoading = false;
+
+	onMount(refresh);
 
 	export async function refresh() {
 		if (dragging) return;
@@ -35,10 +38,18 @@
 		loadFolderCover(path);
 	}
 
-	function loadFolderCover(path) {
-		if (!path) { coverSrc = ''; coverVisible = false; return; }
-		coverVisible = false;
-		coverSrc = api.getFolderCoverUrl(path);
+	async function loadFolderCover(path) {
+		coverSrc = '';
+		coverLoading = false;
+		if (!path) return;
+		coverLoading = true;
+		await tick();
+		await new Promise(r => requestAnimationFrame(r));
+		const url = api.getFolderCoverUrl(path);
+		const img = new Image();
+		img.onload = () => { coverSrc = url; coverLoading = false; };
+		img.onerror = () => { coverLoading = false; };
+		img.src = url;
 	}
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────
@@ -117,6 +128,31 @@
 		}
 	}
 
+	// ── ZIP download ──────────────────────────────────────────────────────────
+	let zipping = false;
+
+	async function downloadZip() {
+		const isPermanent = $user?.role === 'admin';
+		if (!isPermanent) {
+			const ok = confirm(
+				'Télécharger la bibliothèque en ZIP ?\n\n' +
+				'⚠️ Votre musique sera supprimée du serveur 60 secondes après le téléchargement.'
+			);
+			if (!ok) return;
+		}
+		zipping = true;
+		try {
+			const res = await api.prepareZip();
+			if (!res.success) { addToast(res.error || 'Impossible de créer le ZIP.', 'error'); return; }
+			addToast(`ZIP prêt : ${res.count} fichiers (${res.size_mb} MB). Téléchargement…`, 'info');
+			window.location.href = (res.download_url || '/api/download-zip') + '?t=' + Date.now();
+		} catch (err) {
+			addToast(err.message || 'Erreur ZIP.', 'error');
+		} finally {
+			zipping = false;
+		}
+	}
+
 	$: q = nrm(filter);
 
 	$: filteredArtists = (tree?.artists ?? []).map((a) => ({
@@ -142,7 +178,12 @@
 <svelte:window on:paste={onPaste} />
 
 <div class="card">
-	<h2 class="card-title">📚 Bibliothèque</h2>
+	<div class="lib-header">
+		<h2 class="card-title" style="margin:0">📚 Bibliothèque</h2>
+		<button class="btn btn-success btn-sm" on:click={downloadZip} disabled={zipping}>
+			{zipping ? '⏳ Préparation…' : '📥 Télécharger ZIP'}
+		</button>
+	</div>
 
 	<!-- Toolbar -->
 	<div class="lib-toolbar" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
@@ -164,16 +205,11 @@
 	{#if selectedFolderPath}
 		<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap">
 			<div class="cover-preview-box" style="width:80px;height:80px;flex-shrink:0">
-				{#if coverSrc}
-					<img
-						src={coverSrc}
-						alt="Pochette"
-						style={coverVisible ? 'width:100%;height:100%;object-fit:cover;border-radius:4px' : 'display:none'}
-						on:load={() => coverVisible = true}
-						on:error={() => coverVisible = false}
-					/>
-				{/if}
-				{#if !coverVisible}
+				{#if coverLoading}
+					<div class="cover-spinner"></div>
+				{:else if coverSrc}
+					<img class="metadata-thumb" src={coverSrc} alt="Pochette" />
+				{:else}
 					<div class="cover-placeholder" style="font-size:11px">Pas de pochette</div>
 				{/if}
 			</div>
@@ -313,3 +349,12 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.lib-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--s4);
+	}
+</style>

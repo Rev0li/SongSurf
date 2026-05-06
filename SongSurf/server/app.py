@@ -301,7 +301,9 @@ def _spa():
     """Serve the SvelteKit SPA index.html (requires auth)."""
     index = _FRONTEND_BUILD / 'index.html'
     if index.exists():
-        return send_file(index)
+        resp = send_file(index)
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return resp
     return 'Frontend not built. Run: make build', 503
 
 
