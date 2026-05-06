@@ -50,17 +50,19 @@
 
 	async function tryNextCover() {
 		if (coverIdx >= coverCandidates.length) {
-			coverSrc = '';
-			coverLoading = false;
+			// All candidates exhausted — keep spinner if prefetch is still in flight
+			if (!prefetchTimer) {
+				coverSrc = '';
+				coverLoading = false;
+			}
 			return;
 		}
-		coverLoading = true;
-		// Flush Svelte's DOM update so the spinner is in the DOM,
-		// then wait for the browser to actually paint it before starting
-		// the image probe — otherwise fast/cached images resolve before
-		// the spinner ever reaches the screen.
-		await tick();
-		await new Promise(r => requestAnimationFrame(r));
+		if (!coverLoading) {
+			// First probe in this series: ensure spinner renders before starting
+			coverLoading = true;
+			await tick();
+			await new Promise(r => requestAnimationFrame(r));
+		}
 		const url = bustUrl(coverCandidates[coverIdx]);
 		coverIdx++;
 		const img = new Image();
@@ -85,7 +87,15 @@
 			const img = new Image();
 			img.onload = () => {
 				stopPrefetchPolling();
-				setCoverCandidates([api.getPrefetchCoverUrl(token), ...fallbackCandidates]);
+				const newUrl = api.getPrefetchCoverUrl(token);
+				if (coverSrc) {
+					// Cover already visible — update silently, no spinner flash
+					coverSrc = newUrl;
+				} else {
+					// Spinner still running (all CDN candidates failed) — set cover directly
+					coverLoading = false;
+					coverSrc = newUrl;
+				}
 			};
 			img.onerror = () => { if (tries >= maxTries) stopPrefetchPolling(); };
 			img.src = probeUrl;
