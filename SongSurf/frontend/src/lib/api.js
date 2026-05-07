@@ -94,10 +94,30 @@ export const api = {
 	songMeta(path) {
 		return request(`/api/library/song-meta?path=${encodeURIComponent(path)}`);
 	},
+	saveSongMeta(path, tags) {
+		return request('/api/library/song-meta/save', { method: 'POST', body: JSON.stringify({ path, tags }) });
+	},
 	libraryIssues() {
 		return request('/api/library/issues');
 	},
 	consumeExtensionQueue() {
 		return request('/api/extension-queue/consume', { method: 'POST' });
+	},
+	getArtistPictureUrl(folderPath) {
+		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${Date.now()}`;
+	},
+	uploadSongCover(path, file) {
+		const form = new FormData();
+		form.append('path', path);
+		form.append('image', file);
+		return fetch('/api/library/song-cover/upload', { method: 'POST', credentials: 'same-origin', body: form })
+			.then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`); return d; });
+	},
+	uploadArtistCover(folderPath, file) {
+		const form = new FormData();
+		form.append('folder_path', folderPath);
+		form.append('image', file);
+		return fetch('/api/library/artist-cover/upload', { method: 'POST', credentials: 'same-origin', body: form })
+			.then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`); return d; });
 	},
 };

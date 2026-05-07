@@ -754,6 +754,8 @@ def library_folder_cover():
             ('cover.jpg', 'image/jpeg'), ('cover.jpeg', 'image/jpeg'),
             ('folder.jpg', 'image/jpeg'), ('folder.jpeg', 'image/jpeg'),
             ('folder.png', 'image/png'),  ('folder.webp', 'image/webp'),
+            ('artist.jpg', 'image/jpeg'), ('artist.jpeg', 'image/jpeg'),
+            ('artist.png', 'image/png'),  ('artist.webp', 'image/webp'),
         ):
             p = folder / name
             if p.exists():
@@ -773,6 +775,161 @@ def library_folder_cover():
     except Exception as e:
         logger.error(f"❌ /api/library/folder-cover: {e}")
         return '', 204
+
+
+@app.route('/api/library/artist-picture')
+@auth_required
+def library_artist_picture():
+    """Artist picture: looks for artist.jpg first, then folder images."""
+    try:
+        user        = _get_current_user()
+        music_dir   = _user_music_dir(user['sub'])
+        folder_path = (request.args.get('folder_path') or '').strip()
+        folder      = (music_dir / folder_path).resolve()
+        if not str(folder).startswith(str(music_dir.resolve())):
+            return '', 204
+        if not folder.exists() or not folder.is_dir():
+            return '', 204
+        for name, mime in (
+            ('artist.jpg', 'image/jpeg'), ('artist.jpeg', 'image/jpeg'),
+            ('artist.png', 'image/png'),  ('artist.webp', 'image/webp'),
+            ('folder.jpg', 'image/jpeg'), ('folder.jpeg', 'image/jpeg'),
+            ('folder.png', 'image/png'),  ('folder.webp', 'image/webp'),
+        ):
+            p = folder / name
+            if p.exists():
+                return send_file(p, mimetype=mime)
+        return '', 204
+    except Exception:
+        return '', 204
+
+
+@app.route('/api/library/song-meta/save', methods=['POST'])
+@auth_required
+def save_song_meta():
+    """Writes editable ID3 tags back to an MP3 file."""
+    from mutagen.mp3 import MP3 as _MP3
+    from mutagen.id3 import (ID3 as _ID3, TIT2, TPE1, TPE2, TALB, TDRC,
+                              TRCK, TPOS, TCON, TCOM, TCOP, TPUB, TBPM,
+                              TKEY, TLAN, TSRC, TENC, COMM)
+    _FRAME_MAP = {
+        'title':        TIT2, 'artist':       TPE1, 'album_artist': TPE2,
+        'album':        TALB, 'year':         TDRC, 'track_number': TRCK,
+        'disc_number':  TPOS, 'genre':        TCON, 'composer':     TCOM,
+        'copyright':    TCOP, 'publisher':    TPUB, 'bpm':          TBPM,
+        'key':          TKEY, 'language':     TLAN, 'isrc':         TSRC,
+        'encoded_by':   TENC,
+    }
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+        data      = request.get_json() or {}
+        path      = (data.get('path') or '').strip()
+        tags_data = data.get('tags') or {}
+
+        target = (music_dir / path).resolve()
+        if not str(target).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists() or target.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
+
+        audio = _MP3(target, ID3=_ID3)
+        if audio.tags is None:
+            audio.add_tags()
+
+        for field, FrameClass in _FRAME_MAP.items():
+            if field not in tags_data:
+                continue
+            v = str(tags_data[field]).strip()
+            key = FrameClass.__name__
+            if v:
+                audio.tags[key] = FrameClass(encoding=3, text=[v])
+            else:
+                audio.tags.delall(key)
+
+        # Handle comment separately (needs lang)
+        if 'comment' in tags_data:
+            audio.tags.delall('COMM')
+            v = str(tags_data['comment']).strip()
+            if v:
+                audio.tags.add(COMM(encoding=3, lang='eng', desc='', text=[v]))
+
+        audio.save()
+        logger.info(f"💾 Tags sauvegardés : {path}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/library/song-meta/save: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/song-cover/upload', methods=['POST'])
+@auth_required
+def upload_song_cover():
+    """Embeds uploaded image as APIC in MP3 + saves cover.jpg to album folder."""
+    from mutagen.mp3 import MP3 as _MP3
+    from mutagen.id3 import ID3 as _ID3, APIC as _APIC
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+        path      = (request.form.get('path') or '').strip()
+        file      = request.files.get('image')
+        if not path or not file:
+            return jsonify({'success': False, 'error': 'path et image requis'}), 400
+
+        target = (music_dir / path).resolve()
+        if not str(target).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists() or target.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
+
+        img_data = file.read()
+        mime     = file.content_type or 'image/jpeg'
+
+        audio = _MP3(target, ID3=_ID3)
+        if audio.tags is None:
+            audio.add_tags()
+        audio.tags.delall('APIC')
+        audio.tags.add(_APIC(encoding=3, mime=mime, type=3, desc='Cover', data=img_data))
+        audio.save()
+
+        # Also write to folder as cover.jpg for Jellyfin
+        ext = '.jpg' if 'jpeg' in mime or 'jpg' in mime else '.png'
+        with open(target.parent / f'cover{ext}', 'wb') as f:
+            f.write(img_data)
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/library/song-cover/upload: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/artist-cover/upload', methods=['POST'])
+@auth_required
+def upload_artist_cover():
+    """Saves uploaded image as artist.jpg in the artist folder."""
+    try:
+        user        = _get_current_user()
+        music_dir   = _user_music_dir(user['sub'])
+        folder_path = (request.form.get('folder_path') or '').strip()
+        file        = request.files.get('image')
+        if not folder_path or not file:
+            return jsonify({'success': False, 'error': 'folder_path et image requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        if not str(folder).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        mime = file.content_type or 'image/jpeg'
+        ext  = '.jpg' if 'jpeg' in mime or 'jpg' in mime else '.png'
+        with open(folder / f'artist{ext}', 'wb') as f:
+            f.write(file.read())
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/library/artist-cover/upload: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ── Extract / Download ─────────────────────────────────────────────────────────
