@@ -255,6 +255,37 @@ def _is_permanent(role: str) -> bool:
     return role == 'admin'
 
 
+def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
+    """Updates TPE1/TALB tags to match the file's actual folder position.
+
+    Structure assumed:
+      Artist/Album/song.mp3  →  artist=parts[0], album=parts[1]
+      Album/song.mp3         →  album=parts[0]  (playlist mode)
+    """
+    if file_path.suffix.lower() != '.mp3':
+        return
+    try:
+        rel   = file_path.relative_to(music_dir)
+        parts = rel.parts  # ('Artist','Album','song.mp3') or ('Album','song.mp3')
+        if len(parts) == 3:
+            artist, album = parts[0], parts[1]
+        elif len(parts) == 2:
+            artist, album = None, parts[0]
+        else:
+            return
+        from mutagen.mp3 import MP3
+        from mutagen.id3 import ID3, TPE1, TALB
+        audio = MP3(file_path, ID3=ID3)
+        if audio.tags is None:
+            audio.add_tags()
+        if artist:
+            audio.tags['TPE1'] = TPE1(encoding=3, text=artist)
+        audio.tags['TALB'] = TALB(encoding=3, text=album)
+        audio.save()
+    except Exception as e:
+        logger.warning(f"⚠️ sync_mp3_tags({file_path.name}): {e}")
+
+
 # ── Authentication ─────────────────────────────────────────────────────────────
 
 def _get_current_user() -> dict | None:
@@ -504,6 +535,7 @@ def library_move_song():
             i += 1
 
         shutil.move(str(src), str(target))
+        _sync_mp3_tags(target, music_dir)
         return jsonify({'success': True, 'final_path': str(target.relative_to(music_dir))})
     except Exception as e:
         logger.error(f"❌ /api/library/move: {e}")
@@ -553,6 +585,8 @@ def library_rename_folder():
             merged = True
         elif dst != src:
             src.rename(dst)
+        for mp3 in dst.rglob('*.mp3'):
+            _sync_mp3_tags(mp3, music_dir)
         return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir)), 'merged': merged})
     except Exception as e:
         logger.error(f"❌ /api/library/rename-folder: {e}")
@@ -605,6 +639,9 @@ def library_move_folder():
         old_parent = src.parent
         if old_parent != base and old_parent.exists() and not any(old_parent.iterdir()):
             old_parent.rmdir()
+
+        for mp3 in dst.rglob('*.mp3'):
+            _sync_mp3_tags(mp3, music_dir)
 
         return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
     except Exception as e:
@@ -1180,6 +1217,164 @@ def queue_direct():
         return jsonify({'success': True, 'type': url_mode, 'label': labels.get(url_mode, url_mode)})
     except Exception as e:
         logger.error(f"❌ /api/queue-direct: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Metadata inspector ─────────────────────────────────────────────────────────
+
+def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
+    """Returns every readable piece of metadata from an MP3 file."""
+    from mutagen.mp3 import MP3
+    from mutagen.id3 import ID3
+    import mutagen
+
+    result = {
+        'path':      str(file_path.relative_to(music_dir)),
+        'file_name': file_path.name,
+        'file_size': file_path.stat().st_size,
+        'file_size_mb': round(file_path.stat().st_size / (1024 * 1024), 2),
+    }
+
+    try:
+        audio = MP3(file_path, ID3=ID3)
+        info  = audio.info
+
+        result['audio'] = {
+            'duration_s':   round(info.length, 1),
+            'duration_fmt': f"{int(info.length)//60}:{int(info.length)%60:02d}",
+            'bitrate_kbps': getattr(info, 'bitrate', 0) // 1000,
+            'sample_rate':  getattr(info, 'sample_rate', 0),
+            'channels':     getattr(info, 'channels', 0),
+            'mode':         getattr(info, 'mode', ''),
+        }
+
+        tags = audio.tags or {}
+        # Map every present ID3 frame to a readable dict
+        _FRAME_LABELS = {
+            'TIT2': 'title',          'TPE1': 'artist',
+            'TPE2': 'album_artist',   'TPE3': 'conductor',
+            'TALB': 'album',          'TDRC': 'year',
+            'TRCK': 'track_number',   'TPOS': 'disc_number',
+            'TCON': 'genre',          'TCOM': 'composer',
+            'TLYC': 'lyrics',         'TCOP': 'copyright',
+            'TPUB': 'publisher',      'TBPM': 'bpm',
+            'TKEY': 'key',            'TLAN': 'language',
+            'TENC': 'encoded_by',     'TSSE': 'encoder_settings',
+            'TSRC': 'isrc',           'TLEN': 'length_ms',
+            'COMM': 'comment',        'USLT': 'lyrics_text',
+        }
+        id3 = {}
+        for frame_id, label in _FRAME_LABELS.items():
+            frame = tags.get(frame_id)
+            if frame is not None:
+                try:
+                    id3[label] = str(frame.text[0]) if hasattr(frame, 'text') else str(frame)
+                except Exception:
+                    pass
+
+        # APIC (embedded cover)
+        has_cover = any(k.startswith('APIC') for k in tags.keys())
+        id3['has_embedded_cover'] = has_cover
+
+        # TXXX (custom tags)
+        custom = {}
+        for k, v in tags.items():
+            if k.startswith('TXXX'):
+                try:
+                    custom[str(v.desc)] = str(v.text[0])
+                except Exception:
+                    pass
+        if custom:
+            id3['custom_tags'] = custom
+
+        result['id3'] = id3
+
+        # External cover file in same folder
+        covers = []
+        for name in ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp'):
+            if (file_path.parent / name).exists():
+                covers.append(name)
+        result['cover_files'] = covers
+
+    except Exception as e:
+        result['error'] = str(e)
+
+    return result
+
+
+@app.route('/api/library/song-meta')
+@auth_required
+def library_song_meta():
+    """Full metadata dump for a single MP3 file."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+        path      = (request.args.get('path') or '').strip()
+        if not path:
+            return jsonify({'success': False, 'error': 'path requis'}), 400
+
+        target = (music_dir / path).resolve()
+        if not str(target).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists() or target.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
+
+        return jsonify({'success': True, **_read_full_meta(target, music_dir)})
+    except Exception as e:
+        logger.error(f"❌ /api/library/song-meta: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/issues')
+@auth_required
+def library_issues():
+    """Scans the library for MP3s with missing/unknown metadata fields."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user['sub'])
+
+        _UNKNOWN = {'', 'unknown artist', 'unknown album', 'unknown title', 'unknown'}
+
+        issues = []
+        for mp3 in sorted(music_dir.rglob('*.mp3'), key=lambda p: str(p).lower()):
+            try:
+                from mutagen.mp3 import MP3
+                from mutagen.id3 import ID3
+                audio = MP3(mp3, ID3=ID3)
+                tags  = audio.tags or {}
+
+                def _val(frame_id):
+                    f = tags.get(frame_id)
+                    if f is None: return ''
+                    try:    return str(f.text[0]).strip()
+                    except: return ''
+
+                title  = _val('TIT2')
+                artist = _val('TPE1')
+                album  = _val('TALB')
+                year   = _val('TDRC')
+
+                flags = []
+                if title.lower()  in _UNKNOWN or not title:  flags.append('title')
+                if artist.lower() in _UNKNOWN or not artist:  flags.append('artist')
+                if album.lower()  in _UNKNOWN or not album:   flags.append('album')
+                if not year:                                   flags.append('year')
+
+                if flags:
+                    issues.append({
+                        'path':   str(mp3.relative_to(music_dir)),
+                        'title':  title or '—',
+                        'artist': artist or '—',
+                        'album':  album or '—',
+                        'year':   year or '—',
+                        'issues': flags,
+                    })
+            except Exception:
+                issues.append({'path': str(mp3.relative_to(music_dir)), 'issues': ['unreadable']})
+
+        return jsonify({'success': True, 'count': len(issues), 'issues': issues})
+    except Exception as e:
+        logger.error(f"❌ /api/library/issues: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
