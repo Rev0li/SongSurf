@@ -245,6 +245,8 @@ user_zip_lock  = threading.Lock()
 
 def _user_music_dir(sub: str) -> Path:
     d = (BASE_MUSIC_DIR / sub).resolve()
+    if not str(d).startswith(str(BASE_MUSIC_DIR.resolve())):
+        raise ValueError(f"Invalid user sub — path escapes music dir: {sub!r}")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -540,7 +542,6 @@ def library_rename_folder():
                     counter = 1
                     stem = item.stem if item.is_file() else item.name
                     suffix = item.suffix if item.is_file() else ''
-                    base_name = item.name if item.is_dir() else ''
                     while target.exists():
                         if item.is_dir():
                             target = dst / f"{item.name} ({counter})"
@@ -1011,8 +1012,6 @@ def admin_prefetch_cancel():
         return jsonify({'success': ok}), 200 if ok else 409
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
 
 
 # ── Queue worker ───────────────────────────────────────────────────────────────

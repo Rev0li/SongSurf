@@ -12,6 +12,7 @@ FONCTIONNALITÉ:
 from pathlib import Path
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -43,8 +44,6 @@ class MusicOrganizer:
                 'has_feat': bool
             }
         """
-        import re
-
         # Patterns to detect featuring
         feat_patterns = [
             r'\(feat\.?\s+([^)]+)\)',
@@ -52,8 +51,8 @@ class MusicOrganizer:
             r'\(featuring\s+([^)]+)\)',
             r'\[feat\.?\s+([^\]]+)\]',
             r'\[ft\.?\s+([^\]]+)\]',
-            r'feat\.?\s+([^-\(\[]+)',
-            r'ft\.?\s+([^-\(\[]+)',
+            r'feat\.?\s+([^-\(\[\)\]]+)',
+            r'ft\.?\s+([^-\(\[\)\]]+)',
         ]
 
         feat_artists = []
@@ -497,8 +496,6 @@ class MusicOrganizer:
 
             max_size = 1000
 
-            # AJOUTER AVANT max_size :
-            # Crop en carré 1:1
             width, height = img.size
             
             if width != height:

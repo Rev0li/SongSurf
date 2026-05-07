@@ -1,7 +1,19 @@
 # test_unitaire.md — SongSurf Test Plan
 
 Describes all tests to validate security, auth pipeline, and download functionality.
-No test framework is configured — these are manual tests unless a framework is added later.
+
+**Status (2026-05-07):** pytest suite added — `SongSurf/tests/` — 99 automated tests, 99 passing.
+Run: `cd SongSurf && python3 -m pytest`
+
+Automated coverage:
+- W-1 → W-9, W-10/11 (JWT validation, DEV_MODE, secret, claims, tamper)
+- S-1 → S-4 (Watcher-token auth, header injection, role normalization)
+- D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
+- ST-3, ST-4 (user isolation, path traversal)
+- Z-3 (ZIP without prepare)
+- A-1 (admin-only route)
+
+Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→5, P-1→5 (require Docker + yt-dlp network).
 
 ---
 
