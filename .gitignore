@@ -46,6 +46,7 @@ temp/
 # User-specific
 config.local.js
 settings.local.json
+think.md
 
 # Chrome Extension - Configuration privée (SECRETS)
 chrome-extension/config.js
