@@ -54,32 +54,52 @@ function updateBadge() {
 
 // ── Queue URL ─────────────────────────────────────────────────────────────────
 
-async function queueUrl(url) {
+async function apiPost(endpoint, body, timeoutMs = 8000) {
   await loadConfig();
-  if (!songSurfUrl) {
+  if (!songSurfUrl) return { _noConfig: true };
+  const r = await fetch(`${songSurfUrl}${endpoint}`, {
+    method:      'POST',
+    credentials: 'include',
+    headers:     { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body:        JSON.stringify(body),
+    signal:      AbortSignal.timeout(timeoutMs),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { _status: r.status, ...data };
+}
+
+async function previewUrl(url) {
+  await loadConfig();
+  if (!songSurfUrl)
     return { success: false, error: 'URL SongSurf non configurée. Ouvre les options.' };
-  }
-  if (serverStatus === 'offline') {
-    return { success: false, error: 'SongSurf est hors ligne.' };
-  }
   try {
-    const r = await fetch(`${songSurfUrl}/api/queue-direct`, {
-      method:      'POST',
-      credentials: 'include',
-      headers:     { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body:        JSON.stringify({ url }),
-      signal:      AbortSignal.timeout(8000),
-    });
-    const data = await r.json();
-    if (r.ok && data.success) {
-      setStatus('online');
-      return { success: true, label: data.label, type: data.type };
-    }
-    if (r.status === 401 || r.status === 503) {
+    const data = await apiPost('/api/preview', { url }, 30000); // yt-dlp can take ~10s
+    if (data._noConfig) return { success: false, error: 'URL SongSurf non configurée.' };
+    if (data._status === 401 || data._status === 503)
       return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
-    }
-    return { success: false, error: data.error || `Erreur ${r.status}` };
-  } catch (e) {
+    if (data.success) { setStatus('online'); return data; }
+    return { success: false, error: data.error || `Erreur ${data._status}` };
+  } catch {
+    setStatus('offline');
+    return { success: false, error: 'SongSurf injoignable.' };
+  }
+}
+
+async function queueUrl(url, meta = {}) {
+  await loadConfig();
+  if (!songSurfUrl)
+    return { success: false, error: 'URL SongSurf non configurée. Ouvre les options.' };
+  if (serverStatus === 'offline')
+    return { success: false, error: 'SongSurf est hors ligne.' };
+  try {
+    const body = { url, ...meta };
+    const data = await apiPost('/api/queue-direct', body, 10000);
+    if (data._noConfig) return { success: false, error: 'URL SongSurf non configurée.' };
+    if (data._status === 401 || data._status === 503)
+      return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+    if (data.success) { setStatus('online'); return { success: true, label: data.label, type: data.type }; }
+    return { success: false, error: data.error || `Erreur ${data._status}` };
+  } catch {
     setStatus('offline');
     return { success: false, error: 'SongSurf injoignable.' };
   }
@@ -88,9 +108,13 @@ async function queueUrl(url) {
 // ── Message handler (from content.js and popup) ───────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'PREVIEW_URL') {
+    previewUrl(msg.url).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'QUEUE_URL') {
-    queueUrl(msg.url).then(sendResponse);
-    return true; // async response
+    queueUrl(msg.url, msg.meta || {}).then(sendResponse);
+    return true;
   }
   if (msg.type === 'GET_STATUS') {
     loadConfig().then(() => ping()).then(() => {

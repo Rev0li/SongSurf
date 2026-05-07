@@ -1014,7 +1014,7 @@ def admin_prefetch_cancel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# ── Queue direct (extension Chrome) ────────────────────────────────────────────
+# ── Extension Chrome — preview + queue direct ──────────────────────────────────
 
 def _detect_url_mode(url: str) -> str:
     """Returns 'song', 'album', or 'playlist' from a YouTube Music URL."""
@@ -1031,63 +1031,115 @@ def _detect_url_mode(url: str) -> str:
     return 'song'
 
 
-def _queue_direct_async(url: str, url_mode: str, user: dict):
-    """Runs in a daemon thread: extract metadata then enqueue. Returns quickly to HTTP caller."""
+@app.route('/api/preview', methods=['POST'])
+@auth_required
+def preview_metadata():
+    """
+    Extension Chrome — extrait les métadonnées sans effet de bord (pas de prefetch).
+    Utilisé pour la mini-analyse avant confirmation.
+    """
     try:
+        data     = request.get_json(silent=True) or {}
+        url      = (data.get('url') or '').strip()
+        if not url:
+            return jsonify({'success': False, 'error': 'URL manquante'}), 400
+        if not _is_valid_youtube_url(url):
+            return jsonify({'success': False, 'error': 'URL invalide'}), 400
+
+        url_mode = _detect_url_mode(url)
+
         if url_mode == 'song':
             result = downloader.extract_metadata(url)
             if not result.get('success'):
-                logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
-                return
+                return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
             meta = result.get('metadata', {})
-            metadata = {
-                'artist': meta.get('artist', 'Unknown Artist'),
-                'album':  meta.get('album',  'Unknown Album'),
-                'title':  meta.get('title',  'Unknown Title'),
-                'year':   meta.get('year',   ''),
-            }
+            return jsonify({
+                'success':   True,
+                'type':      'song',
+                'title':     meta.get('title', ''),
+                'artist':    meta.get('artist', ''),
+                'album':     meta.get('album', ''),
+                'year':      meta.get('year', ''),
+                'thumbnail': meta.get('thumbnail_url', ''),
+            })
+        else:
+            result = downloader.extract_playlist_metadata(url)
+            if not result.get('success'):
+                return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
+            return jsonify({
+                'success':     True,
+                'type':        url_mode,
+                'title':       result.get('title', ''),
+                'artist':      result.get('artist', ''),
+                'year':        result.get('year', ''),
+                'thumbnail':   result.get('thumbnail_url', ''),
+                'song_count':  result.get('total_songs', 0),
+            })
+    except Exception as e:
+        logger.error(f"❌ /api/preview: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | None = None):
+    """Daemon thread — extrait les métadonnées (sauf si override fourni) puis enqueue."""
+    try:
+        if url_mode == 'song':
+            if override and override.get('title'):
+                metadata = {
+                    'artist': override.get('artist', 'Unknown Artist') or 'Unknown Artist',
+                    'album':  override.get('album',  'Unknown Album')  or 'Unknown Album',
+                    'title':  override.get('title',  'Unknown Title')  or 'Unknown Title',
+                    'year':   override.get('year',   ''),
+                }
+            else:
+                result = downloader.extract_metadata(url)
+                if not result.get('success'):
+                    logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
+                    return
+                meta = result.get('metadata', {})
+                metadata = {
+                    'artist': (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
+                    'album':  (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
+                    'title':  meta.get('title', 'Unknown Title'),
+                    'year':   meta.get('year', ''),
+                }
             if not download_queue.full():
                 download_queue.put({
-                    'url':           url,
-                    'metadata':      metadata,
-                    'playlist_mode': False,
-                    'mp4_mode':      False,
-                    'user_sub':      user['sub'],
-                    'user_role':     user['role'],
-                    'added_at':      datetime.now().isoformat(),
+                    'url': url, 'metadata': metadata,
+                    'playlist_mode': False, 'mp4_mode': False,
+                    'user_sub': user['sub'], 'user_role': user['role'],
+                    'added_at': datetime.now().isoformat(),
                 })
                 _start_or_extend_batch(1)
                 logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
         else:
-            # album or playlist
             result = downloader.extract_playlist_metadata(url)
             if not result.get('success'):
                 logger.warning(f"⚠️ queue-direct playlist extract failed: {result.get('error')}")
                 return
-            songs        = result.get('songs', [])
+            songs         = result.get('songs', [])
             playlist_mode = (url_mode == 'playlist')
+            album_name    = (override or {}).get('album')  or result.get('title', 'Unknown Album')
+            artist_name   = (override or {}).get('artist') or result.get('artist', 'Unknown Artist')
             added = 0
             for song in songs:
                 if download_queue.full():
                     break
                 metadata = {
-                    'artist': result.get('artist') or song.get('artist') or 'Unknown Artist',
-                    'album':  result.get('title', 'Unknown Album'),
+                    'artist': artist_name,
+                    'album':  album_name,
                     'title':  song.get('title', 'Unknown Title'),
                     'year':   result.get('year', ''),
                 }
                 download_queue.put({
-                    'url':           song['url'],
-                    'metadata':      metadata,
-                    'playlist_mode': playlist_mode,
-                    'mp4_mode':      False,
-                    'user_sub':      user['sub'],
-                    'user_role':     user['role'],
-                    'added_at':      datetime.now().isoformat(),
+                    'url': song['url'], 'metadata': metadata,
+                    'playlist_mode': playlist_mode, 'mp4_mode': False,
+                    'user_sub': user['sub'], 'user_role': user['role'],
+                    'added_at': datetime.now().isoformat(),
                 })
                 added += 1
             _start_or_extend_batch(added)
-            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {result.get('title')}")
+            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
     except Exception as e:
         logger.error(f"❌ queue-direct async: {e}")
 
@@ -1096,8 +1148,8 @@ def _queue_direct_async(url: str, url_mode: str, user: dict):
 @auth_required
 def queue_direct():
     """
-    Extension Chrome endpoint — reçoit une URL, détecte le type, extrait les
-    métadonnées en arrière-plan et enqueue le téléchargement. Retour immédiat.
+    Extension Chrome — reçoit URL + métadonnées optionnelles (post-correction),
+    enqueue immédiatement. Extraction yt-dlp en background si métadonnées absentes.
     """
     try:
         user = _get_current_user()
@@ -1112,19 +1164,20 @@ def queue_direct():
             return jsonify({'success': False, 'error': 'Queue pleine'}), 429
 
         url_mode = _detect_url_mode(url)
+        override = {
+            'artist': (data.get('artist') or '').strip(),
+            'album':  (data.get('album')  or '').strip(),
+            'title':  (data.get('title')  or '').strip(),
+            'year':   (data.get('year')   or '').strip(),
+        }
         threading.Thread(
             target=_queue_direct_async,
-            args=(url, url_mode, user),
+            args=(url, url_mode, user, override),
             daemon=True,
         ).start()
 
         labels = {'song': 'chanson', 'album': 'album', 'playlist': 'playlist'}
-        return jsonify({
-            'success':  True,
-            'type':     url_mode,
-            'label':    labels.get(url_mode, url_mode),
-            'queued':   True,
-        })
+        return jsonify({'success': True, 'type': url_mode, 'label': labels.get(url_mode, url_mode)})
     except Exception as e:
         logger.error(f"❌ /api/queue-direct: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
