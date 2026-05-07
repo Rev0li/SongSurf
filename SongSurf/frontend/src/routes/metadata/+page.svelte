@@ -523,7 +523,7 @@
 				<!-- Artist header: photo + name + upload -->
 				<div class="artist-panel">
 					<div class="artist-pic-zone">
-						{#key artistPicTs}
+						{#key `${selectedArtist?.path}:${artistPicTs}`}
 							<img
 								class="artist-pic"
 								src={artistPicUrl}
@@ -603,7 +603,7 @@
 				<!-- Album header: cover + info -->
 				<div class="album-header">
 					<div class="album-cover-zone">
-						{#key albumCoverTs}
+						{#key `${selectedAlbum?.path}:${albumCoverTs}`}
 							<img
 								class="album-cover-img"
 								src={selectedAlbumCoverUrl}
