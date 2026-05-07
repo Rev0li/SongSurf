@@ -113,6 +113,13 @@ export const api = {
 		return fetch('/api/library/song-cover/upload', { method: 'POST', credentials: 'same-origin', body: form })
 			.then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`); return d; });
 	},
+	uploadAlbumCover(folderPath, file) {
+		const form = new FormData();
+		form.append('folder_path', folderPath);
+		form.append('image', file);
+		return fetch('/api/library/album-cover/upload', { method: 'POST', credentials: 'same-origin', body: form })
+			.then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`); return d; });
+	},
 	uploadArtistCover(folderPath, file) {
 		const form = new FormData();
 		form.append('folder_path', folderPath);

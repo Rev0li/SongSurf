@@ -12,21 +12,22 @@
 	// ── Scan (inline warnings) ────────────────────────────────────────────────────
 	let scanning = false;
 	let scanDone = false;
-	let songIssueMap   = new Map(); // song path  → issue[]   (excludes no_artist_picture)
-	let albumHasIssue  = new Map(); // album path → true       (excludes no_artist_picture)
-	let artistHasIssue = new Map(); // artist path → true      (all issues including no_artist_picture)
+	let songIssueMap   = new Map();
+	let albumHasIssue  = new Map();
+	let artistHasIssue = new Map();
 
 	// ── Selection ─────────────────────────────────────────────────────────────────
-	// selectedType: null | 'artist' | 'song'
+	// selectedType: null | 'artist' | 'album' | 'song'
 	let selectedType   = null;
 	let selectedArtist = null; // { path, name }
+	let selectedAlbum  = null; // { path, name, songs[], artist: { path, name } }
 	let selectedPath   = '';   // song relative path
 
 	// ── Song panel state ──────────────────────────────────────────────────────────
 	let meta          = null;
 	let metaLoading   = false;
 	let metaError     = '';
-	let detailsOpen   = false; // audio + cover collapsible
+	let detailsOpen   = false;
 
 	// ── Editing ───────────────────────────────────────────────────────────────────
 	let editValues    = {};
@@ -35,9 +36,13 @@
 	let saveError     = '';
 
 	// ── Cover upload ──────────────────────────────────────────────────────────────
-	let uploadingCover = false;
-	let coverError     = '';
-	let coverTs        = Date.now(); // bumped after upload to bust cache
+	let uploadingCover      = false;
+	let coverError          = '';
+	let coverTs             = Date.now();
+
+	// ── Album panel state ─────────────────────────────────────────────────────────
+	let albumCoverTs        = Date.now();
+	let uploadingAlbumCover = false;
 
 	// ── Artist panel state ────────────────────────────────────────────────────────
 	let artistPicTs    = Date.now();
@@ -79,16 +84,31 @@
 	function selectArtist(artist) {
 		selectedType   = 'artist';
 		selectedArtist = artist;
+		selectedAlbum  = null;
 		selectedPath   = '';
 		meta           = null;
 		coverError     = '';
 		uploadingArtist = false;
 	}
 
-	async function selectSong(path) {
-		if (selectedPath === path) return;
-		selectedType = 'song';
-		selectedPath = path;
+	function selectAlbum(album, artist) {
+		selectedType   = 'album';
+		selectedAlbum  = { ...album, artist };
+		selectedArtist = null;
+		selectedPath   = '';
+		meta           = null;
+		metaError      = '';
+		dirty          = false;
+		detailsOpen    = false;
+		albumCoverTs   = Date.now();
+	}
+
+	// keepAlbumCtx: true when navigating from album panel (back button works)
+	async function selectSong(path, keepAlbumCtx = false) {
+		if (selectedPath === path && selectedType === 'song') return;
+		if (!keepAlbumCtx) selectedAlbum = null;
+		selectedType   = 'song';
+		selectedPath   = path;
 		selectedArtist = null;
 		meta = null; metaError = ''; metaLoading = true;
 		detailsOpen = false; dirty = false; saveError = ''; coverError = '';
@@ -102,6 +122,13 @@
 			}
 		} catch (e) { metaError = e.message ?? 'Erreur réseau'; }
 		finally { metaLoading = false; }
+	}
+
+	function backToAlbum() {
+		selectedType = 'album';
+		selectedPath = '';
+		meta = null;
+		dirty = false;
 	}
 
 	// ── Edit helpers ──────────────────────────────────────────────────────────────
@@ -131,7 +158,6 @@
 			await api.saveSongMeta(selectedPath, editValues);
 			addToast('Tags sauvegardés.', 'info');
 			dirty = false;
-			// Refresh read-only display fields (audio, covers, etc.)
 			const data = await api.songMeta(selectedPath);
 			if (data.success) { meta = data; initEdit(data); }
 		} catch (e) { saveError = e.message ?? 'Erreur'; }
@@ -145,7 +171,6 @@
 		try {
 			await api.uploadSongCover(selectedPath, file);
 			coverTs = Date.now();
-			// Refresh meta to update has_album_cover / has_embedded_cover
 			const data = await api.songMeta(selectedPath);
 			if (data.success) meta = data;
 			addToast('Pochette mise à jour.', 'info');
@@ -153,6 +178,19 @@
 		finally { uploadingCover = false; }
 	}
 
+	// ── Cover upload (album) ──────────────────────────────────────────────────────
+	async function uploadAlbumCover(file) {
+		if (!file || uploadingAlbumCover) return;
+		uploadingAlbumCover = true;
+		try {
+			await api.uploadAlbumCover(selectedAlbum.path, file);
+			albumCoverTs = Date.now();
+			addToast('Pochette album mise à jour.', 'info');
+		} catch (e) { addToast(e.message ?? 'Erreur upload', 'error'); }
+		finally { uploadingAlbumCover = false; }
+	}
+
+	// ── Cover upload (artist) ─────────────────────────────────────────────────────
 	async function uploadArtistPic(file) {
 		if (!file || uploadingArtist) return;
 		uploadingArtist = true;
@@ -170,7 +208,8 @@
 			const file = item.getAsFile();
 			if (!file?.type.startsWith('image/')) continue;
 			e.preventDefault();
-			if (selectedType === 'song') uploadSongCover(file);
+			if (selectedType === 'song')   uploadSongCover(file);
+			else if (selectedType === 'album')  uploadAlbumCover(file);
 			else if (selectedType === 'artist') uploadArtistPic(file);
 			break;
 		}
@@ -210,6 +249,9 @@
 	$: albumFolderPath = meta?.path ? meta.path.split('/').slice(0, -1).join('/') : '';
 	$: albumCoverUrl   = albumFolderPath
 		? `/api/library/folder-cover?folder_path=${encodeURIComponent(albumFolderPath)}&t=${coverTs}`
+		: '';
+	$: selectedAlbumCoverUrl = selectedAlbum
+		? `/api/library/folder-cover?folder_path=${encodeURIComponent(selectedAlbum.path)}&t=${albumCoverTs}`
 		: '';
 	$: artistPicUrl    = selectedArtist
 		? `/api/library/artist-picture?folder_path=${encodeURIComponent(selectedArtist.path)}&t=${artistPicTs}`
@@ -275,7 +317,7 @@
 			{:else}
 				{#each filteredArtists as artist (artist.path)}
 					<div class="tree-artist">
-						<!-- Artist row: caret expands, name selects artist panel -->
+						<!-- Artist row: caret expands, name label selects artist panel -->
 						<div class="tree-node artist-node {selectedType === 'artist' && selectedArtist?.path === artist.path ? 'artist-selected' : ''}">
 							<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(artist.path)}>
 								{expanded.has(artist.path) || q ? '▾' : '▸'}
@@ -293,15 +335,20 @@
 						{#if expanded.has(artist.path) || q}
 							{#each artist.albums as album (album.path)}
 								<div class="tree-album">
-									<button class="tree-node tree-album-node" on:click={() => toggleExpand(album.path)}>
-										<span class="tree-caret">{expanded.has(album.path) || q ? '▾' : '▸'}</span>
-										<span class="tree-icon">💿</span>
-										<span class="tree-label">{album.name}</span>
-										<span class="tree-count">{album.songs.length}</span>
-										{#if scanDone && albumHasIssue.has(album.path)}
-											<span class="row-warn">⚠️</span>
-										{/if}
-									</button>
+									<!-- Album row: caret expands songs, name label selects album panel -->
+									<div class="tree-node album-node {selectedType === 'album' && selectedAlbum?.path === album.path ? 'album-selected' : ''}">
+										<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(album.path)}>
+											{expanded.has(album.path) || q ? '▾' : '▸'}
+										</button>
+										<button class="album-label-btn" on:click={() => selectAlbum(album, artist)}>
+											<span class="tree-icon">💿</span>
+											<span class="tree-label">{album.name}</span>
+											<span class="tree-count">{album.songs.length}</span>
+											{#if scanDone && albumHasIssue.has(album.path)}
+												<span class="row-warn">⚠️</span>
+											{/if}
+										</button>
+									</div>
 									{#if expanded.has(album.path) || q}
 										{#each album.songs as song (song.path)}
 											<button
@@ -358,7 +405,7 @@
 		{#if selectedType === null}
 			<div class="meta-empty">
 				<span class="meta-empty-icon">🎵</span>
-				<p>Sélectionne un artiste ou un fichier dans l'arborescence.</p>
+				<p>Sélectionne un artiste, un album ou un fichier dans l'arborescence.</p>
 			</div>
 
 		<!-- ── Artist panel ── -->
@@ -397,6 +444,82 @@
 				</div>
 			</div>
 
+		<!-- ── Album panel ── -->
+		{:else if selectedType === 'album'}
+			<div class="meta-content">
+				<!-- Breadcrumb -->
+				<div class="meta-breadcrumb">
+					<button class="breadcrumb-link" on:click={() => selectArtist(selectedAlbum.artist)}>
+						🎤 {selectedAlbum.artist.name}
+					</button>
+					<span class="breadcrumb-sep">›</span>
+					<span>💿 {selectedAlbum.name}</span>
+				</div>
+
+				<!-- Album header: cover + info -->
+				<div class="album-header">
+					<div class="album-cover-zone">
+						{#key albumCoverTs}
+							<img
+								class="album-cover-img"
+								src={selectedAlbumCoverUrl}
+								alt=""
+								on:error={(e) => e.currentTarget.style.display='none'}
+							/>
+						{/key}
+						<div class="album-cover-placeholder">💿</div>
+						<label
+							class="album-cover-overlay"
+							for="album-cover-file"
+							title="Remplacer la pochette"
+							class:loading={uploadingAlbumCover}
+						>
+							{uploadingAlbumCover ? '⏳' : '📁'}
+						</label>
+						<input
+							type="file" accept="image/*" id="album-cover-file" class="hidden-file"
+							on:change={(e) => uploadAlbumCover(e.currentTarget.files?.[0])}
+						/>
+					</div>
+
+					<div class="album-info">
+						<div class="album-artist-chip">{selectedAlbum.artist.name}</div>
+						<div class="album-title">{selectedAlbum.name}</div>
+						<div class="album-track-count">
+							{selectedAlbum.songs.length} titre{selectedAlbum.songs.length > 1 ? 's' : ''}
+						</div>
+						{#if scanDone && albumHasIssue.has(selectedAlbum.path)}
+							<div class="album-issue-badge">⚠️ Problèmes de métadonnées détectés</div>
+						{/if}
+						<p class="cover-hint" style="margin-top:var(--s4)">
+							Pochette : glisse ou colle <kbd>Ctrl+V</kbd> pour remplacer
+						</p>
+					</div>
+				</div>
+
+				<!-- Tracklist -->
+				<div class="meta-sections">
+					<section class="meta-section">
+						<h3 class="section-title">🎵 Titres</h3>
+						<div class="tracklist">
+							{#each selectedAlbum.songs as song, i (song.path)}
+								<button
+									class="track-row {selectedPath === song.path ? 'track-selected' : ''}"
+									on:click={() => selectSong(song.path, true)}
+								>
+									<span class="track-num">{i + 1}</span>
+									<span class="track-name">{songDisplayName(song.name)}</span>
+									{#if scanDone && songIssueMap.has(song.path)}
+										<span class="song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
+									{/if}
+									<span class="track-chevron">›</span>
+								</button>
+							{/each}
+						</div>
+					</section>
+				</div>
+			</div>
+
 		<!-- ── Song panel ── -->
 		{:else if selectedType === 'song'}
 			{#if metaLoading}
@@ -405,6 +528,14 @@
 				<div class="meta-empty"><span class="meta-empty-icon">❌</span><p>{metaError}</p></div>
 			{:else if meta}
 				<div class="meta-content">
+					<!-- Back to album or breadcrumb -->
+					{#if selectedAlbum}
+						<div class="song-back-bar">
+							<button class="back-btn" on:click={backToAlbum}>
+								‹ {selectedAlbum.name}
+							</button>
+						</div>
+					{/if}
 					<div class="meta-breadcrumb">{meta.path}</div>
 
 					<div class="meta-sections">
@@ -613,12 +744,18 @@
 	.tree-artist { margin-bottom: 2px; }
 	.tree-album  { margin-left: 12px; }
 
-	/* Artist row: caret + label as sibling flex children */
+	/* Artist row */
 	.artist-node {
 		display: flex; align-items: center;
 		border-radius: 0;
 	}
 	.artist-node.artist-selected { background: rgba(10,132,255,.08); }
+
+	/* Album row (same split pattern as artist) */
+	.album-node {
+		display: flex; align-items: center;
+	}
+	.album-node.album-selected { background: rgba(10,132,255,.08); }
 
 	.caret-btn {
 		flex-shrink: 0;
@@ -630,7 +767,7 @@
 	}
 	.caret-btn:hover { color: var(--text); }
 
-	.artist-label-btn {
+	.artist-label-btn, .album-label-btn {
 		flex: 1; min-width: 0;
 		display: flex; align-items: center; gap: 5px;
 		background: none; border: none;
@@ -639,7 +776,8 @@
 		padding: 5px var(--s3) 5px 0;
 		transition: background .1s, color .1s;
 	}
-	.artist-label-btn:hover { color: var(--text); background: rgba(255,255,255,.04); }
+	.album-label-btn { font-size: 12px; }
+	.artist-label-btn:hover, .album-label-btn:hover { color: var(--text); background: rgba(255,255,255,.04); }
 
 	.tree-node {
 		display: flex; align-items: center; gap: 5px;
@@ -650,7 +788,6 @@
 		transition: background .1s, color .1s;
 	}
 	.tree-node:hover { background: rgba(255,255,255,.05); color: var(--text); }
-	.tree-album-node { font-size: 12px; }
 
 	.tree-caret { font-size: 10px; color: var(--text-3); flex-shrink: 0; width: 10px; }
 	.tree-icon  { font-size: 13px; flex-shrink: 0; }
@@ -687,7 +824,17 @@
 		font-size: 12px; color: var(--text-3);
 		font-family: 'SF Mono','Menlo',monospace;
 		margin-bottom: var(--s5); word-break: break-all;
+		display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 	}
+	.breadcrumb-link {
+		background: none; border: none; padding: 0;
+		color: var(--blue); font-size: 12px; cursor: pointer;
+		font-family: 'SF Mono','Menlo',monospace;
+		text-decoration: underline; text-underline-offset: 2px;
+	}
+	.breadcrumb-link:hover { opacity: .8; }
+	.breadcrumb-sep { color: var(--text-3); }
+
 	.meta-sections { display: flex; flex-direction: column; gap: var(--s4); }
 
 	/* ── Artist panel ─────────────────────────────────────────── */
@@ -710,6 +857,93 @@
 	.artist-info { flex: 1; }
 	.artist-folder-label { font-size: 11px; font-weight: 700; color: var(--text-3); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 4px; }
 	.artist-name { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: var(--s4); }
+
+	/* ── Album panel ──────────────────────────────────────────── */
+	.album-header {
+		display: flex; gap: var(--s6); align-items: flex-start;
+		padding: var(--s4) 0 var(--s6);
+	}
+	.album-cover-zone {
+		position: relative; width: 160px; height: 160px; flex-shrink: 0;
+		border-radius: var(--r-md); overflow: hidden;
+		background: var(--bg-3); border: 1px solid var(--sep);
+		display: flex; align-items: center; justify-content: center;
+		cursor: pointer;
+	}
+	.album-cover-img {
+		position: absolute; inset: 0;
+		width: 100%; height: 100%; object-fit: cover;
+	}
+	.album-cover-placeholder { font-size: 52px; color: var(--text-3); z-index: 0; }
+	.album-cover-overlay {
+		position: absolute; inset: 0;
+		display: flex; align-items: center; justify-content: center;
+		background: rgba(0,0,0,.45);
+		font-size: 20px; cursor: pointer;
+		opacity: 0; transition: opacity .15s;
+		z-index: 2;
+	}
+	.album-cover-zone:hover .album-cover-overlay { opacity: 1; }
+
+	.album-info { flex: 1; min-width: 0; padding-top: var(--s2); }
+	.album-artist-chip {
+		display: inline-block;
+		font-size: 11px; font-weight: 700; color: var(--text-3);
+		letter-spacing: .05em; text-transform: uppercase;
+		margin-bottom: var(--s2);
+	}
+	.album-title {
+		font-size: 22px; font-weight: 700; color: var(--text);
+		margin-bottom: var(--s2);
+		word-break: break-word;
+	}
+	.album-track-count {
+		font-size: 13px; color: var(--text-3);
+		margin-bottom: var(--s2);
+	}
+	.album-issue-badge {
+		display: inline-block;
+		font-size: 12px; color: var(--orange);
+		background: rgba(255,159,10,.1);
+		border: 1px solid rgba(255,159,10,.25);
+		border-radius: var(--r-sm);
+		padding: 3px 10px;
+		margin-bottom: var(--s2);
+	}
+
+	/* ── Tracklist ────────────────────────────────────────────── */
+	.tracklist { display: flex; flex-direction: column; }
+	.track-row {
+		display: flex; align-items: center; gap: var(--s3);
+		width: 100%; padding: 9px var(--s4);
+		background: none; border: none;
+		border-bottom: 1px solid rgba(84,84,88,.2);
+		color: var(--text-2); font-size: 13px;
+		text-align: left; cursor: pointer;
+		transition: background .1s, color .1s;
+	}
+	.track-row:last-child { border-bottom: none; }
+	.track-row:hover { background: rgba(255,255,255,.05); color: var(--text); }
+	.track-row.track-selected { background: rgba(10,132,255,.12); color: var(--blue); }
+	.track-num {
+		flex-shrink: 0; width: 24px;
+		font-size: 12px; color: var(--text-3);
+		font-family: 'SF Mono','Menlo',monospace;
+		text-align: right;
+	}
+	.track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.track-chevron { flex-shrink: 0; font-size: 14px; color: var(--text-3); }
+
+	/* ── Back button (song → album) ───────────────────────────── */
+	.song-back-bar {
+		margin-bottom: var(--s3);
+	}
+	.back-btn {
+		background: none; border: none; padding: 0;
+		color: var(--blue); font-size: 13px; font-weight: 500;
+		cursor: pointer;
+	}
+	.back-btn:hover { text-decoration: underline; }
 
 	/* ── Sections ─────────────────────────────────────────────── */
 	.meta-section {
@@ -810,6 +1044,11 @@
 		border-top: 1px solid rgba(84,84,88,.2);
 	}
 	.cover-hint { font-size: 12px; color: var(--text-3); margin: 0 0 var(--s2); }
+	.cover-hint kbd {
+		font-size: 11px; background: var(--bg-4);
+		border: 1px solid var(--sep); border-radius: 3px;
+		padding: 1px 5px; font-family: inherit;
+	}
 	.cover-drop-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 	.hidden-file { display: none; }
 	.cover-preview-area {

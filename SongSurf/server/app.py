@@ -932,6 +932,35 @@ def upload_artist_cover():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/library/album-cover/upload', methods=['POST'])
+@auth_required
+def upload_album_cover():
+    """Saves uploaded image as cover.jpg in the album folder (no MP3 embedding)."""
+    try:
+        user        = _get_current_user()
+        music_dir   = _user_music_dir(user['sub'])
+        folder_path = (request.form.get('folder_path') or '').strip()
+        file        = request.files.get('image')
+        if not folder_path or not file:
+            return jsonify({'success': False, 'error': 'folder_path et image requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        if not str(folder).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        mime = file.content_type or 'image/jpeg'
+        ext  = '.jpg' if 'jpeg' in mime or 'jpg' in mime else '.png'
+        with open(folder / f'cover{ext}', 'wb') as f:
+            f.write(file.read())
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/library/album-cover/upload: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ── Extract / Download ─────────────────────────────────────────────────────────
 
 @app.route('/api/extract', methods=['POST'])
