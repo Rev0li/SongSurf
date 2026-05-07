@@ -1014,6 +1014,122 @@ def admin_prefetch_cancel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ── Queue direct (extension Chrome) ────────────────────────────────────────────
+
+def _detect_url_mode(url: str) -> str:
+    """Returns 'song', 'album', or 'playlist' from a YouTube Music URL."""
+    from urllib.parse import urlparse, parse_qs
+    try:
+        parsed = urlparse(url)
+        if parsed.path == '/watch' and parse_qs(parsed.query).get('v'):
+            return 'song'
+        if parsed.path == '/playlist':
+            list_id = (parse_qs(parsed.query).get('list') or [''])[0]
+            return 'album' if list_id.startswith('OLAK5uy_') else 'playlist'
+    except Exception:
+        pass
+    return 'song'
+
+
+def _queue_direct_async(url: str, url_mode: str, user: dict):
+    """Runs in a daemon thread: extract metadata then enqueue. Returns quickly to HTTP caller."""
+    try:
+        if url_mode == 'song':
+            result = downloader.extract_metadata(url)
+            if not result.get('success'):
+                logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
+                return
+            meta = result.get('metadata', {})
+            metadata = {
+                'artist': meta.get('artist', 'Unknown Artist'),
+                'album':  meta.get('album',  'Unknown Album'),
+                'title':  meta.get('title',  'Unknown Title'),
+                'year':   meta.get('year',   ''),
+            }
+            if not download_queue.full():
+                download_queue.put({
+                    'url':           url,
+                    'metadata':      metadata,
+                    'playlist_mode': False,
+                    'mp4_mode':      False,
+                    'user_sub':      user['sub'],
+                    'user_role':     user['role'],
+                    'added_at':      datetime.now().isoformat(),
+                })
+                _start_or_extend_batch(1)
+                logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
+        else:
+            # album or playlist
+            result = downloader.extract_playlist_metadata(url)
+            if not result.get('success'):
+                logger.warning(f"⚠️ queue-direct playlist extract failed: {result.get('error')}")
+                return
+            songs        = result.get('songs', [])
+            playlist_mode = (url_mode == 'playlist')
+            added = 0
+            for song in songs:
+                if download_queue.full():
+                    break
+                metadata = {
+                    'artist': result.get('artist') or song.get('artist') or 'Unknown Artist',
+                    'album':  result.get('title', 'Unknown Album'),
+                    'title':  song.get('title', 'Unknown Title'),
+                    'year':   result.get('year', ''),
+                }
+                download_queue.put({
+                    'url':           song['url'],
+                    'metadata':      metadata,
+                    'playlist_mode': playlist_mode,
+                    'mp4_mode':      False,
+                    'user_sub':      user['sub'],
+                    'user_role':     user['role'],
+                    'added_at':      datetime.now().isoformat(),
+                })
+                added += 1
+            _start_or_extend_batch(added)
+            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {result.get('title')}")
+    except Exception as e:
+        logger.error(f"❌ queue-direct async: {e}")
+
+
+@app.route('/api/queue-direct', methods=['POST'])
+@auth_required
+def queue_direct():
+    """
+    Extension Chrome endpoint — reçoit une URL, détecte le type, extrait les
+    métadonnées en arrière-plan et enqueue le téléchargement. Retour immédiat.
+    """
+    try:
+        user = _get_current_user()
+        data = request.get_json(silent=True) or {}
+        url  = (data.get('url') or '').strip()
+
+        if not url:
+            return jsonify({'success': False, 'error': 'URL manquante'}), 400
+        if not _is_valid_youtube_url(url):
+            return jsonify({'success': False, 'error': 'URL invalide'}), 400
+        if download_queue.full():
+            return jsonify({'success': False, 'error': 'Queue pleine'}), 429
+
+        url_mode = _detect_url_mode(url)
+        threading.Thread(
+            target=_queue_direct_async,
+            args=(url, url_mode, user),
+            daemon=True,
+        ).start()
+
+        labels = {'song': 'chanson', 'album': 'album', 'playlist': 'playlist'}
+        return jsonify({
+            'success':  True,
+            'type':     url_mode,
+            'label':    labels.get(url_mode, url_mode),
+            'queued':   True,
+        })
+    except Exception as e:
+        logger.error(f"❌ /api/queue-direct: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ── Queue worker ───────────────────────────────────────────────────────────────
 
 def queue_worker():

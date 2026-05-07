@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>SongSurf Clip — Options</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #111827;
+      color: #f3f4f6;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 48px 16px;
+    }
+
+    .card {
+      background: #1f2937;
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 480px;
+      border: 1px solid rgba(255,255,255,.08);
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    h1 span { color: #60a5fa; }
+
+    .subtitle {
+      color: #9ca3af;
+      font-size: 13px;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #d1d5db;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    input[type="url"], input[type="text"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: #111827;
+      border: 1.5px solid rgba(255,255,255,.12);
+      border-radius: 8px;
+      color: #f3f4f6;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: #2563eb; }
+
+    .hint {
+      color: #6b7280;
+      font-size: 11px;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost {
+      background: rgba(255,255,255,.06);
+      color: #d1d5db;
+      border: 1px solid rgba(255,255,255,.1);
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,.1); }
+
+    #status-msg {
+      margin-top: 16px;
+      font-size: 13px;
+      min-height: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #status-msg.success { color: #34d399; }
+    #status-msg.error   { color: #f87171; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,.08);
+      margin: 28px 0;
+    }
+
+    .ping-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .ping-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #374151;
+      flex-shrink: 0;
+    }
+    .ping-dot.online  { background: #34d399; }
+    .ping-dot.offline { background: #f87171; }
+    #ping-label { color: #9ca3af; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Song<span>Surf</span> Clip</h1>
+    <p class="subtitle">Configure l'URL de ton instance SongSurf pour que l'extension puisse y envoyer les URLs.</p>
+
+    <label for="url-input">URL SongSurf</label>
+    <input
+      type="url"
+      id="url-input"
+      placeholder="https://ton-songsurf.ts.net"
+      autocomplete="off"
+      spellcheck="false"
+    >
+    <p class="hint">
+      Sans slash final. Exemple : <code>https://songsurf.example.ts.net</code>
+      ou <code>http://192.168.1.10:8080</code>
+    </p>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-save">Enregistrer</button>
+      <button class="btn btn-ghost"   id="btn-test">Tester la connexion</button>
+    </div>
+
+    <div id="status-msg"></div>
+
+    <hr class="divider">
+
+    <div class="ping-row">
+      <div class="ping-dot" id="ping-dot"></div>
+      <span id="ping-label">Statut inconnu</span>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

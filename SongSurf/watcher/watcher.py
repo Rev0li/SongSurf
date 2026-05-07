@@ -38,6 +38,13 @@ from urllib.parse import urlparse
 app = Flask(__name__, template_folder='templates', static_folder=None)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
+# Allowed CORS origins: Chrome extension + optional custom origin
+_CORS_ORIGINS = set(filter(None, [
+    # Chrome extensions send Origin: chrome-extension://<id>
+    # We allow all extension origins; the real auth guard is the JWT cookie.
+    'null',  # some browsers send "null" for extensions
+] + [o.strip() for o in os.getenv('CORS_EXTRA_ORIGINS', '').split(',') if o.strip()]))
+
 WATCHER_SECRET         = os.getenv('WATCHER_SECRET', secrets.token_hex(32))
 DEV_MODE               = os.getenv('DEV_MODE', 'false').lower() == 'true'
 AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
@@ -364,6 +371,41 @@ def watcher_keepalive():
 @app.route('/ping')
 def ping():
     return 'pong', 200
+
+
+# ── CORS for Chrome extension ─────────────────────────────────────────────────
+
+def _cors_headers(origin: str) -> dict:
+    """Returns CORS headers when the request comes from a Chrome extension."""
+    if not origin:
+        return {}
+    is_extension = origin.startswith('chrome-extension://') or origin == 'null'
+    if not is_extension and origin not in _CORS_ORIGINS:
+        return {}
+    return {
+        'Access-Control-Allow-Origin':      origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods':     'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers':     'Content-Type, Accept',
+    }
+
+
+@app.route('/api/queue-direct', methods=['OPTIONS'])
+@app.route('/ping', methods=['OPTIONS'])
+def cors_preflight():
+    origin = request.headers.get('Origin', '')
+    hdrs = _cors_headers(origin)
+    if not hdrs:
+        return Response(status=403)
+    return Response(status=204, headers=hdrs)
+
+
+@app.after_request
+def add_cors(response):
+    origin = request.headers.get('Origin', '')
+    for k, v in _cors_headers(origin).items():
+        response.headers[k] = v
+    return response
 
 
 # ── Catch-all proxy ───────────────────────────────────────────────────────────
