@@ -45,8 +45,9 @@
 	let uploadingAlbumCover = false;
 
 	// ── Artist panel state ────────────────────────────────────────────────────────
-	let artistPicTs    = Date.now();
-	let artistTs       = Date.now(); // cache buster for album grid covers
+	let artistPicTs     = Date.now();
+	let artistTs        = Date.now(); // cache buster for album grid covers
+	let artistPicMissing = false;     // true when artist picture fails to load
 	let uploadingArtist = false;
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────────
@@ -163,8 +164,9 @@
 		selectedPath   = '';
 		meta           = null;
 		coverError     = '';
-		uploadingArtist = false;
-		artistTs       = Date.now();
+		uploadingArtist  = false;
+		artistTs         = Date.now();
+		artistPicMissing = false;
 	}
 
 	function selectAlbum(album, artist) {
@@ -526,7 +528,8 @@
 								class="artist-pic"
 								src={artistPicUrl}
 								alt=""
-								on:error={(e) => e.currentTarget.style.display='none'}
+								on:load={() => { artistPicMissing = false; }}
+								on:error={(e) => { e.currentTarget.style.display='none'; artistPicMissing = true; }}
 							/>
 						{/key}
 						<div class="artist-pic-placeholder">🎤</div>
@@ -535,6 +538,9 @@
 					<div class="artist-info">
 						<div class="artist-folder-label">Dossier artiste</div>
 						<div class="artist-name">{selectedArtist.name}</div>
+						{#if artistPicMissing}
+							<div class="artist-pic-warn">⚠️ Photo artiste manquante — Jellyfin ne pourra pas afficher l'image de l'artiste</div>
+						{/if}
 						<div class="artist-album-count-label">
 							{artistAlbums.length} album{artistAlbums.length > 1 ? 's' : ''} ·
 							{artistAlbums.reduce((n, al) => n + al.songs.length, 0)} titres
@@ -806,16 +812,6 @@
 												{/if}
 											</span>
 										</div>
-										<div class="meta-row {meta.artist_picture_files?.length === 0 ? 'row-warn' : ''}">
-											<span class="meta-key">Photo artiste</span>
-											<span class="meta-val">
-												{#if meta.artist_picture_files?.length > 0}
-													<span class="tag-present">✅ {meta.artist_picture_files.join(', ')}</span>
-												{:else}
-													<span class="tag-absent">⚠️ Aucune — clique sur l'artiste dans la liste pour en ajouter une</span>
-												{/if}
-											</span>
-										</div>
 									</div>
 
 									<!-- Preview -->
@@ -1029,6 +1025,15 @@
 	.artist-info { flex: 1; }
 	.artist-folder-label { font-size: 11px; font-weight: 700; color: var(--text-3); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 4px; }
 	.artist-name { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: var(--s2); }
+	.artist-pic-warn {
+		font-size: 12px; color: var(--orange);
+		background: rgba(255,159,10,.08);
+		border: 1px solid rgba(255,159,10,.2);
+		border-radius: var(--r-sm);
+		padding: 5px 10px;
+		margin-bottom: var(--s3);
+		line-height: 1.4;
+	}
 	.artist-album-count-label { font-size: 13px; color: var(--text-3); margin-bottom: var(--s4); }
 
 	/* ── Artist album grid ────────────────────────────────────── */
