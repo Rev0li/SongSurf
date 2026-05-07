@@ -70,9 +70,18 @@
   // ── Panel (mini analyze card) ─────────────────────────────────────────────────
 
   let panelEl = null;
+  let outsideClickListener = null;
+
+  function removeOutsideListener() {
+    if (outsideClickListener) {
+      document.removeEventListener('click', outsideClickListener);
+      outsideClickListener = null;
+    }
+  }
 
   function closePanel() {
     if (panelEl) { panelEl.remove(); panelEl = null; }
+    removeOutsideListener();
   }
 
   function showPanel(meta, url, urlType) {
@@ -211,15 +220,14 @@
 
     // Click outside closes panel
     setTimeout(() => {
-      document.addEventListener('click', onOutsideClick, { once: true });
+      outsideClickListener = (e) => {
+        if (panelEl && !panelEl.contains(e.target) && !floatBtn.contains(e.target)) {
+          closePanel();
+          updateButtonForUrl(location.href);
+        }
+      };
+      document.addEventListener('click', outsideClickListener);
     }, 50);
-  }
-
-  function onOutsideClick(e) {
-    if (panelEl && !panelEl.contains(e.target) && e.target !== floatBtn) {
-      closePanel();
-      updateButtonForUrl(location.href);
-    }
   }
 
   function esc(str) {
@@ -321,12 +329,10 @@
     }
     ensureButton();
     floatBtn.style.display = 'flex';
-    if (type !== lastType) {
-      lastType = type;
-      const m = TYPE_META[type];
-      setButtonLabel(`+ SongSurf · ${m.label}`, m.emoji);
-      floatBtn.title = `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
-    }
+    lastType = type;
+    const m = TYPE_META[type];
+    setButtonLabel(`+ SongSurf · ${m.label}`, m.emoji);
+    floatBtn.title = `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
   }
 
   // ── SPA watcher ───────────────────────────────────────────────────────────────

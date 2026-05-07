@@ -1411,7 +1411,10 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
         info  = audio.info
 
         _COVER_NAMES = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
-        _ARTIST_PIC_NAMES = ('artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp')
+        _ARTIST_PIC_NAMES = (
+            'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp',
+            'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
+        )
 
         tags = audio.tags or {}
 
@@ -1544,7 +1547,10 @@ def library_issues():
                 year   = _val('TDRC')
 
                 _COVER_NAMES      = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
-                _ARTIST_PIC_NAMES = ('artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp')
+                _ARTIST_PIC_NAMES = (
+                    'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp',
+                    'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
+                )
 
                 flags = []
                 if title.lower()  in _UNKNOWN or not title:  flags.append('title')

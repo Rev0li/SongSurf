@@ -183,7 +183,7 @@
 					<span class="queue-label" title={item.label}>
 						{item.label}
 						{#if item.fromExtension}
-							<span class="queue-source">clip</span>
+							<span class="queue-source">ext</span>
 						{/if}
 						{#if item.status === 'error'}
 							<span class="queue-error">{item.error}</span>
