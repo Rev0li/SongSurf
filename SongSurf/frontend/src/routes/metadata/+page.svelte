@@ -7,9 +7,12 @@
 	let filter = '';
 	let expanded = new Set();
 
-	let showIssues = false;
-	let issues = null;
-	let issuesLoading = false;
+	// Scan state — warning indicators overlaid on the normal tree
+	let scanning = false;
+	let scanDone = false;
+	let songIssueMap   = new Map(); // song path  → string[]  (issue types)
+	let albumHasIssue  = new Map(); // album path → true
+	let artistHasIssue = new Map(); // artist path → true
 
 	let selectedPath = '';
 	let meta = null;
@@ -28,22 +31,29 @@
 		}
 	});
 
-	async function loadIssues() {
-		if (issues) return;
-		issuesLoading = true;
+	async function runScan() {
+		if (scanning) return;
+		scanning = true;
 		try {
 			const data = await api.libraryIssues();
-			issues = data.issues ?? [];
+			const newSong   = new Map();
+			const newAlbum  = new Map();
+			const newArtist = new Map();
+			for (const item of (data.issues ?? [])) {
+				newSong.set(item.path, item.issues);
+				const parts = item.path.split('/');
+				if (parts.length >= 2) newAlbum.set(parts.slice(0, -1).join('/'), true);
+				if (parts.length >= 1) newArtist.set(parts[0], true);
+			}
+			songIssueMap   = newSong;
+			albumHasIssue  = newAlbum;
+			artistHasIssue = newArtist;
+			scanDone = true;
 		} catch {
-			issues = [];
+			// ignore
 		} finally {
-			issuesLoading = false;
+			scanning = false;
 		}
-	}
-
-	function toggleIssues() {
-		showIssues = !showIssues;
-		if (showIssues) loadIssues();
 	}
 
 	async function selectSong(path) {
@@ -89,28 +99,17 @@
 		songs: (pl.songs ?? []).filter((s) => !q || nrm([pl.name, s.name].join(' ')).includes(q)),
 	})).filter((pl) => pl.songs.length > 0);
 
-	$: filteredIssues = !issues ? [] : issues.filter((i) => !q || nrm(i.path).includes(q));
 	$: isEmpty = filteredArtists.length === 0 && filteredPlaylists.length === 0;
 
-	// Issue badge colours
-	const ISSUE_COLORS = {
-		title:             '#ff453a',
-		artist:            '#ff9f0a',
-		album:             '#ff9f0a',
-		year:              '#bf5af2',
-		unreadable:        '#ff453a',
-		no_album_cover:    '#0a84ff',
-		no_artist_picture: '#636366',
-	};
 	const ISSUE_LABELS = {
-		title:             'titre',
-		artist:            'artiste',
-		album:             'album',
-		year:              'année',
-		unreadable:        'illisible',
-		no_album_cover:    'pochette',
-		no_artist_picture: 'photo artiste',
+		title: 'titre', artist: 'artiste', album: 'album', year: 'année',
+		unreadable: 'illisible', no_album_cover: 'pochette manquante',
+		no_artist_picture: 'photo artiste manquante',
 	};
+
+	function issueTitle(issues) {
+		return issues.map((i) => ISSUE_LABELS[i] ?? i).join(', ');
+	}
 
 	function fmtBytes(n) {
 		if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
@@ -191,97 +190,88 @@
 		<div class="sidebar-top">
 			<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
 			<button
-				class="btn btn-sm {showIssues ? 'btn-orange' : 'btn-ghost'}"
-				on:click={toggleIssues}
-				title="Afficher les fichiers avec des problèmes de métadonnées"
+				class="btn btn-sm {scanning ? 'btn-ghost' : scanDone ? 'btn-orange' : 'btn-ghost'}"
+				on:click={runScan}
+				disabled={scanning}
+				title="Scanner toute la bibliothèque pour détecter les problèmes de métadonnées"
 			>
-				⚠️ Problèmes
+				{scanning ? '⏳ Scan…' : '🔍 Scan all'}
 			</button>
 		</div>
 
 		<div class="sidebar-scroll">
-			{#if showIssues}
-				{#if issuesLoading}
-					<div class="sidebar-empty">Scan en cours…</div>
-				{:else if filteredIssues.length === 0}
-					<div class="sidebar-empty">{issues?.length === 0 ? '✅ Aucun problème détecté.' : 'Aucun résultat.'}</div>
-				{:else}
-					<div class="issues-count">{filteredIssues.length} fichier{filteredIssues.length > 1 ? 's' : ''} avec des problèmes</div>
-					{#each filteredIssues as item (item.path)}
-						<button
-							class="song-row song-row--flat {selectedPath === item.path ? 'selected' : ''}"
-							on:click={() => selectSong(item.path)}
-						>
-							<span class="song-name">{songDisplayName(item.path.split('/').pop())}</span>
-							<span class="issue-badges">
-								{#each item.issues as issue}
-									<span class="issue-badge" style="background:{ISSUE_COLORS[issue] ?? '#718096'}18;color:{ISSUE_COLORS[issue] ?? '#718096'}">
-										{ISSUE_LABELS[issue] ?? issue}
-									</span>
-								{/each}
-							</span>
-						</button>
-					{/each}
-				{/if}
+			{#if tree === null}
+				<div class="sidebar-empty">Chargement…</div>
+			{:else if isEmpty}
+				<div class="sidebar-empty">{filter ? 'Aucun résultat.' : 'Bibliothèque vide.'}</div>
 			{:else}
-				{#if tree === null}
-					<div class="sidebar-empty">Chargement…</div>
-				{:else if isEmpty}
-					<div class="sidebar-empty">{filter ? 'Aucun résultat.' : 'Bibliothèque vide.'}</div>
-				{:else}
-					{#each filteredArtists as artist (artist.path)}
-						<div class="tree-artist">
-							<button class="tree-node" on:click={() => toggleExpand(artist.path)}>
-								<span class="tree-caret">{expanded.has(artist.path) || q ? '▾' : '▸'}</span>
-								<span class="tree-icon">🎤</span>
-								<span class="tree-label">{artist.name}</span>
-								<span class="tree-count">{artist.albums.reduce((n, al) => n + al.songs.length, 0)}</span>
-							</button>
-							{#if expanded.has(artist.path) || q}
-								{#each artist.albums as album (album.path)}
-									<div class="tree-album">
-										<button class="tree-node tree-album-node" on:click={() => toggleExpand(album.path)}>
-											<span class="tree-caret">{expanded.has(album.path) || q ? '▾' : '▸'}</span>
-											<span class="tree-icon">💿</span>
-											<span class="tree-label">{album.name}</span>
-											<span class="tree-count">{album.songs.length}</span>
-										</button>
-										{#if expanded.has(album.path) || q}
-											{#each album.songs as song (song.path)}
-												<button
-													class="song-row {selectedPath === song.path ? 'selected' : ''}"
-													on:click={() => selectSong(song.path)}
-												>
-													<span class="song-name">{songDisplayName(song.name)}</span>
-												</button>
-											{/each}
+				{#each filteredArtists as artist (artist.path)}
+					<div class="tree-artist">
+						<button class="tree-node" on:click={() => toggleExpand(artist.path)}>
+							<span class="tree-caret">{expanded.has(artist.path) || q ? '▾' : '▸'}</span>
+							<span class="tree-icon">🎤</span>
+							<span class="tree-label">{artist.name}</span>
+							<span class="tree-count">{artist.albums.reduce((n, al) => n + al.songs.length, 0)}</span>
+							{#if scanDone && artistHasIssue.has(artist.path)}
+								<span class="row-warn-icon" title="Cet artiste a des fichiers avec des problèmes">⚠️</span>
+							{/if}
+						</button>
+						{#if expanded.has(artist.path) || q}
+							{#each artist.albums as album (album.path)}
+								<div class="tree-album">
+									<button class="tree-node tree-album-node" on:click={() => toggleExpand(album.path)}>
+										<span class="tree-caret">{expanded.has(album.path) || q ? '▾' : '▸'}</span>
+										<span class="tree-icon">💿</span>
+										<span class="tree-label">{album.name}</span>
+										<span class="tree-count">{album.songs.length}</span>
+										{#if scanDone && albumHasIssue.has(album.path)}
+											<span class="row-warn-icon" title="Cet album a des fichiers avec des problèmes">⚠️</span>
 										{/if}
-									</div>
-								{/each}
-							{/if}
-						</div>
-					{/each}
-					{#each filteredPlaylists as pl (pl.path)}
-						<div class="tree-artist">
-							<button class="tree-node" on:click={() => toggleExpand(pl.path)}>
-								<span class="tree-caret">{expanded.has(pl.path) || q ? '▾' : '▸'}</span>
-								<span class="tree-icon">📁</span>
-								<span class="tree-label">{pl.name}</span>
-								<span class="tree-count">{pl.songs.length}</span>
-							</button>
-							{#if expanded.has(pl.path) || q}
-								{#each pl.songs as song (song.path)}
-									<button
-										class="song-row {selectedPath === song.path ? 'selected' : ''}"
-										on:click={() => selectSong(song.path)}
-									>
-										<span class="song-name">{songDisplayName(song.name)}</span>
 									</button>
-								{/each}
+									{#if expanded.has(album.path) || q}
+										{#each album.songs as song (song.path)}
+											<button
+												class="song-row {selectedPath === song.path ? 'selected' : ''}"
+												on:click={() => selectSong(song.path)}
+											>
+												<span class="song-name">{songDisplayName(song.name)}</span>
+												{#if scanDone && songIssueMap.has(song.path)}
+													<span class="row-warn-icon song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
+												{/if}
+											</button>
+										{/each}
+									{/if}
+								</div>
+							{/each}
+						{/if}
+					</div>
+				{/each}
+				{#each filteredPlaylists as pl (pl.path)}
+					<div class="tree-artist">
+						<button class="tree-node" on:click={() => toggleExpand(pl.path)}>
+							<span class="tree-caret">{expanded.has(pl.path) || q ? '▾' : '▸'}</span>
+							<span class="tree-icon">📁</span>
+							<span class="tree-label">{pl.name}</span>
+							<span class="tree-count">{pl.songs.length}</span>
+							{#if scanDone && albumHasIssue.has(pl.path)}
+								<span class="row-warn-icon" title="Ce dossier a des fichiers avec des problèmes">⚠️</span>
 							{/if}
-						</div>
-					{/each}
-				{/if}
+						</button>
+						{#if expanded.has(pl.path) || q}
+							{#each pl.songs as song (song.path)}
+								<button
+									class="song-row {selectedPath === song.path ? 'selected' : ''}"
+									on:click={() => selectSong(song.path)}
+								>
+									<span class="song-name">{songDisplayName(song.name)}</span>
+									{#if scanDone && songIssueMap.has(song.path)}
+										<span class="row-warn-icon song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
+									{/if}
+								</button>
+							{/each}
+						{/if}
+					</div>
+				{/each}
 			{/if}
 		</div>
 	</aside>
@@ -511,13 +501,21 @@
 		color: var(--text-3);
 		font-size: 13px;
 	}
-	.issues-count {
-		padding: var(--s2) var(--s3);
+	.row-warn-icon {
+		flex-shrink: 0;
+		font-size: 12px;
+		line-height: 1;
+		margin-left: auto;
+		opacity: .85;
+	}
+	/* song rows are flex-direction:column so the icon needs special placement */
+	.song-row { position: relative; }
+	.song-warn {
+		position: absolute;
+		right: var(--s3);
+		top: 50%;
+		transform: translateY(-50%);
 		font-size: 11px;
-		font-weight: 600;
-		color: var(--text-3);
-		letter-spacing: .04em;
-		text-transform: uppercase;
 	}
 
 	/* ── Tree ────────────────────────────────────────────────────── */
@@ -565,13 +563,6 @@
 	.song-row.selected { background: rgba(10, 132, 255, .15); color: var(--blue); }
 	.song-row--flat { padding-left: var(--s3); }
 	.song-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-	.issue-badges { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
-	.issue-badge {
-		font-size: 10px; font-weight: 600;
-		padding: 1px 5px; border-radius: 4px;
-		letter-spacing: .03em;
-	}
 
 	/* ── Main ────────────────────────────────────────────────────── */
 	.meta-main { flex: 1; overflow-y: auto; padding: var(--s6); background: var(--bg); }
