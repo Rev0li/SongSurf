@@ -70,18 +70,9 @@
   // ── Panel (mini analyze card) ─────────────────────────────────────────────────
 
   let panelEl = null;
-  let outsideClickListener = null;
-
-  function removeOutsideListener() {
-    if (outsideClickListener) {
-      document.removeEventListener('click', outsideClickListener);
-      outsideClickListener = null;
-    }
-  }
 
   function closePanel() {
     if (panelEl) { panelEl.remove(); panelEl = null; }
-    removeOutsideListener();
   }
 
   function showPanel(meta, url, urlType) {
@@ -218,16 +209,6 @@
       }
     });
 
-    // Click outside closes panel
-    setTimeout(() => {
-      outsideClickListener = (e) => {
-        if (panelEl && !panelEl.contains(e.target) && !floatBtn.contains(e.target)) {
-          closePanel();
-          updateButtonForUrl(location.href);
-        }
-      };
-      document.addEventListener('click', outsideClickListener);
-    }, 50);
   }
 
   function esc(str) {

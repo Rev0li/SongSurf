@@ -46,6 +46,7 @@
 
 	// ── Artist panel state ────────────────────────────────────────────────────────
 	let artistPicTs    = Date.now();
+	let artistTs       = Date.now(); // cache buster for album grid covers
 	let uploadingArtist = false;
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────────
@@ -163,6 +164,7 @@
 		meta           = null;
 		coverError     = '';
 		uploadingArtist = false;
+		artistTs       = Date.now();
 	}
 
 	function selectAlbum(album, artist) {
@@ -306,6 +308,11 @@
 	})).filter((pl) => pl.songs.length > 0);
 
 	$: isEmpty = filteredArtists.length === 0 && filteredPlaylists.length === 0;
+
+	// Full (unfiltered) album list for the selected artist panel
+	$: artistAlbums = selectedArtist
+		? (tree?.artists ?? []).find(a => a.path === selectedArtist.path)?.albums ?? []
+		: [];
 
 	function issueTitle(issues) {
 		const L = { title:'titre', artist:'artiste', album:'album', year:'année',
@@ -511,6 +518,7 @@
 		<!-- ── Artist panel ── -->
 		{:else if selectedType === 'artist'}
 			<div class="meta-content">
+				<!-- Artist header: photo + name + upload -->
 				<div class="artist-panel">
 					<div class="artist-pic-zone">
 						{#key artistPicTs}
@@ -527,9 +535,13 @@
 					<div class="artist-info">
 						<div class="artist-folder-label">Dossier artiste</div>
 						<div class="artist-name">{selectedArtist.name}</div>
+						<div class="artist-album-count-label">
+							{artistAlbums.length} album{artistAlbums.length > 1 ? 's' : ''} ·
+							{artistAlbums.reduce((n, al) => n + al.songs.length, 0)} titres
+						</div>
 
-						<div class="cover-upload-zone">
-							<p class="cover-hint">Photo artiste (artist.jpg) — glisse, colle (Ctrl+V) ou clique</p>
+						<div class="cover-upload-zone" style="border-top:none;padding-left:0;padding-right:0">
+							<p class="cover-hint">Photo artiste — glisse, colle (Ctrl+V) ou clique</p>
 							<div class="cover-drop-row">
 								<input
 									type="file" accept="image/*" id="artist-pic-file" class="hidden-file"
@@ -542,6 +554,32 @@
 						</div>
 					</div>
 				</div>
+
+				<!-- Album grid -->
+				{#if artistAlbums.length > 0}
+					<div class="meta-sections">
+						<section class="meta-section">
+							<h3 class="section-title">💿 Albums — {artistAlbums.length}</h3>
+							<div class="artist-album-grid">
+								{#each artistAlbums as album (album.path)}
+									<button class="artist-album-card" on:click={() => selectAlbum(album, selectedArtist)}>
+										<div class="artist-album-cover">
+											<img
+												src={`/api/library/folder-cover?folder_path=${encodeURIComponent(album.path)}&t=${artistTs}`}
+												alt=""
+												loading="lazy"
+												on:error={(e) => e.currentTarget.style.display='none'}
+											/>
+											<div class="artist-album-placeholder">💿</div>
+										</div>
+										<div class="artist-album-name" title={album.name}>{album.name}</div>
+										<div class="artist-album-count">{album.songs.length} titre{album.songs.length > 1 ? 's' : ''}</div>
+									</button>
+								{/each}
+							</div>
+						</section>
+					</div>
+				{/if}
 			</div>
 
 		<!-- ── Album panel ── -->
@@ -841,8 +879,18 @@
 	.sidebar-empty { padding: var(--s6) var(--s4); text-align: center; color: var(--text-3); font-size: 13px; }
 
 	/* ── Tree nodes ───────────────────────────────────────────── */
-	.tree-artist { margin-bottom: 2px; }
-	.tree-album  { margin-left: 12px; }
+	.tree-artist {
+		margin-bottom: 1px;
+		border-top: 1px solid rgba(84,84,88,.18);
+	}
+	.tree-artist:first-child { border-top: none; }
+
+	.tree-album {
+		margin-left: 0;
+		padding-left: 16px;
+		border-left: 2px solid rgba(84,84,88,.2);
+		margin-left: 14px;
+	}
 
 	/* Artist row */
 	.artist-node {
@@ -871,12 +919,16 @@
 		flex: 1; min-width: 0;
 		display: flex; align-items: center; gap: 5px;
 		background: none; border: none;
-		color: var(--text-2); font-size: 13px; font-weight: 500;
 		text-align: left; cursor: pointer;
 		padding: 5px var(--s3) 5px 0;
 		transition: background .1s, color .1s;
 	}
-	.album-label-btn { font-size: 12px; }
+	.artist-label-btn {
+		color: var(--text); font-size: 13px; font-weight: 600;
+	}
+	.album-label-btn {
+		color: var(--text-2); font-size: 12px; font-weight: 400;
+	}
 	.artist-label-btn:hover, .album-label-btn:hover { color: var(--text); background: rgba(255,255,255,.04); }
 
 	.lib-drag-handle {
@@ -976,7 +1028,43 @@
 	.artist-pic-placeholder { font-size: 48px; color: var(--text-3); }
 	.artist-info { flex: 1; }
 	.artist-folder-label { font-size: 11px; font-weight: 700; color: var(--text-3); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 4px; }
-	.artist-name { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: var(--s4); }
+	.artist-name { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: var(--s2); }
+	.artist-album-count-label { font-size: 13px; color: var(--text-3); margin-bottom: var(--s4); }
+
+	/* ── Artist album grid ────────────────────────────────────── */
+	.artist-album-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+		gap: var(--s3);
+		padding: var(--s4);
+	}
+	.artist-album-card {
+		display: flex; flex-direction: column; align-items: center;
+		gap: var(--s2); padding: var(--s3);
+		background: none; border: none;
+		border-radius: var(--r-md); cursor: pointer;
+		transition: background .15s;
+		text-align: center;
+	}
+	.artist-album-card:hover { background: rgba(255,255,255,.06); }
+	.artist-album-cover {
+		position: relative;
+		width: 100%; aspect-ratio: 1;
+		border-radius: var(--r-sm); overflow: hidden;
+		background: var(--bg-3); border: 1px solid var(--sep);
+		display: flex; align-items: center; justify-content: center;
+	}
+	.artist-album-cover img {
+		position: absolute; inset: 0;
+		width: 100%; height: 100%; object-fit: cover;
+	}
+	.artist-album-placeholder { font-size: 26px; color: var(--text-3); z-index: 0; }
+	.artist-album-name {
+		font-size: 12px; font-weight: 500; color: var(--text);
+		width: 100%;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.artist-album-count { font-size: 11px; color: var(--text-3); }
 
 	/* ── Album panel ──────────────────────────────────────────── */
 	.album-header {
