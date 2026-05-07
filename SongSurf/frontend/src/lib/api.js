@@ -97,4 +97,7 @@ export const api = {
 	libraryIssues() {
 		return request('/api/library/issues');
 	},
+	consumeExtensionQueue() {
+		return request('/api/extension-queue/consume', { method: 'POST' });
+	},
 };

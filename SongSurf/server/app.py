@@ -135,6 +135,10 @@ download_status = {
     'batch_percent': 0,
 }
 
+# Items submitted via Chrome extension — held here until the frontend UrlQueue picks them up
+extension_pending    = []
+extension_pending_lk = threading.Lock()
+
 
 def _start_or_extend_batch(added_count: int):
     if added_count <= 0:
@@ -457,6 +461,8 @@ def get_status():
             status['batch_percent'] = round(max(0.0, min(100.0, composed)), 1)
         else:
             status['batch_percent'] = float(current_pct)
+    with extension_pending_lk:
+        status['extension_pending_count'] = len(extension_pending)
     return jsonify(status)
 
 
@@ -1185,11 +1191,10 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
 @auth_required
 def queue_direct():
     """
-    Extension Chrome — reçoit URL + métadonnées optionnelles (post-correction),
-    enqueue immédiatement. Extraction yt-dlp en background si métadonnées absentes.
+    Extension Chrome — stocke l'URL dans extension_pending ; le frontend UrlQueue
+    la récupère via /api/extension-queue/consume et la traite dans sa file visuelle.
     """
     try:
-        user = _get_current_user()
         data = request.get_json(silent=True) or {}
         url  = (data.get('url') or '').strip()
 
@@ -1197,27 +1202,36 @@ def queue_direct():
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide'}), 400
-        if download_queue.full():
-            return jsonify({'success': False, 'error': 'Queue pleine'}), 429
 
         url_mode = _detect_url_mode(url)
-        override = {
-            'artist': (data.get('artist') or '').strip(),
-            'album':  (data.get('album')  or '').strip(),
-            'title':  (data.get('title')  or '').strip(),
-            'year':   (data.get('year')   or '').strip(),
+        item = {
+            'url':      url,
+            'url_mode': url_mode,
+            'artist':   (data.get('artist') or '').strip(),
+            'album':    (data.get('album')  or '').strip(),
+            'title':    (data.get('title')  or '').strip(),
+            'year':     (data.get('year')   or '').strip(),
         }
-        threading.Thread(
-            target=_queue_direct_async,
-            args=(url, url_mode, user, override),
-            daemon=True,
-        ).start()
+        with extension_pending_lk:
+            if len(extension_pending) >= MAX_QUEUE_SIZE:
+                return jsonify({'success': False, 'error': 'Queue pleine'}), 429
+            extension_pending.append(item)
 
         labels = {'song': 'chanson', 'album': 'album', 'playlist': 'playlist'}
         return jsonify({'success': True, 'type': url_mode, 'label': labels.get(url_mode, url_mode)})
     except Exception as e:
         logger.error(f"❌ /api/queue-direct: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/extension-queue/consume', methods=['POST'])
+@auth_required
+def extension_queue_consume():
+    """Frontend UrlQueue — récupère et vide les items en attente de l'extension."""
+    with extension_pending_lk:
+        items = list(extension_pending)
+        extension_pending.clear()
+    return jsonify({'success': True, 'items': items})
 
 
 # ── Metadata inspector ─────────────────────────────────────────────────────────
@@ -1239,27 +1253,40 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
         audio = MP3(file_path, ID3=ID3)
         info  = audio.info
 
-        result['audio'] = {
-            'duration_s':   round(info.length, 1),
-            'duration_fmt': f"{int(info.length)//60}:{int(info.length)%60:02d}",
-            'bitrate_kbps': getattr(info, 'bitrate', 0) // 1000,
-            'sample_rate':  getattr(info, 'sample_rate', 0),
-            'channels':     getattr(info, 'channels', 0),
-            'mode':         getattr(info, 'mode', ''),
-        }
+        _COVER_NAMES = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
+        _ARTIST_PIC_NAMES = ('artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp')
 
         tags = audio.tags or {}
-        # Map every present ID3 frame to a readable dict
+
+        # encoder_settings from TSSE lives in audio, not ID3
+        tsse = tags.get('TSSE')
+        encoder_settings = None
+        if tsse:
+            try:
+                encoder_settings = str(tsse.text[0]) if hasattr(tsse, 'text') else str(tsse)
+            except Exception:
+                pass
+
+        result['audio'] = {
+            'duration_s':      round(info.length, 1),
+            'duration_fmt':    f"{int(info.length)//60}:{int(info.length)%60:02d}",
+            'bitrate_kbps':    getattr(info, 'bitrate', 0) // 1000,
+            'sample_rate':     getattr(info, 'sample_rate', 0),
+            'channels':        getattr(info, 'channels', 0),
+            'mode':            str(getattr(info, 'mode', '')),
+            'encoder_settings': encoder_settings,
+        }
+
+        # Map ID3 text frames (TSSE excluded — handled above)
         _FRAME_LABELS = {
             'TIT2': 'title',          'TPE1': 'artist',
             'TPE2': 'album_artist',   'TPE3': 'conductor',
             'TALB': 'album',          'TDRC': 'year',
             'TRCK': 'track_number',   'TPOS': 'disc_number',
             'TCON': 'genre',          'TCOM': 'composer',
-            'TLYC': 'lyrics',         'TCOP': 'copyright',
-            'TPUB': 'publisher',      'TBPM': 'bpm',
-            'TKEY': 'key',            'TLAN': 'language',
-            'TENC': 'encoded_by',     'TSSE': 'encoder_settings',
+            'TCOP': 'copyright',      'TPUB': 'publisher',
+            'TBPM': 'bpm',            'TKEY': 'key',
+            'TLAN': 'language',       'TENC': 'encoded_by',
             'TSRC': 'isrc',           'TLEN': 'length_ms',
             'COMM': 'comment',        'USLT': 'lyrics_text',
         }
@@ -1273,10 +1300,9 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
                     pass
 
         # APIC (embedded cover)
-        has_cover = any(k.startswith('APIC') for k in tags.keys())
-        id3['has_embedded_cover'] = has_cover
+        id3['has_embedded_cover'] = any(k.startswith('APIC') for k in tags.keys())
 
-        # TXXX (custom tags)
+        # TXXX (custom tags — MusicBrainz IDs, ReplayGain, etc.)
         custom = {}
         for k, v in tags.items():
             if k.startswith('TXXX'):
@@ -1289,12 +1315,18 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
 
         result['id3'] = id3
 
-        # External cover file in same folder
-        covers = []
-        for name in ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp'):
-            if (file_path.parent / name).exists():
-                covers.append(name)
-        result['cover_files'] = covers
+        # External cover in album folder
+        covers = [n for n in _COVER_NAMES if (file_path.parent / n).exists()]
+        result['cover_files']    = covers
+        result['has_album_cover'] = len(covers) > 0
+
+        # Artist picture in artist root folder (only for Artist/Album/song.mp3 structure)
+        rel_parts = file_path.relative_to(music_dir).parts
+        artist_pics = []
+        if len(rel_parts) >= 3:
+            artist_folder = music_dir / rel_parts[0]
+            artist_pics   = [n for n in _ARTIST_PIC_NAMES if (artist_folder / n).exists()]
+        result['artist_picture_files'] = artist_pics
 
     except Exception as e:
         result['error'] = str(e)
@@ -1354,11 +1386,25 @@ def library_issues():
                 album  = _val('TALB')
                 year   = _val('TDRC')
 
+                _COVER_NAMES      = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
+                _ARTIST_PIC_NAMES = ('artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp')
+
                 flags = []
                 if title.lower()  in _UNKNOWN or not title:  flags.append('title')
                 if artist.lower() in _UNKNOWN or not artist:  flags.append('artist')
                 if album.lower()  in _UNKNOWN or not album:   flags.append('album')
                 if not year:                                   flags.append('year')
+
+                # Cover warnings (only once per album folder — deduplicated by set below)
+                album_folder = mp3.parent
+                if not any((album_folder / n).exists() for n in _COVER_NAMES):
+                    flags.append('no_album_cover')
+
+                rel_parts = mp3.relative_to(music_dir).parts
+                if len(rel_parts) == 3:
+                    artist_folder = music_dir / rel_parts[0]
+                    if not any((artist_folder / n).exists() for n in _ARTIST_PIC_NAMES):
+                        flags.append('no_artist_picture')
 
                 if flags:
                     issues.append({

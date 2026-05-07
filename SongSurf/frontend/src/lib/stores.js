@@ -22,6 +22,9 @@ export const workerBusy = derived(
 
 export const lastCompleted = writable(null); // { artist, title, timestamp } | null
 
+// Items submitted by the Chrome extension, waiting for UrlQueue to pick up
+export const extensionQueue = writable([]);
+
 // ── Toasts ────────────────────────────────────────────────────────────────────
 
 export const toasts = writable([]); // [{ id, message, type }]

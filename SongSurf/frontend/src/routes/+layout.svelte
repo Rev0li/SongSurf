@@ -6,7 +6,7 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, lastCompleted } from '$lib/stores.js';
+	import { user, downloadStatus, lastCompleted, extensionQueue } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
@@ -18,6 +18,17 @@
 		try {
 			const st = await api.getStatus();
 			downloadStatus.set(st);
+
+			if ((st.extension_pending_count ?? 0) > 0) {
+				try {
+					const res = await api.consumeExtensionQueue();
+					if (res.items?.length > 0) {
+						extensionQueue.update((q) => [...q, ...res.items]);
+					}
+				} catch {
+					// ignore transient errors
+				}
+			}
 
 			if (
 				st.last_completed?.timestamp &&
