@@ -36,6 +36,7 @@
 		{#if $user?.email}
 			<span class="badge" title={$user.sub}>{$user.email}</span>
 		{/if}
+		<a href="/metadata" class="btn btn-ghost btn-sm">Métadonnées</a>
 		<a href="/donation" class="btn btn-ghost btn-sm">Soutenir</a>
 	</nav>
 </header>

@@ -91,4 +91,10 @@ export const api = {
 	getFolderCoverUrl(folderPath) {
 		return `/api/library/folder-cover?folder_path=${encodeURIComponent(folderPath)}&t=${Date.now()}`;
 	},
+	songMeta(path) {
+		return request(`/api/library/song-meta?path=${encodeURIComponent(path)}`);
+	},
+	libraryIssues() {
+		return request('/api/library/issues');
+	},
 };
