@@ -48,6 +48,80 @@
 	let artistPicTs    = Date.now();
 	let uploadingArtist = false;
 
+	// ── Drag and drop ─────────────────────────────────────────────────────────────
+	let dndType      = ''; // 'song' | 'album'
+	let dndSongPath  = '';
+	let dndAlbumPath = '';
+
+	function dndStart(e, path, type) {
+		dndType = type;
+		if (type === 'song')  dndSongPath  = path;
+		else                  dndAlbumPath = path;
+		e.dataTransfer.effectAllowed = 'move';
+		e.dataTransfer.setData('text/plain', path);
+	}
+
+	function dndEnd() { dndType = ''; dndSongPath = ''; dndAlbumPath = ''; }
+
+	function dndOverAlbum(e) {
+		if (dndType !== 'song') return;
+		e.preventDefault();
+		e.currentTarget.classList.add('drop-target');
+	}
+
+	function dndOverArtist(e) {
+		if (dndType !== 'album') return;
+		e.preventDefault();
+		e.currentTarget.classList.add('drop-target');
+	}
+
+	function dndLeave(e) {
+		if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+		e.currentTarget.classList.remove('drop-target');
+	}
+
+	async function dndDropOnAlbum(e, albumPath) {
+		e.preventDefault();
+		e.currentTarget.classList.remove('drop-target');
+		if (dndType !== 'song') return;
+		const source = e.dataTransfer.getData('text/plain') || dndSongPath;
+		if (!source || !albumPath) return;
+		try {
+			await api.moveSong(source, albumPath);
+			addToast('Titre déplacé.', 'info');
+			if (source === selectedPath) { selectedType = null; selectedPath = ''; meta = null; }
+			await refreshTree();
+		} catch (err) { addToast(err.message || 'Déplacement impossible.', 'error'); }
+	}
+
+	async function dndDropOnArtist(e, artistPath) {
+		e.preventDefault();
+		e.currentTarget.classList.remove('drop-target');
+		if (dndType !== 'album') return;
+		const source = e.dataTransfer.getData('text/plain') || dndAlbumPath;
+		if (!source || !artistPath) return;
+		try {
+			await api.moveFolder(source, artistPath);
+			addToast('Album déplacé.', 'info');
+			if (selectedAlbum?.path === source) { selectedType = null; selectedAlbum = null; }
+			await refreshTree();
+		} catch (err) { addToast(err.message || 'Déplacement impossible.', 'error'); }
+	}
+
+	async function refreshTree() {
+		try {
+			const data = await api.getLibrary();
+			tree = data;
+			// Keep selectedAlbum songs in sync if the album still exists
+			if (selectedAlbum) {
+				const newArtist = (data.artists ?? []).find(a => a.path === selectedAlbum.artist.path);
+				const newAlbum  = newArtist?.albums?.find(a => a.path === selectedAlbum.path);
+				if (newAlbum) selectedAlbum = { ...selectedAlbum, songs: newAlbum.songs };
+				else { selectedType = null; selectedAlbum = null; }
+			}
+		} catch { /* ignore */ }
+	}
+
 	// ── Lifecycle ─────────────────────────────────────────────────────────────────
 	onMount(async () => {
 		try { tree = await api.getLibrary(); }
@@ -316,8 +390,12 @@
 				<div class="sidebar-empty">{filter ? 'Aucun résultat.' : 'Bibliothèque vide.'}</div>
 			{:else}
 				{#each filteredArtists as artist (artist.path)}
-					<div class="tree-artist">
-						<!-- Artist row: caret expands, name label selects artist panel -->
+					<!-- Artist = drop zone for albums -->
+					<div class="tree-artist"
+						on:dragover={dndOverArtist}
+						on:dragleave={dndLeave}
+						on:drop={(e) => dndDropOnArtist(e, artist.path)}
+					>
 						<div class="tree-node artist-node {selectedType === 'artist' && selectedArtist?.path === artist.path ? 'artist-selected' : ''}">
 							<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(artist.path)}>
 								{expanded.has(artist.path) || q ? '▾' : '▸'}
@@ -334,12 +412,23 @@
 
 						{#if expanded.has(artist.path) || q}
 							{#each artist.albums as album (album.path)}
-								<div class="tree-album">
-									<!-- Album row: caret expands songs, name label selects album panel -->
+								<!-- Album = drop zone for songs -->
+								<div class="tree-album"
+									on:dragover={dndOverAlbum}
+									on:dragleave={dndLeave}
+									on:drop={(e) => dndDropOnAlbum(e, album.path)}
+								>
 									<div class="tree-node album-node {selectedType === 'album' && selectedAlbum?.path === album.path ? 'album-selected' : ''}">
 										<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(album.path)}>
 											{expanded.has(album.path) || q ? '▾' : '▸'}
 										</button>
+										<span
+											class="lib-drag-handle"
+											draggable="true"
+											title="Glisser l'album vers un autre artiste"
+											on:dragstart|stopPropagation={(e) => dndStart(e, album.path, 'album')}
+											on:dragend|stopPropagation={dndEnd}
+										>⠿</span>
 										<button class="album-label-btn" on:click={() => selectAlbum(album, artist)}>
 											<span class="tree-icon">💿</span>
 											<span class="tree-label">{album.name}</span>
@@ -353,6 +442,9 @@
 										{#each album.songs as song (song.path)}
 											<button
 												class="song-row {selectedPath === song.path ? 'selected' : ''}"
+												draggable="true"
+												on:dragstart={(e) => dndStart(e, song.path, 'song')}
+												on:dragend={dndEnd}
 												on:click={() => selectSong(song.path)}
 											>
 												<span class="song-name">{songDisplayName(song.name)}</span>
@@ -369,7 +461,12 @@
 				{/each}
 
 				{#each filteredPlaylists as pl (pl.path)}
-					<div class="tree-artist">
+					<!-- Playlists = drop zone for songs -->
+					<div class="tree-artist"
+						on:dragover={dndOverAlbum}
+						on:dragleave={dndLeave}
+						on:drop={(e) => dndDropOnAlbum(e, pl.path)}
+					>
 						<button class="tree-node" on:click={() => toggleExpand(pl.path)}>
 							<span class="tree-caret">{expanded.has(pl.path) || q ? '▾' : '▸'}</span>
 							<span class="tree-icon">📁</span>
@@ -383,6 +480,9 @@
 							{#each pl.songs as song (song.path)}
 								<button
 									class="song-row {selectedPath === song.path ? 'selected' : ''}"
+									draggable="true"
+									on:dragstart={(e) => dndStart(e, song.path, 'song')}
+									on:dragend={dndEnd}
 									on:click={() => selectSong(song.path)}
 								>
 									<span class="song-name">{songDisplayName(song.name)}</span>
@@ -778,6 +878,26 @@
 	}
 	.album-label-btn { font-size: 12px; }
 	.artist-label-btn:hover, .album-label-btn:hover { color: var(--text); background: rgba(255,255,255,.04); }
+
+	.lib-drag-handle {
+		flex-shrink: 0;
+		cursor: grab;
+		color: var(--text-3);
+		font-size: 13px;
+		padding: 0 2px;
+		user-select: none;
+		line-height: 1;
+		opacity: 0;
+		transition: opacity .1s;
+	}
+	.album-node:hover .lib-drag-handle { opacity: 1; }
+	.lib-drag-handle:active { cursor: grabbing; }
+
+	:global(.drop-target) {
+		outline: 2px dashed var(--blue) !important;
+		outline-offset: -2px;
+		background: rgba(10, 132, 255, 0.07) !important;
+	}
 
 	.tree-node {
 		display: flex; align-items: center; gap: 5px;
