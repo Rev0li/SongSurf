@@ -42,8 +42,8 @@ secrets:                          ## Interactive generator: creates .env + .secr
 
 .PHONY: init-dirs
 init-dirs:                        ## Create host data/logs directories
-	@mkdir -p data/music data/music_guest data/temp data/temp_guest logs
-	@chmod 755 data/music data/music_guest data/temp data/temp_guest logs
+	@mkdir -p data/music data/temp logs
+	@chmod 755 data/music data/temp logs
 	@echo "[ok] Data directories ready."
 
 # ── Frontend (local, no Docker) ───────────────────────────────────────────────
@@ -118,7 +118,7 @@ clean:                            ## Remove Docker images + temp data
 	@echo "Removing Docker images..."
 	-docker rmi songsurf:latest watcher:latest 2>/dev/null || true
 	@echo "Clearing temp data..."
-	@rm -rf data/temp/* data/temp_guest/*
+	@rm -rf data/temp/*
 	@echo "Clearing frontend local build artifacts (may need sudo for root-owned files)..."
 	@rm -rf frontend/build/ 2>/dev/null || sudo rm -rf frontend/build/
 	@rm -rf frontend/.svelte-kit/ 2>/dev/null || sudo rm -rf frontend/.svelte-kit/

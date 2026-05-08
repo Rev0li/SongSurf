@@ -24,10 +24,6 @@
 	let playlistAlbum = '';
 	let playlistYear = '';
 
-	// options
-	let playlistMode = false;
-	let mp4Mode = false;
-
 	// cover
 	let coverCandidates = [];
 	let coverIdx = 0;
@@ -178,9 +174,7 @@
 
 		const item = extract.is_playlist ? {
 			isPlaylist: true,
-			label: asText(playlistAlbum, extract.title ?? 'Playlist'),
-			playlistMode,
-			mp4Mode,
+			label: asText(playlistAlbum, extract.title ?? 'Album'),
 			playlistMetadata: {
 				title:  asText(playlistAlbum, 'Unknown Album'),
 				artist: asText(playlistArtist, 'Unknown Artist'),
@@ -190,13 +184,11 @@
 		} : {
 			isPlaylist: false,
 			label: `${asText(artist, '?')} — ${asText(title, '?')}`,
-			url:          extract.url ?? '',
-			playlistMode,
-			mp4Mode,
-			title:        asText(title,  'Unknown Title'),
-			artist:       asText(artist, 'Unknown Artist'),
-			album:        asText(album,  'Unknown Album'),
-			year:         '',
+			url:    extract.url ?? '',
+			title:  asText(title,  'Unknown Title'),
+			artist: asText(artist, 'Unknown Artist'),
+			album:  asText(album,  'Unknown Album'),
+			year:   '',
 		};
 
 		stopPrefetchPolling();
@@ -211,7 +203,6 @@
 		extract = null;
 		panelActive = false;
 		title = artist = album = playlistArtist = playlistAlbum = playlistYear = '';
-		playlistMode = mp4Mode = false;
 		coverSrc = '';
 		coverLoading = false;
 	}
@@ -260,28 +251,6 @@
 					{/if}
 				</div>
 
-				<div class="option-card">
-					<div class="toggle-row option-toggle-row" style="display:none">
-						<div class="toggle-description">
-							<strong>Mode Playlist</strong>
-							<small>Pas de tri artiste.</small>
-						</div>
-						<label class="toggle-switch">
-							<input type="checkbox" bind:checked={playlistMode} />
-							<span class="toggle-slider"></span>
-						</label>
-					</div>
-					<div class="toggle-row option-toggle-row">
-						<div class="toggle-description">
-							<strong>Mode MP4</strong>
-							<small>Vidéo max 1080p</small>
-						</div>
-						<label class="toggle-switch">
-							<input type="checkbox" bind:checked={mp4Mode} />
-							<span class="toggle-slider"></span>
-						</label>
-					</div>
-				</div>
 			</aside>
 
 			<!-- Fields -->
@@ -292,13 +261,11 @@
 						<input class="form-input" bind:value={title} placeholder="Titre" />
 					</div>
 					<div class="form-group compact-row">
-						{#if !playlistMode}
-							<div>
-								<label class="form-label">Artiste</label>
-								<input class="form-input" bind:value={artist} placeholder="Artiste" />
-							</div>
-						{/if}
-						<div style={playlistMode ? 'grid-column:1/-1' : ''}>
+						<div>
+							<label class="form-label">Artiste</label>
+							<input class="form-input" bind:value={artist} placeholder="Artiste" />
+						</div>
+						<div>
 							<label class="form-label">Album</label>
 							<input class="form-input" bind:value={album} placeholder="Album" />
 						</div>
@@ -306,13 +273,11 @@
 				{:else}
 					<div class="playlist-title">{extract.title ?? ''}</div>
 					<div class="form-group compact-row">
-						{#if !playlistMode}
-							<div>
-								<label class="form-label">Artiste</label>
-								<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
-							</div>
-						{/if}
-						<div style={playlistMode ? 'grid-column:1/-1' : ''}>
+						<div>
+							<label class="form-label">Artiste</label>
+							<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
+						</div>
+						<div>
 							<label class="form-label">Album / Playlist</label>
 							<input class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
 						</div>

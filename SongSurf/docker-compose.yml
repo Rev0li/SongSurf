@@ -83,9 +83,7 @@ services:
 
     volumes:
       - ./data/music:/data/music
-      - ./data/music_guest:/data/music_guest
       - ./data/temp:/data/temp
-      - ./data/temp_guest:/data/temp_guest
       - ./logs:/app/logs
 
     healthcheck:

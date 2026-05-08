@@ -408,6 +408,39 @@ def add_cors(response):
     return response
 
 
+# ── Logout ───────────────────────────────────────────────────────────────────
+
+@app.route('/logout', methods=['GET', 'POST'])
+def logout():
+    """Clear session cookie, stop SongSurf if idle, redirect to auth login."""
+    active = False
+    if _songsurf_running():
+        try:
+            for base_url in _candidate_target_urls():
+                r = req_lib.get(
+                    f"{base_url}/api/status",
+                    headers={'X-Watcher-Token': WATCHER_SECRET},
+                    timeout=2,
+                )
+                if r.ok:
+                    data   = r.json()
+                    active = data.get('in_progress', False) or (data.get('queue_size', 0) > 0)
+                    break
+        except Exception:
+            pass
+
+    if active:
+        logger.info("ℹ️  Logout — SongSurf maintenu (téléchargement actif)")
+    else:
+        logger.info("💤 Logout — mise en veille de SongSurf")
+        threading.Thread(target=_stop_songsurf, daemon=True).start()
+
+    target = AUTH_SERVICE_LOGIN_URL or '/'
+    resp = redirect(target)
+    resp.delete_cookie('access_token', path='/', samesite='Lax')
+    return resp
+
+
 # ── Catch-all proxy ───────────────────────────────────────────────────────────
 
 @app.route('/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])

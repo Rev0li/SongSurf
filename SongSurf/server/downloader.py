@@ -113,26 +113,6 @@ class YouTubeDownloader:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
 
-    def _download_mp4_to_temp(self, url, temp_filename, progress_hook=None):
-        """Télécharge la vidéo en MP4 dans temp."""
-        ydl_opts = {
-            'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-            'outtmpl': str(self.temp_dir / f'{temp_filename}.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,
-            'writethumbnail': True,
-            'merge_output_format': 'mp4',
-            'nocheckcertificate': True,
-        }
-        if progress_hook is not None:
-            ydl_opts['progress_hooks'] = [progress_hook]
-        if self.ffmpeg_location:
-            ydl_opts['ffmpeg_location'] = self.ffmpeg_location
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-
     def prefetch_first_track(self, url, metadata):
         """Précharge une piste en MP3 dans temp pour accélérer le futur download."""
         try:
@@ -154,63 +134,57 @@ class YouTubeDownloader:
             logger.warning(f"⚠️ Prefetch échoué: {e}")
             return {'success': False, 'error': str(e)}
 
-    def download(self, url, metadata, mp4_mode=False):
+    def download(self, url, metadata):
         """
-        Télécharge une vidéo YouTube en MP3 ou MP4.
+        Télécharge une vidéo YouTube en MP3.
 
         Args:
             url (str): URL YouTube ou YouTube Music
             metadata (dict): {artist, album, title, year}
 
         Returns:
-            dict: {success, file_path, media_mode, error}
+            dict: {success, file_path, error}
         """
         try:
             logger.info(f"⬇️  Téléchargement: {metadata.get('title', 'Unknown')}")
 
-            # Convertir l'URL YouTube Music → YouTube classique
             url = self._normalize_url(url)
             logger.info(f"   URL: {url}")
 
             temp_filename = self._temp_filename_from_metadata(metadata)
-            media_mode = 'mp4' if mp4_mode else 'mp3'
-            downloaded_file = self.temp_dir / f"{temp_filename}.{media_mode}"
+            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
             if downloaded_file.exists():
                 self.progress.reset()
                 self.progress.phase   = 'organizing'
                 self.progress.percent = 90
                 logger.info(f"   ♻️ Cache utilisé: {downloaded_file.name}")
                 return {
-                    'success': True,
-                    'file_path': str(downloaded_file),
-                    'media_mode': media_mode,
-                    'metadata': metadata,
-                    'timestamp': datetime.now().isoformat()
+                    'success':    True,
+                    'file_path':  str(downloaded_file),
+                    'media_mode': 'mp3',
+                    'metadata':   metadata,
+                    'timestamp':  datetime.now().isoformat()
                 }
 
             self.progress.reset()
             self.progress.status = 'downloading'
             self.progress.phase  = 'downloading'
 
-            if mp4_mode:
-                self._download_mp4_to_temp(url, temp_filename, progress_hook=self.progress.update)
-            else:
-                self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+            self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
 
             if not downloaded_file.exists():
-                raise FileNotFoundError(f"Fichier {media_mode.upper()} introuvable après conversion: {downloaded_file}")
+                raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")
 
-            # FFmpeg conversion complete — organizer runs next (handled by queue_worker)
             self.progress.phase   = 'organizing'
             self.progress.percent = 90
             logger.info(f"   ✅ Téléchargé: {downloaded_file.name}")
 
             return {
-                'success':   True,
-                'file_path': str(downloaded_file),
-                'media_mode': media_mode,
-                'metadata':  metadata,
-                'timestamp': datetime.now().isoformat()
+                'success':    True,
+                'file_path':  str(downloaded_file),
+                'media_mode': 'mp3',
+                'metadata':   metadata,
+                'timestamp':  datetime.now().isoformat()
             }
 
         except Exception as e:

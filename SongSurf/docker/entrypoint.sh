@@ -19,7 +19,7 @@ else
 fi
 
 # Ensure data directories exist (bind-mount might not pre-create them)
-mkdir -p /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music
+mkdir -p /data/temp /data/music /data/plex_music
 
 echo "=============================================="
 echo "Starting application..."

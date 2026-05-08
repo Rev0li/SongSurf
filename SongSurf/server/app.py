@@ -255,9 +255,6 @@ def _user_music_dir(sub: str) -> Path:
     return d
 
 
-def _is_permanent(role: str) -> bool:
-    return role == 'admin'
-
 
 def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
     """Updates TPE1/TALB tags to match the file's actual folder position.
@@ -1014,13 +1011,10 @@ def start_download():
             'year':   data.get('year',   ''),
         }
         download_queue.put({
-            'url':           url,
-            'metadata':      metadata,
-            'playlist_mode': bool(data.get('playlist_mode', False)),
-            'mp4_mode':      bool(data.get('mp4_mode', False)),
-            'user_sub':      user['sub'],
-            'user_role':     user['role'],
-            'added_at':      datetime.now().isoformat(),
+            'url':      url,
+            'metadata': metadata,
+            'user_sub': user['sub'],
+            'added_at': datetime.now().isoformat(),
         })
         _start_or_extend_batch(1)
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{user['sub'][:8]}]")
@@ -1042,8 +1036,6 @@ def download_playlist():
         if download_status['in_progress'] or download_queue.qsize() > 0:
             return jsonify({'success': False, 'error': 'Un téléchargement est déjà en cours.'}), 429
 
-        playlist_mode = bool(data.get('playlist_mode', False))
-        mp4_mode      = bool(data.get('mp4_mode', False))
         added = 0
         for song in songs:
             if download_queue.full():
@@ -1055,13 +1047,10 @@ def download_playlist():
                 'year':   playlist.get('year', ''),
             }
             download_queue.put({
-                'url':           song['url'],
-                'metadata':      metadata,
-                'playlist_mode': playlist_mode,
-                'mp4_mode':      mp4_mode,
-                'user_sub':      user['sub'],
-                'user_role':     user['role'],
-                'added_at':      datetime.now().isoformat(),
+                'url':      song['url'],
+                'metadata': metadata,
+                'user_sub': user['sub'],
+                'added_at': datetime.now().isoformat(),
             })
             added += 1
 
@@ -1152,24 +1141,18 @@ def download_zip():
     if not zip_path.exists():
         return jsonify({'success': False, 'error': 'ZIP introuvable'}), 404
 
-    permanent = _is_permanent(user['role'])
-    _sub      = user['sub']
+    _sub = user['sub']
 
-    def _maybe_cleanup():
-        # Wait long enough for the browser to finish downloading before cleaning up.
+    def _cleanup_zip():
         time.sleep(60)
         try:
             zip_path.unlink(missing_ok=True)
             with user_zip_lock:
                 user_zip_state.pop(_sub, None)
-            if not permanent:
-                music_dir = BASE_MUSIC_DIR / _sub
-                shutil.rmtree(music_dir, ignore_errors=True)
-                logger.info(f"🧹 Member cleanup: dossier {_sub[:8]} supprimé")
         except Exception as e:
-            logger.warning(f"⚠️ Cleanup après ZIP: {e}")
+            logger.warning(f"⚠️ Cleanup ZIP: {e}")
 
-    threading.Thread(target=_maybe_cleanup, daemon=True).start()
+    threading.Thread(target=_cleanup_zip, daemon=True).start()
 
     return send_file(
         zip_path,
@@ -1334,9 +1317,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                 }
             if not download_queue.full():
                 download_queue.put({
-                    'url': url, 'metadata': metadata,
-                    'playlist_mode': False, 'mp4_mode': False,
-                    'user_sub': user['sub'], 'user_role': user['role'],
+                    'url':      url,
+                    'metadata': metadata,
+                    'user_sub': user['sub'],
                     'added_at': datetime.now().isoformat(),
                 })
                 _start_or_extend_batch(1)
@@ -1346,10 +1329,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
             if not result.get('success'):
                 logger.warning(f"⚠️ queue-direct playlist extract failed: {result.get('error')}")
                 return
-            songs         = result.get('songs', [])
-            playlist_mode = (url_mode == 'playlist')
-            album_name    = (override or {}).get('album')  or result.get('title', 'Unknown Album')
-            artist_name   = (override or {}).get('artist') or result.get('artist', 'Unknown Artist')
+            songs       = result.get('songs', [])
+            album_name  = (override or {}).get('album')  or result.get('title', 'Unknown Album')
+            artist_name = (override or {}).get('artist') or result.get('artist', 'Unknown Artist')
             added = 0
             for song in songs:
                 if download_queue.full():
@@ -1361,9 +1343,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':   result.get('year', ''),
                 }
                 download_queue.put({
-                    'url': song['url'], 'metadata': metadata,
-                    'playlist_mode': playlist_mode, 'mp4_mode': False,
-                    'user_sub': user['sub'], 'user_role': user['role'],
+                    'url':      song['url'],
+                    'metadata': metadata,
+                    'user_sub': user['sub'],
                     'added_at': datetime.now().isoformat(),
                 })
                 added += 1
@@ -1647,19 +1629,15 @@ def queue_worker():
             logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_sub[:8]}]")
 
             try:
-                mp4_mode = bool(item.get('mp4_mode', False))
-                result   = downloader.download(url, metadata, mp4_mode=mp4_mode)
+                result = downloader.download(url, metadata)
 
                 if cancel_flag.is_set():
                     raise Exception("Annulé par l'utilisateur")
                 if not result['success']:
                     raise Exception(result.get('error', 'Erreur inconnue'))
 
-                playlist_mode = item.get('playlist_mode', False)
-                media_mode    = result.get('media_mode', 'mp3')
-                # phase already set to 'organizing' by downloader
-                org_result    = org.organize(result['file_path'], metadata,
-                                             playlist_mode=playlist_mode, media_mode=media_mode)
+                org_result = org.organize(result['file_path'], metadata,
+                                          playlist_mode=False, media_mode='mp3')
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
 

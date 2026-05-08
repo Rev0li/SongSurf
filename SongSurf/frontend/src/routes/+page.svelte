@@ -38,6 +38,7 @@
 		{/if}
 		<a href="/metadata" class="btn btn-ghost btn-sm">Métadonnées</a>
 		<a href="/donation" class="btn btn-ghost btn-sm">Soutenir</a>
+		<a href="/logout" class="btn btn-ghost btn-sm">Déconnexion</a>
 	</nav>
 </header>
 

@@ -36,9 +36,7 @@
 				album:        item.album,
 				year:         item.year ?? '',
 				isPlaylist,
-				needsExtract: isPlaylist, // albums/playlists need yt-dlp extraction for the song list
-				playlistMode: item.url_mode === 'playlist',
-				mp4Mode:      false,
+				needsExtract: isPlaylist,
 				fromExtension: true,
 			});
 		}
@@ -101,12 +99,9 @@
 		try {
 			let res;
 			if (item.needsExtract) {
-				// Album/playlist from extension: extract song list first, then queue
 				const extracted = await api.extract(item.url);
 				if (!extracted.success) throw new Error(extracted.error || 'Extraction échouée');
 				res = await api.downloadPlaylist({
-					playlist_mode: item.playlistMode ?? false,
-					mp4_mode:      false,
 					playlist_metadata: {
 						...extracted,
 						artist: item.artist || extracted.artist,
@@ -115,19 +110,15 @@
 				});
 			} else if (item.isPlaylist) {
 				res = await api.downloadPlaylist({
-					playlist_mode: item.playlistMode ?? false,
-					mp4_mode:      item.mp4Mode ?? false,
 					playlist_metadata: item.playlistMetadata,
 				});
 			} else {
 				res = await api.download({
-					url:           item.url,
-					playlist_mode: item.playlistMode ?? false,
-					mp4_mode:      item.mp4Mode ?? false,
-					title:         item.title,
-					artist:        item.artist,
-					album:         item.album,
-					year:          item.year ?? '',
+					url:    item.url,
+					title:  item.title,
+					artist: item.artist,
+					album:  item.album,
+					year:   item.year ?? '',
 				});
 			}
 

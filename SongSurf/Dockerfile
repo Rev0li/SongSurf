@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Non-root user + data directories in one layer
 RUN useradd -m -u 1000 songsurf && \
-    mkdir -p /app/logs /app/frontend/build /data/temp /data/music /data/music_guest /data/temp_guest /data/plex_music && \
+    mkdir -p /app/logs /app/frontend/build /data/temp /data/music /data/plex_music && \
     chown -R songsurf:songsurf /app /data
 
 WORKDIR /app
