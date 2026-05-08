@@ -9,9 +9,7 @@ Auth model (Phase 2):
   - WATCHER_SECRET set   → require token match, then read user from headers
   - WATCHER_SECRET unset + DEV_MODE=true → inject dev user (standalone testing)
 
-Storage: /data/music/<user_sub>/
-  - Admin role: files never deleted
-  - Member role: music folder deleted 60s after ZIP download
+Storage: /data/music/Artist/Album/  (flat, no user-sub prefix)
 
 Phase 3: see documentation/CONNECTOR.md
 """
@@ -50,6 +48,8 @@ DONATION_BTC = os.getenv('DONATION_BTC', '')
 DONATION_ETH = os.getenv('DONATION_ETH', '')
 DONATION_SOL = os.getenv('DONATION_SOL', '')
 DONATION_XMR = os.getenv('DONATION_XMR', '')
+
+DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))  # 0 = unlimited
 
 _DEV_USER = {'sub': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
 
@@ -138,6 +138,35 @@ download_status = {
 # Items submitted via Chrome extension — held here until the frontend UrlQueue picks them up
 extension_pending    = []
 extension_pending_lk = threading.Lock()
+
+# ── Daily download counter ─────────────────────────────────────────────────────
+_daily_lock  = threading.Lock()
+_daily_count = 0
+_daily_date  = None  # date object; reset on new calendar day
+
+
+def _daily_reset_if_needed():
+    """Must be called under _daily_lock. Resets counter on new day."""
+    global _daily_count, _daily_date
+    today = datetime.now().date()
+    if _daily_date != today:
+        _daily_count = 0
+        _daily_date  = today
+
+
+def _daily_limit_reached() -> bool:
+    if DAILY_DOWNLOAD_LIMIT <= 0:
+        return False
+    with _daily_lock:
+        _daily_reset_if_needed()
+        return _daily_count >= DAILY_DOWNLOAD_LIMIT
+
+
+def _daily_increment():
+    global _daily_count
+    with _daily_lock:
+        _daily_reset_if_needed()
+        _daily_count += 1
 
 
 def _start_or_extend_batch(added_count: int):
@@ -247,12 +276,10 @@ user_zip_state = {}  # {sub: {'zip_path': str, 'count': int, 'size_mb': float}}
 user_zip_lock  = threading.Lock()
 
 
-def _user_music_dir(sub: str) -> Path:
-    d = (BASE_MUSIC_DIR / sub).resolve()
-    if not str(d).startswith(str(BASE_MUSIC_DIR.resolve())):
-        raise ValueError(f"Invalid user sub — path escapes music dir: {sub!r}")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def _user_music_dir(sub: str = '') -> Path:
+    # Option B: flat layout — music/Artist/Album/ (no per-user subdirectory)
+    BASE_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    return BASE_MUSIC_DIR
 
 
 
@@ -460,6 +487,10 @@ def get_status():
             status['batch_percent'] = float(current_pct)
     with extension_pending_lk:
         status['extension_pending_count'] = len(extension_pending)
+    with _daily_lock:
+        _daily_reset_if_needed()
+        status['daily_count'] = _daily_count
+    status['daily_limit'] = DAILY_DOWNLOAD_LIMIT
     return jsonify(status)
 
 
@@ -1003,6 +1034,8 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL invalide.'}), 400
         if download_status['in_progress'] or download_queue.qsize() > 0:
             return jsonify({'success': False, 'error': 'Un téléchargement est déjà en cours.'}), 429
+        if _daily_limit_reached():
+            return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
 
         metadata = {
             'artist': data.get('artist', 'Unknown Artist'),
@@ -1035,6 +1068,8 @@ def download_playlist():
             return jsonify({'success': False, 'error': 'Données manquantes'}), 400
         if download_status['in_progress'] or download_queue.qsize() > 0:
             return jsonify({'success': False, 'error': 'Un téléchargement est déjà en cours.'}), 429
+        if _daily_limit_reached():
+            return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
 
         added = 0
         for song in songs:
@@ -1660,6 +1695,7 @@ def queue_worker():
 
                 logger.info(f"✅ {org_result['final_path']}")
                 activity_logger.info(f"🎵 DOWNLOAD | {user_sub[:8]} | {metadata['artist']} - {metadata['title']}")
+                _daily_increment()
 
             except Exception as e:
                 logger.error(f"❌ {e}")

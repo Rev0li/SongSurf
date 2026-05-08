@@ -30,10 +30,12 @@
 	let detailsOpen   = false;
 
 	// ── Editing ───────────────────────────────────────────────────────────────────
-	let editValues    = {};
-	let dirty         = false;
-	let saving        = false;
-	let saveError     = '';
+	let editValues       = {};
+	let dirty            = false;
+	let saving           = false;
+	let saveError        = '';
+	let lastEditedField  = null;  // tracks the most-recently-modified field
+	let applyingToAlbum  = false;
 
 	// ── Cover upload ──────────────────────────────────────────────────────────────
 	let uploadingCover      = false;
@@ -185,9 +187,10 @@
 	async function selectSong(path, keepAlbumCtx = false) {
 		if (selectedPath === path && selectedType === 'song') return;
 		if (!keepAlbumCtx) selectedAlbum = null;
-		selectedType   = 'song';
-		selectedPath   = path;
-		selectedArtist = null;
+		selectedType    = 'song';
+		selectedPath    = path;
+		selectedArtist  = null;
+		lastEditedField = null;
 		meta = null; metaError = ''; metaLoading = true;
 		detailsOpen = false; dirty = false; saveError = ''; coverError = '';
 		try {
@@ -227,6 +230,7 @@
 	function setField(k, v) {
 		editValues = { ...editValues, [k]: v };
 		dirty = true;
+		lastEditedField = k;
 	}
 
 	async function saveTags() {
@@ -240,6 +244,38 @@
 			if (data.success) { meta = data; initEdit(data); }
 		} catch (e) { saveError = e.message ?? 'Erreur'; }
 		finally { saving = false; }
+	}
+
+	// ── Apply field to whole album ────────────────────────────────────────────────
+	// Songs to target: use selectedAlbum if we came from album panel, else derive from tree
+	$: albumSongsForApply = (() => {
+		if (selectedAlbum) return selectedAlbum.songs ?? [];
+		if (!meta?.path || !tree) return [];
+		const parts = meta.path.split('/');
+		if (parts.length < 3) return [];
+		const albumPath = parts.slice(0, 2).join('/');
+		const artist = (tree.artists ?? []).find(a => a.path === parts[0]);
+		return artist?.albums?.find(a => a.path === albumPath)?.songs ?? [];
+	})();
+
+	async function applyToAlbum() {
+		if (!lastEditedField || applyingToAlbum) return;
+		const songs = albumSongsForApply;
+		if (songs.length === 0) return;
+		applyingToAlbum = true;
+		const fieldValue = editValues[lastEditedField] ?? '';
+		let done = 0, errors = 0;
+		for (const song of songs) {
+			try {
+				await api.saveSongMeta(song.path, { [lastEditedField]: fieldValue });
+				if (song.path === selectedPath) dirty = false;
+				done++;
+			} catch { errors++; }
+		}
+		applyingToAlbum = false;
+		const label = ID3_LABELS[lastEditedField] ?? lastEditedField;
+		if (errors === 0) addToast(`« ${label} » appliqué à ${done} titre${done > 1 ? 's' : ''}.`, 'info');
+		else addToast(`${done} OK, ${errors} erreur${errors > 1 ? 's' : ''}.`, 'error');
 	}
 
 	// ── Cover upload (song) ───────────────────────────────────────────────────────
@@ -743,6 +779,16 @@
 								<!-- Save bar -->
 								<div class="save-bar">
 									{#if saveError}<span class="save-error">{saveError}</span>{/if}
+									{#if lastEditedField && albumSongsForApply.length > 1}
+										<button
+											class="btn btn-ghost btn-sm"
+											on:click={applyToAlbum}
+											disabled={applyingToAlbum}
+											title="Appliquer « {ID3_LABELS[lastEditedField] ?? lastEditedField} » à tous les titres de l'album"
+										>
+											{applyingToAlbum ? '⏳…' : '📋 Appliquer à l\'album'}
+										</button>
+									{/if}
 									<button
 										class="btn btn-primary btn-sm"
 										on:click={saveTags}
