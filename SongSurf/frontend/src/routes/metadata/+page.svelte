@@ -16,6 +16,9 @@
 	let albumHasIssue  = new Map();
 	let artistHasIssue = new Map();
 
+	// ── Dismissed album warnings (persisted in localStorage) ─────────────────────
+	let dismissedAlbums = new Set();
+
 	// ── Selection ─────────────────────────────────────────────────────────────────
 	// selectedType: null | 'artist' | 'album' | 'song'
 	let selectedType   = null;
@@ -128,6 +131,10 @@
 
 	// ── Lifecycle ─────────────────────────────────────────────────────────────────
 	onMount(async () => {
+		try {
+			const raw = localStorage.getItem('ss_dismissed_albums');
+			if (raw) dismissedAlbums = new Set(JSON.parse(raw));
+		} catch { /* ignore */ }
 		try { tree = await api.getLibrary(); }
 		catch { tree = { artists: [], playlists: [] }; }
 	});
@@ -146,10 +153,41 @@
 				if (parts.length >= 2 && songOnly.length) al.set(parts.slice(0, -1).join('/'), true);
 				if (parts.length >= 1 && item.issues.length) ar.set(parts[0], true);
 			}
+			// Remove dismissed albums from results
+			for (const albumPath of dismissedAlbums) {
+				for (const key of s.keys()) {
+					if (key.startsWith(albumPath + '/')) s.delete(key);
+				}
+				al.delete(albumPath);
+			}
+			// Clean up artist flags where all albums are dismissed
+			for (const artistPath of ar.keys()) {
+				if (![...al.keys()].some(k => k.startsWith(artistPath + '/'))) ar.delete(artistPath);
+			}
 			songIssueMap = s; albumHasIssue = al; artistHasIssue = ar;
 			scanDone = true;
 		} catch { /* ignore */ }
 		finally { scanning = false; }
+	}
+
+	function dismissAlbumIssues(albumPath) {
+		for (const key of [...songIssueMap.keys()]) {
+			if (key.startsWith(albumPath + '/')) songIssueMap.delete(key);
+		}
+		albumHasIssue.delete(albumPath);
+		const artistPath = albumPath.split('/')[0];
+		if (![...albumHasIssue.keys()].some(k => k.startsWith(artistPath + '/'))) {
+			artistHasIssue.delete(artistPath);
+		}
+		songIssueMap = songIssueMap; albumHasIssue = albumHasIssue; artistHasIssue = artistHasIssue;
+		dismissedAlbums = new Set([...dismissedAlbums, albumPath]);
+		try { localStorage.setItem('ss_dismissed_albums', JSON.stringify([...dismissedAlbums])); } catch {}
+		addToast('Avertissements ignorés pour cet album.', 'info');
+	}
+
+	function resetDismissed() {
+		dismissedAlbums = new Set();
+		try { localStorage.removeItem('ss_dismissed_albums'); } catch {}
 	}
 
 	// ── Selection helpers ─────────────────────────────────────────────────────────
@@ -210,6 +248,15 @@
 		selectedPath = '';
 		meta = null;
 		dirty = false;
+	}
+
+	function goHome() {
+		selectedType   = null;
+		selectedPath   = '';
+		meta           = null;
+		selectedAlbum  = null;
+		selectedArtist = null;
+		dirty          = false;
 	}
 
 	// ── Edit helpers ──────────────────────────────────────────────────────────────
@@ -419,13 +466,21 @@
 	<aside class="meta-sidebar">
 		<div class="sidebar-top">
 			<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
-			<button
-				class="btn btn-sm {scanning ? 'btn-ghost' : scanDone ? 'btn-orange' : 'btn-ghost'}"
-				on:click={runScan} disabled={scanning}
-				title="Scanner toute la bibliothèque pour les problèmes de métadonnées"
-			>
-				{scanning ? '⏳ Scan…' : '🔍 Scan all'}
-			</button>
+			<div class="sidebar-top-actions">
+				<button
+					class="btn btn-sm {scanning ? 'btn-ghost' : scanDone ? 'btn-orange' : 'btn-ghost'}"
+					on:click={runScan} disabled={scanning}
+					title="Scanner toute la bibliothèque pour les problèmes de métadonnées"
+				>
+					{scanning ? '⏳ Scan…' : '🔍 Scan all'}
+				</button>
+				{#if dismissedAlbums.size > 0}
+					<button class="btn btn-sm btn-ghost dismissed-badge" on:click={resetDismissed}
+						title="Réinitialiser les albums ignorés">
+						{dismissedAlbums.size} ignoré{dismissedAlbums.size > 1 ? 's' : ''} ✕
+					</button>
+				{/if}
+			</div>
 		</div>
 
 		<div class="sidebar-scroll">
@@ -546,16 +601,43 @@
 	<!-- ── Right: panel ─────────────────────────────────────────── -->
 	<main class="meta-main">
 
-		<!-- ── Empty ── -->
+		<!-- ── Home / Artist gallery ── -->
 		{#if selectedType === null}
-			<div class="meta-empty">
-				<span class="meta-empty-icon">🎵</span>
-				<p>Sélectionne un artiste, un album ou un fichier dans l'arborescence.</p>
-			</div>
+			{#if tree && (tree.artists?.length ?? 0) > 0}
+				<div class="home-gallery">
+					<div class="home-gallery-grid">
+						{#each (tree.artists ?? []) as artist (artist.path)}
+							<button class="home-artist-card" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
+								<div class="home-artist-cover">
+									<img
+										src={`/api/library/artist-picture?folder_path=${encodeURIComponent(artist.path)}&t=1`}
+										alt="" loading="lazy"
+										on:error={(e) => e.currentTarget.style.display='none'}
+									/>
+									<div class="home-artist-placeholder">🎤</div>
+								</div>
+								<div class="home-artist-name" title={artist.name}>{artist.name}</div>
+								<div class="home-artist-meta">
+									{artist.albums?.length ?? 0} album{(artist.albums?.length ?? 0) > 1 ? 's' : ''}
+									· {artist.albums?.reduce((n, al) => n + al.songs.length, 0) ?? 0} titres
+								</div>
+							</button>
+						{/each}
+					</div>
+				</div>
+			{:else}
+				<div class="meta-empty">
+					<span class="meta-empty-icon">🎵</span>
+					<p>Sélectionne un artiste, un album ou un fichier dans l'arborescence.</p>
+				</div>
+			{/if}
 
 		<!-- ── Artist panel ── -->
 		{:else if selectedType === 'artist'}
 			<div class="meta-content">
+				<div class="panel-nav">
+					<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
+				</div>
 				<!-- Artist header: photo + name + upload -->
 				<div class="artist-panel">
 					<div class="artist-pic-zone">
@@ -627,13 +709,16 @@
 		<!-- ── Album panel ── -->
 		{:else if selectedType === 'album'}
 			<div class="meta-content">
-				<!-- Breadcrumb -->
-				<div class="meta-breadcrumb">
-					<button class="breadcrumb-link" on:click={() => selectArtist(selectedAlbum.artist)}>
-						🎤 {selectedAlbum.artist.name}
-					</button>
-					<span class="breadcrumb-sep">›</span>
-					<span>💿 {selectedAlbum.name}</span>
+				<!-- Breadcrumb + Home -->
+				<div class="panel-nav">
+					<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
+					<div class="meta-breadcrumb" style="margin:0">
+						<button class="breadcrumb-link" on:click={() => selectArtist(selectedAlbum.artist)}>
+							🎤 {selectedAlbum.artist.name}
+						</button>
+						<span class="breadcrumb-sep">›</span>
+						<span>💿 {selectedAlbum.name}</span>
+					</div>
 				</div>
 
 				<!-- Album header: cover + info -->
@@ -669,7 +754,14 @@
 							{selectedAlbum.songs.length} titre{selectedAlbum.songs.length > 1 ? 's' : ''}
 						</div>
 						{#if scanDone && albumHasIssue.has(selectedAlbum.path)}
-							<div class="album-issue-badge">⚠️ Problèmes de métadonnées détectés</div>
+							<div class="album-issue-row">
+								<div class="album-issue-badge">⚠️ Problèmes de métadonnées détectés</div>
+								<button class="btn btn-ghost btn-sm" style="font-size:11px"
+									on:click={() => dismissAlbumIssues(selectedAlbum.path)}
+									title="Ne plus afficher les avertissements pour cet album">
+									Ignorer
+								</button>
+							</div>
 						{/if}
 						<p class="cover-hint" style="margin-top:var(--s4)">
 							Pochette : glisse ou colle <kbd>Ctrl+V</kbd> pour remplacer
@@ -709,13 +801,14 @@
 			{:else if meta}
 				<div class="meta-content">
 					<!-- Back to album or breadcrumb -->
-					{#if selectedAlbum}
-						<div class="song-back-bar">
+					<div class="panel-nav">
+						<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
+						{#if selectedAlbum}
 							<button class="back-btn" on:click={backToAlbum}>
 								‹ {selectedAlbum.name}
 							</button>
-						</div>
-					{/if}
+						{/if}
+					</div>
 					<div class="meta-breadcrumb">{meta.path}</div>
 
 					<div class="meta-sections">
@@ -1326,4 +1419,60 @@
 	:global(.btn-orange) { background: rgba(255,159,10,.15); color: var(--orange); border: 1px solid rgba(255,159,10,.3); }
 	:global(.btn-orange:hover) { background: rgba(255,159,10,.25); }
 	:global(.loading) { opacity: .6; pointer-events: none; }
+
+	/* ── Panel navigation bar (Home + back) ───────────────────── */
+	.panel-nav {
+		display: flex; align-items: center; gap: var(--s3);
+		margin-bottom: var(--s4);
+	}
+	.home-btn {
+		background: none; border: none; padding: 0;
+		color: var(--text-3); font-size: 12px; cursor: pointer;
+		transition: color .1s;
+	}
+	.home-btn:hover { color: var(--blue); }
+
+	/* ── Sidebar top actions row ──────────────────────────────── */
+	.sidebar-top-actions { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+	.dismissed-badge { font-size: 10px; color: var(--text-3); padding: 2px 7px; }
+
+	/* ── Album issue dismiss row ──────────────────────────────── */
+	.album-issue-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+
+	/* ── Home gallery (artist grid) ───────────────────────────── */
+	.home-gallery {
+		padding: var(--s6);
+		overflow-y: auto;
+	}
+	.home-gallery-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+		gap: var(--s4);
+	}
+	.home-artist-card {
+		display: flex; flex-direction: column; align-items: center;
+		gap: var(--s2); padding: var(--s3);
+		background: none; border: none;
+		border-radius: var(--r-md); cursor: pointer;
+		transition: background .15s;
+		text-align: center;
+	}
+	.home-artist-card:hover { background: rgba(255,255,255,.06); }
+	.home-artist-cover {
+		position: relative;
+		width: 100%; aspect-ratio: 1;
+		border-radius: 50%; overflow: hidden;
+		background: var(--bg-3); border: 2px solid var(--sep);
+		display: flex; align-items: center; justify-content: center;
+	}
+	.home-artist-cover img {
+		position: absolute; inset: 0;
+		width: 100%; height: 100%; object-fit: cover;
+	}
+	.home-artist-placeholder { font-size: 32px; color: var(--text-3); z-index: 0; }
+	.home-artist-name {
+		font-size: 13px; font-weight: 600; color: var(--text);
+		width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.home-artist-meta { font-size: 11px; color: var(--text-3); }
 </style>
