@@ -63,6 +63,10 @@
 	onDestroy(() => clearInterval(pollInterval));
 </script>
 
+<svelte:head>
+	<link rel="preload" href="/fonts/jgs_font-webfont.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+</svelte:head>
+
 <Toast />
 <WatcherInactivity />
 

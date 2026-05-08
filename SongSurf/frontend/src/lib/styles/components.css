@@ -14,7 +14,7 @@
 }
 .header-brand { display: flex; align-items: center; gap: var(--s3); }
 .header-logo  { font-size: 18px; }
-.header-title { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.3px; }
+.header-title { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .5px; font-family: var(--font-display); }
 .header-nav   { display: flex; align-items: center; gap: var(--s3); }
 
 /* ── Badge ───────────────────────────────────────────────────────────────── */
@@ -39,10 +39,11 @@
 }
 .card-title {
   margin: 0 0 var(--s4);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: -.2px;
+  letter-spacing: .3px;
   color: var(--text);
+  font-family: var(--font-display);
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */

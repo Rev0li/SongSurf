@@ -1,4 +1,15 @@
+@font-face {
+  font-family: 'JGS';
+  src: url('/fonts/jgs_font-webfont.woff2') format('woff2'),
+       url('/fonts/jgs_font-webfont.woff')  format('woff');
+  font-weight: normal;
+  font-style:  normal;
+  font-display: swap;
+}
+
 :root {
+  --font-display: 'JGS', -apple-system, "Helvetica Neue", sans-serif;
+  --font-body:    -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   /* ── Apple iOS dark mode palette ──────────────────────────────────── */
   --bg:      #000000;
   --bg-2:    #1c1c1e;
@@ -51,7 +62,7 @@ html, body {
   margin: 0; padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-body);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
