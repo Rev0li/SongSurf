@@ -356,7 +356,7 @@ class YouTubeDownloader:
             playlist_year = ''
 
             # Fallback : extraire l'artiste depuis la première chanson
-            if not playlist_artist or str(playlist_artist).lower() in ('none', ''):
+            if not playlist_artist or str(playlist_artist).lower() in ('none', '', 'unknown artist'):
                 logger.info("   🔍 Artiste non trouvé, extraction depuis la première chanson…")
                 first_entry = info['entries'][0] if info['entries'] else None
                 if first_entry and first_entry.get('id'):

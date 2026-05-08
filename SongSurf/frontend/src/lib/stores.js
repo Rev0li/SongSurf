@@ -25,6 +25,9 @@ export const lastCompleted = writable(null); // { artist, title, timestamp } | n
 // Items submitted by the Chrome extension, waiting for UrlQueue to pick up
 export const extensionQueue = writable([]);
 
+// Persists the UrlQueue across navigation
+export const urlQueue = writable([]);
+
 // ── Toasts ────────────────────────────────────────────────────────────────────
 
 export const toasts = writable([]); // [{ id, message, type }]

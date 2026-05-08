@@ -33,19 +33,19 @@ gen_hex() {
 prompt_password() {
   local label="$1" var
   while true; do
-    printf "  %s: " "$label"
-    read -rs var; echo
+    printf "  %s: " "$label" >/dev/tty
+    read -rs var </dev/tty; echo >/dev/tty
     [ -n "$var" ] && break
     warn "Cannot be empty."
   done
-  echo "$var"
+  printf '%s' "$var"
 }
 
 prompt_optional() {
-  local label="$1" default="${2:-}"
-  printf "  %s [%s]: " "$label" "${default:-leave empty}"
-  read -r var
-  echo "${var:-$default}"
+  local label="$1" default="${2:-}" var
+  printf "  %s [%s]: " "$label" "${default:-leave empty}" >/dev/tty
+  read -r var </dev/tty
+  printf '%s' "${var:-$default}"
 }
 
 confirm_overwrite() {

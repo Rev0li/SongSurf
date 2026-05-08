@@ -1,13 +1,17 @@
 <script>
-	import { onDestroy } from 'svelte';
-	import { workerBusy, extensionQueue } from '$lib/stores.js';
+	import { onDestroy, onMount } from 'svelte';
+	import { get } from 'svelte/store';
+	import { workerBusy, extensionQueue, urlQueue } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 
 	// queue items: { id, label, status, error, isPlaylist, ...download params }
 	// status: 'pending' | 'submitting' | 'waiting' | 'done' | 'error'
-	let queue = [];
-	let processing = false; // true from start-of-submit until server worker finishes
-	let idCounter = 0;
+	let queue = get(urlQueue); // restore across navigation
+	let processing = false;
+	let idCounter = queue.reduce((max, item) => Math.max(max, item.id ?? 0), 0);
+
+	// Sync local queue to persistent store on every change
+	$: urlQueue.set(queue);
 
 	// ── Public API ────────────────────────────────────────────────────────────
 	export function enqueue(item) {
@@ -50,6 +54,26 @@
 		_prevBusy = busy;
 	});
 	onDestroy(_unsubBusy);
+
+	// ── Reconcile state after navigation ─────────────────────────────────────
+	// The queue persists but local flags (processing, _prevBusy) reset on mount.
+	onMount(() => {
+		// 'submitting' = fetch was in-flight when we left; reset to retry
+		for (const item of queue) {
+			if (item.status === 'submitting') item.status = 'pending';
+		}
+		// 'waiting' = already submitted; worker may have finished while away
+		const waiting = queue.find(q => q.status === 'waiting');
+		if (waiting) {
+			if (get(workerBusy)) {
+				processing = true; // still running, onWorkerFree will handle it
+			} else {
+				waiting.status = 'done';
+			}
+		}
+		queue = queue;
+		if (!processing) processNext();
+	});
 
 	function onWorkerFree() {
 		// The item that was 'waiting' is now complete

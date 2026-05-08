@@ -261,7 +261,7 @@
 				</div>
 
 				<div class="option-card">
-					<div class="toggle-row option-toggle-row">
+					<div class="toggle-row option-toggle-row" style="display:none">
 						<div class="toggle-description">
 							<strong>Mode Playlist</strong>
 							<small>Pas de tri artiste.</small>

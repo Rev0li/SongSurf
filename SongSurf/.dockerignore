@@ -42,10 +42,12 @@ data/
 temp/
 music/
 
-# Frontend — exclude dev artifacts, keep build output for multi-stage copy
+# Frontend — exclude dev artifacts and local build output
+# Stage 1 of the Dockerfile does a fresh npm build inside the container.
+# The local frontend/build/ is not used and would bloat the build context.
 frontend/node_modules/
 frontend/.svelte-kit/
-# frontend/build/ must NOT be excluded (used by Dockerfile stage 1 directly)
+frontend/build/
 
 # Docker
 .dockerignore
@@ -54,8 +56,9 @@ docker-compose*.yml
 
 # Configuration locale et secrets
 .env
+.env.*
 .secrets
-env.example
+.env.example
 
 # Tests
 tests/
