@@ -87,6 +87,13 @@ activity_logger.addHandler(_ah)
 activity_logger.propagate = False
 activity_logger.setLevel(logging.INFO)
 
+_dlh = logging.FileHandler(LOG_DIR / 'downloads.log', encoding='utf-8')
+_dlh.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+dl_logger = logging.getLogger('songsurf.downloads')
+dl_logger.addHandler(_dlh)
+dl_logger.propagate = False
+dl_logger.setLevel(logging.INFO)
+
 # ── URL validation ─────────────────────────────────────────────────────────────
 
 _ALLOWED_YT_DOMAINS = ('youtube.com', 'music.youtube.com', 'www.youtube.com', 'youtu.be')
@@ -276,10 +283,38 @@ user_zip_state = {}  # {sub: {'zip_path': str, 'count': int, 'size_mb': float}}
 user_zip_lock  = threading.Lock()
 
 
-def _user_music_dir(sub: str = '') -> Path:
-    # Option B: flat layout — music/Artist/Album/ (no per-user subdirectory)
-    BASE_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
-    return BASE_MUSIC_DIR
+def _user_pseudo(user: dict) -> str:
+    """Derive a filesystem-safe pseudo from a user dict.
+
+    Uses the part before '@' in the email, falls back to sub.
+    '_pseudo' key is accepted as a pre-computed override (used by queue worker).
+    """
+    if user.get('_pseudo'):
+        return user['_pseudo']
+    email = (user.get('email') or '').strip().lower()
+    if email and '@' in email:
+        raw = email.split('@')[0]
+    else:
+        raw = (user.get('sub') or 'user')
+    pseudo = re.sub(r'[^a-z0-9._-]', '_', raw)
+    return pseudo.strip('._-') or 'user'
+
+
+def _user_music_dir(user: dict) -> Path:
+    """Return the music directory for a user.
+
+    DEV_MODE  → BASE_MUSIC_DIR  (flat: Artist/Album/)
+    Production → BASE_MUSIC_DIR/<pseudo>/  (per-user: pseudo/Artist/Album/)
+    """
+    if DEV_MODE:
+        BASE_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+        return BASE_MUSIC_DIR
+    pseudo = _user_pseudo(user)
+    d = (BASE_MUSIC_DIR / pseudo).resolve()
+    if not str(d).startswith(str(BASE_MUSIC_DIR.resolve())):
+        raise ValueError(f"Invalid pseudo — path escapes music dir: {pseudo!r}")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 
@@ -533,7 +568,7 @@ def _build_library_tree(music_dir: Path) -> dict:
 def library_tree():
     try:
         user = _get_current_user()
-        tree = _build_library_tree(_user_music_dir(user['sub']))
+        tree = _build_library_tree(_user_music_dir(user))
         return jsonify({'success': True, **tree})
     except Exception as e:
         logger.error(f"❌ /api/library: {e}")
@@ -545,7 +580,7 @@ def library_tree():
 def library_move_song():
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         data          = request.get_json() or {}
         source        = (data.get('source') or '').strip()
         target_folder = (data.get('target_folder') or '').strip()
@@ -581,7 +616,7 @@ def library_move_song():
 def library_rename_folder():
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         data        = request.get_json() or {}
         folder_path = (data.get('folder_path') or '').strip()
         new_name    = (data.get('new_name') or '').strip()
@@ -633,7 +668,7 @@ def library_move_folder():
     """Move an album folder to a different artist folder."""
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         data        = request.get_json() or {}
         folder_path = (data.get('folder_path') or '').strip()
         new_parent  = (data.get('new_parent') or '').strip()
@@ -689,7 +724,7 @@ def library_delete_folder():
     """Delete an artist or album folder and all its contents."""
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         data        = request.get_json() or {}
         folder_path = (data.get('folder_path') or '').strip()
         if not folder_path:
@@ -722,7 +757,7 @@ def library_delete_folder():
 def library_upload_image():
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         target_folder = (request.form.get('target_folder') or '').strip()
         image         = request.files.get('image')
         if not target_folder:
@@ -767,7 +802,7 @@ def library_upload_image():
 def library_folder_cover():
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         if not folder_path:
             return jsonify({'success': False, 'error': 'folder_path requis'}), 400
@@ -811,7 +846,7 @@ def library_artist_picture():
     """Artist picture: looks for artist.jpg first, then folder images."""
     try:
         user        = _get_current_user()
-        music_dir   = _user_music_dir(user['sub'])
+        music_dir   = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         folder      = (music_dir / folder_path).resolve()
         if not str(folder).startswith(str(music_dir.resolve())):
@@ -850,7 +885,7 @@ def save_song_meta():
     }
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         data      = request.get_json() or {}
         path      = (data.get('path') or '').strip()
         tags_data = data.get('tags') or {}
@@ -898,7 +933,7 @@ def upload_song_cover():
     from mutagen.id3 import ID3 as _ID3, APIC as _APIC
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         path      = (request.form.get('path') or '').strip()
         file      = request.files.get('image')
         if not path or not file:
@@ -937,7 +972,7 @@ def upload_artist_cover():
     """Saves uploaded image as artist.jpg in the artist folder."""
     try:
         user        = _get_current_user()
-        music_dir   = _user_music_dir(user['sub'])
+        music_dir   = _user_music_dir(user)
         folder_path = (request.form.get('folder_path') or '').strip()
         file        = request.files.get('image')
         if not folder_path or not file:
@@ -966,7 +1001,7 @@ def upload_album_cover():
     """Saves uploaded image as cover.jpg in the album folder (no MP3 embedding)."""
     try:
         user        = _get_current_user()
-        music_dir   = _user_music_dir(user['sub'])
+        music_dir   = _user_music_dir(user)
         folder_path = (request.form.get('folder_path') or '').strip()
         file        = request.files.get('image')
         if not folder_path or not file:
@@ -1044,13 +1079,14 @@ def start_download():
             'year':   data.get('year',   ''),
         }
         download_queue.put({
-            'url':      url,
-            'metadata': metadata,
-            'user_sub': user['sub'],
-            'added_at': datetime.now().isoformat(),
+            'url':         url,
+            'metadata':    metadata,
+            'user_sub':    user['sub'],
+            'user_pseudo': _user_pseudo(user),
+            'added_at':    datetime.now().isoformat(),
         })
         _start_or_extend_batch(1)
-        logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{user['sub'][:8]}]")
+        logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
         return jsonify({'success': True, 'queue_size': download_queue.qsize()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1082,10 +1118,11 @@ def download_playlist():
                 'year':   playlist.get('year', ''),
             }
             download_queue.put({
-                'url':      song['url'],
-                'metadata': metadata,
-                'user_sub': user['sub'],
-                'added_at': datetime.now().isoformat(),
+                'url':         song['url'],
+                'metadata':    metadata,
+                'user_sub':    user['sub'],
+                'user_pseudo': _user_pseudo(user),
+                'added_at':    datetime.now().isoformat(),
             })
             added += 1
 
@@ -1129,7 +1166,7 @@ def cleanup():
 def prepare_zip():
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         files = sorted([p for p in music_dir.rglob('*.mp3') if p.is_file()],
                        key=lambda p: p.stat().st_mtime, reverse=True)
         if not files:
@@ -1207,7 +1244,7 @@ def admin_extract_covers():
         if user.get('role') != 'admin':
             return jsonify({'success': False, 'error': 'Admin requis'}), 403
         data      = request.get_json(silent=True) or {}
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         org       = MusicOrganizer(music_dir)
         result    = org.extract_album_covers(overwrite=bool(data.get('overwrite', False)))
         return jsonify(result), 200 if result.get('success') else 500
@@ -1352,10 +1389,11 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                 }
             if not download_queue.full():
                 download_queue.put({
-                    'url':      url,
-                    'metadata': metadata,
-                    'user_sub': user['sub'],
-                    'added_at': datetime.now().isoformat(),
+                    'url':         url,
+                    'metadata':    metadata,
+                    'user_sub':    user['sub'],
+                    'user_pseudo': _user_pseudo(user),
+                    'added_at':    datetime.now().isoformat(),
                 })
                 _start_or_extend_batch(1)
                 logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
@@ -1378,10 +1416,11 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':   result.get('year', ''),
                 }
                 download_queue.put({
-                    'url':      song['url'],
-                    'metadata': metadata,
-                    'user_sub': user['sub'],
-                    'added_at': datetime.now().isoformat(),
+                    'url':         song['url'],
+                    'metadata':    metadata,
+                    'user_sub':    user['sub'],
+                    'user_pseudo': _user_pseudo(user),
+                    'added_at':    datetime.now().isoformat(),
                 })
                 added += 1
             _start_or_extend_batch(added)
@@ -1546,7 +1585,7 @@ def library_song_meta():
     """Full metadata dump for a single MP3 file."""
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
             return jsonify({'success': False, 'error': 'path requis'}), 400
@@ -1569,7 +1608,7 @@ def library_issues():
     """Scans the library for MP3s with missing/unknown metadata fields."""
     try:
         user      = _get_current_user()
-        music_dir = _user_music_dir(user['sub'])
+        music_dir = _user_music_dir(user)
 
         _UNKNOWN = {'', 'unknown artist', 'unknown album', 'unknown title', 'unknown'}
 
@@ -1643,12 +1682,13 @@ def queue_worker():
             if item is None:
                 break
 
-            url       = item['url']
-            metadata  = item['metadata']
-            user_sub  = item.get('user_sub', 'dev-user-local')
+            url         = item['url']
+            metadata    = item['metadata']
+            user_sub    = item.get('user_sub', 'dev-user-local')
+            user_pseudo = item.get('user_pseudo', '')
             cancel_flag.clear()
 
-            music_dir = _user_music_dir(user_sub)
+            music_dir = _user_music_dir({'sub': user_sub, '_pseudo': user_pseudo})
             org       = MusicOrganizer(music_dir)
 
             with queue_lock:
@@ -1694,7 +1734,9 @@ def queue_worker():
                         download_status['batch_active'] = False
 
                 logger.info(f"✅ {org_result['final_path']}")
-                activity_logger.info(f"🎵 DOWNLOAD | {user_sub[:8]} | {metadata['artist']} - {metadata['title']}")
+                _label = user_pseudo or user_sub[:8]
+                activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
+                dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
                 _daily_increment()
 
             except Exception as e:
