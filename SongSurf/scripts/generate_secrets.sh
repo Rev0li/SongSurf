@@ -142,12 +142,10 @@ ok "TARGET_URL : ${TARGET_URL}  (local) / ${TARGET_URL_NAS}  (nas)"
 # SECTION 2 — Mots de passe (obligatoires)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "2/6 · Mots de passe"
-warn "Stockés dans .secrets (600). Choisis des mots de passe forts et distincts."
-echo ""
-WATCHER_PASSWORD=$(prompt_required "Mot de passe admin" "true")
-WATCHER_GUEST_PASSWORD=$(prompt_required "Mot de passe guest" "true")
-ok "Mots de passe définis"
+title "2/6 · Auth JWT (rev0auth)"
+dim "L'authentification est gérée par rev0auth (VPS). Aucun mot de passe local."
+dim "Renseigne AUTH_SERVICE_LOGIN_URL + AUTH_JWT_SECRET dans la section 5."
+ok "Pas de mot de passe local — auth déléguée à rev0auth"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — Limites téléchargement
@@ -298,9 +296,6 @@ WATCHER_SECRET=${WATCHER_SECRET}
 # ── Secret JWT — doit correspondre à AUTH_JWT_SECRET dans rev0auth ────────
 AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
 
-# ── Mots de passe ─────────────────────────────────────────────────────────
-WATCHER_PASSWORD=${WATCHER_PASSWORD}
-WATCHER_GUEST_PASSWORD=${WATCHER_GUEST_PASSWORD}
 EOF
   chmod 600 "$SECRETS_FILE"
   ok ".secrets écrit (600)"
