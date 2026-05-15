@@ -21,6 +21,7 @@ from functools import wraps
 from werkzeug.utils import secure_filename
 from mutagen.mp3 import MP3
 from mutagen.id3 import APIC
+import hmac
 import threading
 import time
 import queue
@@ -359,7 +360,10 @@ def _get_current_user() -> dict | None:
     - Otherwise            → None
     """
     if WATCHER_SECRET:
-        if request.headers.get('X-Watcher-Token') != WATCHER_SECRET:
+        if not hmac.compare_digest(
+            request.headers.get('X-Watcher-Token', ''),
+            WATCHER_SECRET,
+        ):
             return None
         return {
             'sub':   request.headers.get('X-User-Id', ''),

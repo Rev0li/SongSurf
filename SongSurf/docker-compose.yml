@@ -24,7 +24,7 @@ services:
       context: .
       dockerfile: watcher/Dockerfile
     image: watcher:latest
-    restart: on-failure
+    restart: unless-stopped
     # Root needed for Docker socket access (starts/stops songsurf container)
     user: root
 
