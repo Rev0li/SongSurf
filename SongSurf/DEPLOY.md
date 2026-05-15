@@ -19,20 +19,19 @@ Fichiers utilisés :
 
 ### Configuration rapide
 
-1. Copier l'exemple d'environnement :
+1. Générer `.env` et `.secrets` (clés + mots de passe) :
 
 ```bash
-cp .env.example .env
+make secrets
 ```
 
-2. Éditer `.env` et définir au minimum :
+Le script demande le mode déploiement, les mots de passe, et génère toutes les clés cryptographiques automatiquement. Deux fichiers sont créés : `.env` (config, 644) et `.secrets` (clés, chmod 600 — ne jamais committer).
+
+2. Vérifier les valeurs dans `.env` si nécessaire :
 
 - `DEPLOY_TARGET=local` ou `DEPLOY_TARGET=nas`
-- `WATCHER_FLASK_SECRET_KEY`
-- `SONGSURF_FLASK_SECRET_KEY`
-- `WATCHER_SECRET`
-- `WATCHER_PASSWORD`
-- `WATCHER_GUEST_PASSWORD`
+- `WATCHER_PORT` (port d'écoute Watcher, défaut : 8080)
+- `AUTH_SERVICE_LOGIN_URL` (à remplir quand rev0auth sera en ligne)
 
 3. Vérifier la config résolue :
 
@@ -88,9 +87,12 @@ Remplace `local` par `nas` pour l'opération inverse.
 mkdir -p /volume1/docker/SongSurf
 cd /volume1/docker/SongSurf
 
-# Créer les dossiers de données
-mkdir -p data/music data/music_guest data/temp data/temp_guest logs
+# Créer les dossiers de données avec les bons droits (uid container = 1000)
+mkdir -p data/music data/music_guest data/temp logs
+chmod 777 data/music data/music_guest data/temp logs
 ```
+
+> ⚠️ Le `chmod 777` est requis si l'uid NAS diffère de 1000 (uid du container `songsurf`). `make init-dirs` le fait automatiquement si tu déploies depuis une machine avec Make.
 
 ---
 
@@ -115,20 +117,24 @@ rsync -av --delete SongSurf/ <user>@<nas>:/volume1/docker/SongSurf/
 Ensuite, configure simplement `.env` puis utilise `docker/compose-switch.sh`.
 ---
 
-## 3. Configurer les mots de passe
+## 3. Générer les secrets
 
-Ne modifie pas directement `docker-compose.yml`.
-Configure les secrets dans `.env` (copié depuis `.env.example`) :
+Ne jamais éditer `docker-compose.yml` pour y mettre des secrets. Utiliser le générateur interactif :
 
-```dotenv
-WATCHER_FLASK_SECRET_KEY=...      # 32+ chars
-SONGSURF_FLASK_SECRET_KEY=...     # 32+ chars
-WATCHER_SECRET=...                # secret partagé watcher <-> songsurf
-WATCHER_PASSWORD=...              # mot de passe admin portail
-WATCHER_GUEST_PASSWORD=...        # mot de passe guest portail
+```bash
+make secrets
 ```
 
-> ⚠️ Ne jamais laisser les valeurs par défaut en production.
+Il crée deux fichiers :
+
+| Fichier | Contenu | Permissions |
+|---------|---------|-------------|
+| `.env` | Config non-secrète (ports, timeouts, mode) | 644 |
+| `.secrets` | Clés Flask, WATCHER_SECRET, mots de passe, JWT | 600 |
+
+Les deux fichiers sont chargés automatiquement par Docker Compose via `env_file`. Ne jamais committer `.secrets`.
+
+**Pour la prod avec rev0auth (Phase 3) :** après avoir lancé rev0auth, copier sa valeur `AUTH_JWT_SECRET` dans `.secrets`, puis renseigner `AUTH_SERVICE_LOGIN_URL` dans `.env` et mettre `DEV_MODE=false`.
 
 ---
 
@@ -162,7 +168,7 @@ cd /volume1/docker/SongSurf
 ./docker/compose-switch.sh logs -f
 ```
 
-Le portail Watcher est disponible sur : `http://<IP-NAS>:8080`
+Le portail Watcher est disponible sur : `http://<IP-NAS>:<WATCHER_PORT>` (défaut : 8080)
 
 ---
 
@@ -175,9 +181,9 @@ Quand vous modifiez `app.py`, `downloader.py` ou `organizer.py` :
 ./docker/compose-switch.sh up -d --build
 ```
 
-Quand vous modifiez uniquement les templates HTML (pas de rebuild nécessaire car monté en volume) :
+Le frontend est SvelteKit — tout changement de code nécessite un rebuild Docker :
 ```bash
-# Aucune action requise — les templates sont rechargés automatiquement
+./docker/compose-switch.sh up -d --build
 ```
 
 ---
@@ -285,11 +291,13 @@ Format du journal d'activité :
 
 | Problème | Solution |
 |---|---|
-| Port 8080 non accessible | Vérifier le firewall NAS + `docker compose ps` |
+| Port non accessible | Vérifier `WATCHER_PORT` dans `.env` + firewall NAS + `docker compose ps` |
+| `Permission denied: /app/logs/...` | `chmod 777 data/music data/music_guest data/temp logs` (uid container ≠ uid host) |
 | Permission denied sur `/data/plex_music` | Vérifier les droits du dossier Plex (`chmod -R 777` ou `chown 1000`) |
 | `yt-dlp` échoue | `docker compose restart` pour forcer la mise à jour |
 | MusicBrainz timeout | Scan Beets ralenti par rate-limiting (1 req/s), attendre |
 | Session guest expirée pendant DL | Le nettoyage est différé 120s après le téléchargement ZIP |
+| Boucle de login infinie (prod) | Vérifier `AUTH_JWT_SECRET` dans `.secrets` + `AUTH_SERVICE_LOGIN_URL` dans `.env` |
 
 ---
 

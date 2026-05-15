@@ -39,6 +39,7 @@ docker-volumes/
 # ============================================
 .env
 .env.*
+!.env.example
 .secrets
 secrets/
 *.key

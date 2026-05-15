@@ -42,8 +42,8 @@ secrets:                          ## Interactive generator: creates .env + .secr
 
 .PHONY: init-dirs
 init-dirs:                        ## Create host data/logs directories
-	@mkdir -p data/music data/temp logs
-	@chmod 755 data/music data/temp logs
+	@mkdir -p data/music data/music_guest data/temp logs
+	@chmod 777 data/music data/music_guest data/temp logs
 	@echo "[ok] Data directories ready."
 
 # ── Frontend (local, no Docker) ───────────────────────────────────────────────

@@ -3,7 +3,7 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --frozen-lockfile
+RUN npm ci
 COPY frontend/ .
 RUN npm run build
 
