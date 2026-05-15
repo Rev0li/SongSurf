@@ -32,12 +32,8 @@ TARGET ?= local
 
 # ── First-time setup ─────────────────────────────────────────────────────────
 
-.PHONY: install
-install:                          ## Install all dependencies (Python, Node, SvelteKit)
-	@bash scripts/install_requirements.sh
-
 .PHONY: secrets
-secrets:                          ## Interactive generator: creates .env + .secrets
+secrets:                          ## Interactive wizard: creates .env + .secrets
 	@bash scripts/generate_secrets.sh
 
 .PHONY: init-dirs
@@ -48,15 +44,12 @@ init-dirs:                        ## Create host data/logs directories
 
 # ── Frontend (local, no Docker) ───────────────────────────────────────────────
 
-.PHONY: frontend-install frontend-build frontend-dev
-frontend-install:                 ## Install SvelteKit npm dependencies
-	cd frontend && npm ci
-
+.PHONY: frontend-build frontend-dev
 frontend-build:                   ## Build SvelteKit locally → frontend/build/
-	cd frontend && npm run build
+	cd frontend && npm ci && npm run build
 
 frontend-dev:                     ## SvelteKit hot-reload dev server (port 5173)
-	cd frontend && npm run dev
+	cd frontend && npm ci && npm run dev
 
 # ── Docker — explicit mode targets ───────────────────────────────────────────
 
