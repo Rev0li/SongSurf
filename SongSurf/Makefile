@@ -98,6 +98,12 @@ config:                           ## Preview the resolved Compose config
 shell:                            ## Open a shell in the running songsurf container
 	docker exec -it songsurf bash
 
+# ── Test JWT (prod mode sans rev0auth) ───────────────────────────────────────
+
+.PHONY: token
+token:                            ## Génère un JWT de test pour accéder en mode prod (ROLE=admin|guest, TTL=24)
+	@ROLE=$(or $(ROLE),admin) TTL=$(or $(TTL),24) bash scripts/gen_test_token.sh
+
 # ── Local dev (no Docker) ─────────────────────────────────────────────────────
 
 .PHONY: dev
