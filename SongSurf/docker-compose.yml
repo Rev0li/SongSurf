@@ -1,9 +1,9 @@
 # SongSurf — Docker Compose
 #
 # Architecture:
-#   [Watcher :8080]  ← always running, auth proxy, container lifecycle
+#   [Watcher :WATCHER_PORT]  ← always running, auth proxy, container lifecycle
 #        │
-#        └── starts/stops on demand → [SongSurf :8081 internal]
+#        └── starts/stops on demand → [SongSurf :SONGSURF_PORT internal]
 #
 # Usage:
 #   make secrets    ← generate .env + .secrets
@@ -45,11 +45,12 @@ services:
       - AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL:-}
       - TARGET_CONTAINER=songsurf
       - TARGET_URL=${TARGET_URL:-http://songsurf:8081}
+      - WATCHER_PORT=${WATCHER_PORT:-8080}
       - INACTIVITY_WARN_TIMEOUT=${INACTIVITY_WARN_TIMEOUT:-3600}
       - INACTIVITY_GRACE_TIMEOUT=${INACTIVITY_GRACE_TIMEOUT:-900}
 
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request, os; urllib.request.urlopen('http://localhost:' + os.getenv('WATCHER_PORT','8080') + '/ping')\""]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -71,7 +72,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Paris
-      - FLASK_PORT=8081
+      - FLASK_PORT=${SONGSURF_PORT:-8081}
       - FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY:?SONGSURF_FLASK_SECRET_KEY is required}
       - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
       - DEV_MODE=${DEV_MODE:-false}
@@ -87,7 +88,7 @@ services:
       - ./logs:/app/logs
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/ping"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${FLASK_PORT:-8081}/ping"]
       interval: 10s
       timeout: 5s
       retries: 3

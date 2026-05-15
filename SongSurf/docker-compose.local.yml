@@ -1,7 +1,7 @@
 services:
   watcher:
     ports:
-      - "127.0.0.1:${WATCHER_PORT:-8080}:8080"
+      - "127.0.0.1:${WATCHER_PORT:-8080}:${WATCHER_PORT:-8080}"
 
   # SongSurf is intentionally NOT published — only reachable from Watcher via Docker network.
   # Direct access on :8081 would bypass Watcher auth.

@@ -112,7 +112,7 @@ fi
 # SECTION 1 — Déploiement
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "1/6 · Déploiement"
+title "1/6 · Déploiement & Ports"
 dim "local = bridge Docker, ports sur localhost  (développement)"
 dim "nas   = network_mode host, accès direct NAS  (production)"
 echo ""
@@ -124,8 +124,19 @@ case "$choice" in
 esac
 ok "DEPLOY_TARGET=$DEPLOY_TARGET"
 
-WATCHER_PORT=$(prompt_optional "Port public Watcher" "8080")
-ok "WATCHER_PORT=$WATCHER_PORT"
+echo ""
+dim "  Watcher = proxy d'auth, port exposé à l'extérieur (VPS / browser)"
+dim "  SongSurf = moteur de téléchargement, port interne uniquement"
+WATCHER_PORT=$(prompt_optional "Port Watcher (externe)" "8080")
+SONGSURF_PORT=$(prompt_optional "Port SongSurf (interne)" "8081")
+
+# Calcul automatique des TARGET_URL selon le mode et SONGSURF_PORT
+TARGET_URL="http://songsurf:${SONGSURF_PORT}"
+TARGET_URL_NAS="http://localhost:${SONGSURF_PORT}"
+
+ok "Watcher    : :${WATCHER_PORT}"
+ok "SongSurf   : :${SONGSURF_PORT} (interne)"
+ok "TARGET_URL : ${TARGET_URL}  (local) / ${TARGET_URL_NAS}  (nas)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — Mots de passe (obligatoires)
@@ -233,10 +244,11 @@ if $WRITE_ENV; then
 # nas   = network_mode host, réseau direct NAS (production)
 DEPLOY_TARGET=${DEPLOY_TARGET}
 WATCHER_PORT=${WATCHER_PORT}
+SONGSURF_PORT=${SONGSURF_PORT}
 
-# ── Routage interne (ne pas modifier) ─────────────────────────────────────
-TARGET_URL=http://songsurf:8081
-TARGET_URL_NAS=http://localhost:8081
+# ── Routage interne (calculé automatiquement depuis SONGSURF_PORT) ─────────
+TARGET_URL=${TARGET_URL}
+TARGET_URL_NAS=${TARGET_URL_NAS}
 
 # ── Limites téléchargement ────────────────────────────────────────────────
 # 0 = illimité
@@ -308,7 +320,8 @@ echo "  Fichiers créés :"
 [[ -f "$SECRETS_FILE" ]] && echo -e "    ${CYAN}.secrets${NC} — clés et mots passe  (600) ${RED}← ne jamais committer${NC}"
 echo ""
 echo -e "  Récapitulatif :"
-echo "    Déploiement    : $DEPLOY_TARGET (port $WATCHER_PORT)"
+echo "    Déploiement    : $DEPLOY_TARGET"
+echo "    Ports          : Watcher :${WATCHER_PORT}  →  SongSurf :${SONGSURF_PORT} (interne)"
 echo "    DEV_MODE       : $DEV_MODE"
 echo "    Limite /jour   : ${DAILY_DOWNLOAD_LIMIT} téléchargements (0=illimité)"
 echo "    Durée max      : ${MAX_DURATION_SECONDS}s ($(( MAX_DURATION_SECONDS / 60 )) min)"

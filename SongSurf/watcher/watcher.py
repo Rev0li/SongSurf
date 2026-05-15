@@ -472,4 +472,4 @@ if __name__ == '__main__':
     else:
         mode = "PRODUCTION (AUTH_JWT_SECRET absent → service verrouillé)"
     logger.info(f"🚀 Watcher démarré — mode={mode}, target={TARGET_URL}")
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    app.run(host='0.0.0.0', port=int(os.getenv('WATCHER_PORT', '8080')), debug=False)
