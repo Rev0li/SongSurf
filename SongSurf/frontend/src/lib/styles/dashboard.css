@@ -9,10 +9,10 @@
 }
 .top-analyzer-card {
   margin-bottom: 0;
-  background: rgba(28, 28, 30, 0.9);
+  background: var(--bg-2);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-color: rgba(84, 84, 88, .5);
+  border-color: var(--sep);
 }
 
 /* ── Main page grid ──────────────────────────────────────────────────────── */
@@ -70,8 +70,8 @@
 }
 .cover-spinner {
   width: 36px; height: 36px;
-  border: 3px solid rgba(235, 235, 245, 0.18);
-  border-top-color: var(--blue);
+  border: 3px solid var(--sep);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin .7s linear infinite;
 }
@@ -111,7 +111,7 @@
 }
 .song-list-preview .song-row {
   padding: 6px var(--s3);
-  border-bottom: 1px solid rgba(84,84,88,.3);
+  border-bottom: 1px solid var(--sep);
   color: var(--text-2);
 }
 .song-list-preview .song-row:last-child { border-bottom: none; }
@@ -183,8 +183,8 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
 /* Nested album inside artist */
 .library-tree details details {
   margin: var(--s1) var(--s3) var(--s1);
-  border-color: rgba(84,84,88,.35);
-  background: rgba(60,60,62,.5);
+  border-color: var(--sep);
+  background: var(--bg-2);
 }
 
 .song-item {
@@ -195,18 +195,19 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
   align-items: center;
   justify-content: space-between;
   cursor: grab;
-  border-top: 1px solid rgba(84,84,88,.25);
+  border-top: 1px solid var(--sep);
 }
 .song-item:first-of-type { border-top: none; }
-.song-item:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.song-item:hover { background: var(--bg-4); color: var(--text); }
 .song-item:active { cursor: grabbing; }
 .lib-song-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .lib-drag-hint { font-size: 10px; color: var(--text-3); opacity: 0; transition: opacity .15s; }
 .song-item:hover .lib-drag-hint { opacity: 1; }
 
-.drop-target { outline: 2px solid rgba(10,132,255,.7); outline-offset: -2px; }
+.drop-target { outline: 2px solid var(--primary); outline-offset: -2px; }
 
-.selected-folder > summary .lib-name { color: var(--blue); }
+.selected-folder > summary { background: var(--accent-soft); }
+.selected-folder > summary .lib-name { color: var(--text); }
 
 .folder-actions {
   background: transparent; border: none; cursor: pointer;
@@ -221,7 +222,7 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
   align-items: center;
   gap: var(--s2);
   padding: 10px var(--s2);
-  border-bottom: 1px solid rgba(84,84,88,.3);
+  border-bottom: 1px solid var(--sep);
   font-size: 13px;
 }
 .dl-item:last-child { border-bottom: none; }

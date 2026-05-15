@@ -9,51 +9,87 @@
 
 :root {
   --font-display: 'JGS', -apple-system, "Helvetica Neue", sans-serif;
-  --font-body:    -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-  /* ── Apple iOS dark mode palette ──────────────────────────────────── */
-  --bg:      #000000;
-  --bg-2:    #1c1c1e;
-  --bg-3:    #2c2c2e;
-  --bg-4:    #3a3a3c;
+  --font-body:    'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
 
-  --text:    #ffffff;
-  --text-2:  rgba(235, 235, 245, 0.6);
-  --text-3:  rgba(235, 235, 245, 0.3);
+  /* ── MyCss Design System — Light Mode ──────────────────────────────────── */
+  --bg:      #F7F4EF;
+  --bg-2:    #FFFFFF;
+  --bg-3:    #FCFBF8;
+  --bg-4:    rgba(17, 17, 17, 0.06);
 
-  --sep:     rgba(84, 84, 88, 0.65);
+  --text:    #111111;
+  --text-2:  #6B6B6B;
+  --text-3:  rgba(17, 17, 17, 0.35);
 
-  /* ── System accent colors ─────────────────────────────────────────── */
-  --blue:    #0a84ff;
-  --green:   #30d158;
-  --red:     #ff453a;
-  --orange:  #ff9f0a;
+  --sep:     rgba(17, 17, 17, 0.08);
+
+  /* ── Palette ────────────────────────────────────────────────────────────── */
+  --primary: #E8B7C4;   /* rose — primary action background */
+  --accent:  #6EDAD3;   /* teal — secondary accent */
+  --success: #65B48A;
+  --red:     #D96B6B;
+  --orange:  #D9A84C;
   --purple:  #bf5af2;
 
-  /* ── Spacing scale ────────────────────────────────────────────────── */
+  /* Legacy semantic aliases (used by existing component selectors) */
+  --blue:  var(--primary);
+  --green: var(--success);
+
+  /* ── MyCss custom tokens ────────────────────────────────────────────────── */
+  --surface:           #FCFBF8;
+  --surface-elevated:  #FFFFFF;
+  --accent-soft:       rgba(232, 183, 196, 0.18);
+  --accent2-soft:      rgba(110, 218, 211, 0.16);
+  --shadow-soft:       0 8px 30px rgba(0, 0, 0, 0.06);
+  --shadow-hover:      0 12px 40px rgba(0, 0, 0, 0.08);
+
+  /* ── Spacing scale ──────────────────────────────────────────────────────── */
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
   --s5: 20px; --s6: 24px; --s8: 32px;
 
-  /* ── Radius scale ─────────────────────────────────────────────────── */
+  /* ── Radius scale ───────────────────────────────────────────────────────── */
   --r-sm:   8px;
-  --r-md:   12px;
-  --r-lg:   16px;
+  --r-md:   14px;
+  --r-lg:   18px;
+  --r-xl:   22px;
   --r-full: 9999px;
 
-  /* ── Legacy aliases (used by older selectors) ─────────────────────── */
+  /* ── Legacy aliases ─────────────────────────────────────────────────────── */
   --color-bg:           var(--bg);
   --color-surface:      var(--bg-2);
   --color-surface-2:    var(--bg-3);
   --color-border:       var(--sep);
   --color-text-primary: var(--text);
   --color-text-muted:   var(--text-2);
-  --color-success:      var(--green);
+  --color-success:      var(--success);
   --color-danger:       var(--red);
-  --color-primary:      var(--blue);
-  --gradient-brand:     var(--blue);
+  --color-primary:      var(--primary);
+  --gradient-brand:     var(--primary);
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
   --space-5: 20px; --space-6: 24px; --space-8: 32px;
-  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-full: 9999px;
+  --radius-sm: 8px; --radius-md: 14px; --radius-lg: 18px; --radius-full: 9999px;
   --font-size-xs: 12px; --font-size-sm: 13px; --font-size-md: 15px;
+}
+
+html.dark {
+  /* ── MyCss Design System — Dark Mode ───────────────────────────────────── */
+  --bg:      #111111;
+  --bg-2:    #1A1A1A;
+  --bg-3:    #222222;
+  --bg-4:    rgba(255, 255, 255, 0.06);
+
+  --text:    #F7F4EF;
+  --text-2:  #8A8A8A;
+  --text-3:  rgba(247, 244, 239, 0.35);
+
+  --sep:     rgba(255, 255, 255, 0.08);
+
+  --surface:           #1A1A1A;
+  --surface-elevated:  #222222;
+  --accent-soft:       rgba(232, 183, 196, 0.15);
+  --accent2-soft:      rgba(110, 218, 211, 0.12);
+  --shadow-soft:       0 8px 30px rgba(0, 0, 0, 0.3);
+  --shadow-hover:      0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -66,4 +102,5 @@ html, body {
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }

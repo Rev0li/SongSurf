@@ -6,13 +6,14 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, lastCompleted, extensionQueue } from '$lib/stores.js';
+	import { user, downloadStatus, lastCompleted, extensionQueue, theme } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 
 	let lastCompletedTimestamp = '';
 	let pollInterval;
+	let unsubTheme;
 
 	async function pollStatus() {
 		try {
@@ -48,6 +49,14 @@
 	}
 
 	onMount(async () => {
+		// Theme: read from localStorage, apply to <html> and keep in sync
+		const saved = localStorage.getItem('theme') ?? 'light';
+		theme.set(saved);
+		unsubTheme = theme.subscribe((t) => {
+			localStorage.setItem('theme', t);
+			document.documentElement.classList.toggle('dark', t === 'dark');
+		});
+
 		// Load user identity
 		try {
 			const me = await api.me();
@@ -60,7 +69,10 @@
 		pollInterval = setInterval(pollStatus, 1500);
 	});
 
-	onDestroy(() => clearInterval(pollInterval));
+	onDestroy(() => {
+		clearInterval(pollInterval);
+		unsubTheme?.();
+	});
 </script>
 
 <svelte:head>

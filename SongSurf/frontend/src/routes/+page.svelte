@@ -1,10 +1,14 @@
 <script>
 	import { fly } from 'svelte/transition';
-	import { user, lastCompleted } from '$lib/stores.js';
+	import { user, lastCompleted, theme } from '$lib/stores.js';
 	import DownloadPanel from '$lib/components/DownloadPanel.svelte';
 	import ProgressZone from '$lib/components/ProgressZone.svelte';
 	import UrlQueue from '$lib/components/UrlQueue.svelte';
 	import LibraryTree from '$lib/components/LibraryTree.svelte';
+
+	function toggleTheme() {
+		theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
+	}
 
 	let libraryRef;
 	let queueRef;
@@ -38,6 +42,9 @@
 		{/if}
 		<a href="/metadata" class="btn btn-ghost btn-sm">Métadonnées</a>
 		<a href="/donation" class="btn btn-ghost btn-sm">Soutenir</a>
+		<button class="btn btn-ghost btn-sm" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
+			{$theme === 'dark' ? '☀️' : '🌙'}
+		</button>
 		<a href="/logout" class="btn btn-ghost btn-sm">Déconnexion</a>
 	</nav>
 </header>
@@ -72,13 +79,11 @@
 		align-items: center;
 		gap: 10px;
 		padding: 12px 16px;
-		background: rgba(28, 28, 30, 0.88);
-		backdrop-filter: blur(24px);
-		-webkit-backdrop-filter: blur(24px);
-		border: 1px solid rgba(255, 255, 255, 0.10);
-		border-left: 3px solid var(--green);
+		background: var(--bg-2);
+		border: 1px solid var(--sep);
+		border-left: 3px solid var(--accent);
 		border-radius: var(--r-md);
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+		box-shadow: var(--shadow-hover);
 		max-width: 300px;
 		min-width: 200px;
 	}
@@ -113,5 +118,5 @@
 		border-radius: var(--r-sm);
 		line-height: 1;
 	}
-	.dl-notif-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+	.dl-notif-close:hover { color: var(--text); background: var(--bg-4); }
 </style>
