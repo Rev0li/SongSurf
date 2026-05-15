@@ -1,0 +1,3 @@
+[submodule "MyCss"]
+	path = MyCss
+	url = git@github.com:Rev0li/MyCss.git
