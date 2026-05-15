@@ -194,7 +194,7 @@ All endpoints are JSON. Admin routes require a valid `X-Watcher-Token` header (o
 
 ---
 
-## Frontend JS API Client (`static/js/api.js`)
+## Frontend JS API Client (`frontend/src/lib/api.js`)
 
 Thin wrapper around `fetch`. All methods return parsed JSON or throw on non-2xx responses.
 
@@ -274,6 +274,4 @@ Session state is not persisted to disk — a container restart invalidates all a
 | `./data/temp` | `/data/temp` | SongSurf |
 | `./data/temp_guest` | `/data/temp_guest` | SongSurf |
 | `./logs` | `/app/logs` | SongSurf |
-| `./SongSurf/templates` | `/app/templates` | SongSurf (hot-reload) |
-| `./SongSurf/static` | `/app/static` | SongSurf (hot-reload) |
 | `/var/run/docker.sock` | `/var/run/docker.sock` | Watcher (Docker SDK) |

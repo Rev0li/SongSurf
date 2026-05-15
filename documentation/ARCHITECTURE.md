@@ -172,50 +172,46 @@ Two Docker Compose overlay files are merged at runtime:
 
 ## Frontend Architecture
 
-No framework or bundler. Pure HTML + Jinja2 + vanilla JS.
+SvelteKit (Svelte 4, `adapter-static`) — built into a static bundle served directly by Flask.
 
 ```
-static/css/
-  design-system.css     CSS custom properties (colors, spacing, radii, typography)
-  components.css        Atomic UI components (btn, card, form, modal, alert, badge)
-  layouts.css           Page grids and flex helpers
-  pages/
-    dashboard.css       Admin dashboard page-level styles
-    guest.css           Guest dashboard page-level styles
-    auth.css            Login page styles
-
-static/js/
-  api.js                Thin HTTP client wrapping all backend endpoints
-  components/
-    modal.js            Modal open/close lifecycle
-    progress-bar.js     Progress visualization component
-    toast.js            Notification system
-    watcher-inactivity.js  Inactivity warning banner (shown by Watcher polling)
-  pages/
-    dashboard-admin.js  Admin dashboard (~2000 lines: extract, download, queue, library)
-    guest-unified.js    Guest dashboard (extract, download, quota, ZIP, session timer)
-
-templates/
-  base.html             Jinja2 skeleton — CSS/JS blocks
-  pages/
-    dashboard_admin.html   Admin 70/30 grid layout
-    guest_dashboard.html   Guest single-column layout
-    loading.html           Watcher loading screen
-    login.html             Auth form (admin + guest tabs)
+SongSurf/frontend/
+  src/
+    app.html                  Shell HTML — anti-flash theme script, font preloads
+    routes/
+      +layout.svelte          Root layout — theme init, session polling, nav
+      +page.svelte            Main dashboard (admin + guest unified entry)
+    lib/
+      stores.js               Svelte writable stores: user, theme, downloadStatus,
+                              lastCompleted, extensionQueue
+      styles/
+        design-system.css     CSS custom properties (MyCss tokens)
+        components.css        Atomic component styles (btn, card, badge, alert, modal)
+        dashboard.css         Dashboard page-level styles
+      components/             Reusable Svelte components
 ```
 
-### CSS Design Tokens
+### CSS Design Tokens (MyCss palette, light/dark)
 
-All visual values are defined once in `design-system.css`:
+Defined in `design-system.css`. Dark mode activated by `html.dark` class (toggled via `localStorage`):
 
 ```css
---color-bg-primary: #0a0a0f
---color-primary:    #7c3aed
---gradient-brand:   linear-gradient(135deg, #ff3b6d, #7c3aed)
---space-4: 16px
---radius-xl: 12px
---font-size-base: 13px
+/* Light */
+--bg: #F7F4EF;  --bg-2: #FFFFFF;  --text: #111111;  --text-2: #6B6B6B;
+--primary: #E8B7C4;   /* rose */
+--accent:  #6EDAD3;   /* teal */
+--success: #65B48A;
+
+/* Dark (overrides under html.dark) */
+--bg: #111111;  --bg-2: #1A1A1A;  --text: #F7F4EF;
+
+--accent-soft:  rgba(232,183,196,0.18)
+--accent2-soft: rgba(110,218,211,0.16)
+--shadow-soft:  0 8px 30px rgba(0,0,0,0.06)
+--r-md: 14px;  --r-lg: 18px;  --r-full: 9999px
 ```
+
+**Fonts:** JGS (display/brand titles) + Geist (body text).
 
 Breakpoints: mobile `< 640px` · tablet `640–1024px` · desktop `> 1024px`
 
@@ -231,5 +227,6 @@ Breakpoints: mobile `< 640px` · tablet `640–1024px` · desktop `> 1024px`
 | Tag writing | Mutagen 1.47 |
 | Image handling | Pillow |
 | Containerization | Docker Compose |
-| Frontend | HTML5 + Jinja2 + Vanilla JS + CSS3 |
+| Frontend | SvelteKit (Svelte 4, adapter-static) |
+| Design system | MyCss tokens — rose + teal palette, light/dark |
 | Proxy control | Docker SDK for Python (Watcher controls SongSurf container) |
