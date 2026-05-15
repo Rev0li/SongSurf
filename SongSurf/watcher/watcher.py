@@ -66,6 +66,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Redact ?token=<JWT> from Werkzeug access logs so JWTs never appear in plain text
+class _RedactTokenFilter(logging.Filter):
+    _pat = re.compile(r'token=[A-Za-z0-9._~+/=-]+')
+    def filter(self, record):
+        record.msg = self._pat.sub('token=[REDACTED]', str(record.msg))
+        return True
+
+logging.getLogger('werkzeug').addFilter(_RedactTokenFilter())
+
 if DEV_MODE:
     logger.warning("⚠️  DEV_MODE activé — authentification désactivée (dev only)")
 elif not AUTH_JWT_SECRET:
