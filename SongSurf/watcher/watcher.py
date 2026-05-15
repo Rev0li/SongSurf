@@ -102,7 +102,9 @@ def _validate_jwt(token: str) -> dict | None:
             algorithms=['HS256'],
             options={'require': ['sub', 'role', 'exp']},
         )
-        if claims.get('token_type') != 'access':
+        # token_type is optional — if present it must be 'access'
+        token_type = claims.get('token_type')
+        if token_type is not None and token_type != 'access':
             return None
         return {
             'sub':   claims['sub'],
@@ -448,6 +450,24 @@ def logout():
 def proxy(path):
     if path == 'favicon.ico':
         return Response(status=204)
+
+    # Token handoff from auth service via ?token=<JWT>
+    # Rev0auth redirects to http://songsurf:PORT/?token=JWT after login.
+    # Watcher validates it, sets the HttpOnly cookie, then redirects to clean URL.
+    url_token = request.args.get('token')
+    if url_token:
+        user = _validate_jwt(url_token)
+        if user:
+            clean_url = '/' + path if path else '/'
+            resp = redirect(clean_url)
+            resp.set_cookie(
+                'access_token', url_token,
+                httponly=True, samesite='Lax', path='/',
+                max_age=60 * 60 * 24,
+            )
+            logger.info(f"✅ Token handoff — user={user['sub']} role={user['role']}, cookie posé")
+            return resp
+        logger.warning("⚠️  Token handoff échoué (JWT invalide dans ?token=)")
 
     user = _get_user_from_request()
     if not user:
