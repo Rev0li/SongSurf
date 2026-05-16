@@ -54,7 +54,7 @@ USER songsurf
 EXPOSE 8081
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${FLASK_PORT:-8081}/ping || exit 1
+    CMD curl -f http://localhost:${SONGSURF_PORT:-8081}/ping || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "app.py"]

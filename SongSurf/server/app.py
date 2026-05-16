@@ -1217,25 +1217,29 @@ def download_zip():
     if not zip_path.exists():
         return jsonify({'success': False, 'error': 'ZIP introuvable'}), 404
 
-    _sub = user['sub']
+    _sub      = user['sub']
+    music_dir = _user_music_dir(user)
 
-    def _cleanup_zip():
-        time.sleep(60)
+    def _post_download_cleanup():
         try:
             zip_path.unlink(missing_ok=True)
             with user_zip_lock:
                 user_zip_state.pop(_sub, None)
+            # Only wipe per-user subdir — never BASE_MUSIC_DIR (DEV_MODE guard)
+            if music_dir != BASE_MUSIC_DIR and music_dir.exists():
+                shutil.rmtree(music_dir, ignore_errors=True)
+                logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
         except Exception as e:
-            logger.warning(f"⚠️ Cleanup ZIP: {e}")
+            logger.warning(f"⚠️ Post-download cleanup: {e}")
 
-    threading.Thread(target=_cleanup_zip, daemon=True).start()
-
-    return send_file(
+    response = send_file(
         zip_path,
         as_attachment=True,
         download_name='SongSurf_musiques.zip',
         mimetype='application/zip',
     )
+    response.call_on_close(_post_download_cleanup)
+    return response
 
 
 # ── Admin-only utilities ───────────────────────────────────────────────────────

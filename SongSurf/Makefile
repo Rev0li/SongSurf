@@ -125,6 +125,42 @@ clean:                            ## Remove Docker images + temp data
 
 reset: down clean up              ## Full wipe: stop → clean → start fresh
 
+# ── Deploy NAS (manuel, depuis la machine de dev) ────────────────────────────
+
+NAS_USER ?= rev0li08
+NAS_HOST ?= 192.168.1.45
+NAS_PORT ?= 22
+NAS_KEY  ?= $(HOME)/.ssh/nas_songsurf
+NAS_DIR  ?= /volume1/docker/songsurf
+
+NAS_SSH := ssh -p $(NAS_PORT) -i $(NAS_KEY)
+
+.PHONY: deploy-nas
+deploy-nas:                       ## rsync + restart watcher/songsurf sur le NAS
+	rsync -avz --delete \
+	  -e "ssh -p $(NAS_PORT) -i $(NAS_KEY)" \
+	  --exclude='__pycache__/' \
+	  --exclude='data/' \
+	  --exclude='logs/' \
+	  --exclude='.git/' \
+	  --exclude='.env' \
+	  --exclude='.secrets' \
+	  ./ $(NAS_USER)@$(NAS_HOST):$(NAS_DIR)/
+	$(NAS_SSH) $(NAS_USER)@$(NAS_HOST) \
+	  "cd $(NAS_DIR) && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
+
+.PHONY: deploy-nas-dry
+deploy-nas-dry:                   ## dry-run rsync (aperçu sans envoyer)
+	rsync -avzn --delete \
+	  -e "ssh -p $(NAS_PORT) -i $(NAS_KEY)" \
+	  --exclude='__pycache__/' \
+	  --exclude='data/' \
+	  --exclude='logs/' \
+	  --exclude='.git/' \
+	  --exclude='.env' \
+	  --exclude='.secrets' \
+	  ./ $(NAS_USER)@$(NAS_HOST):$(NAS_DIR)/
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 .PHONY: help
