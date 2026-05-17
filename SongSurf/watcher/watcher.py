@@ -13,6 +13,8 @@ Variables d'environnement:
   DEV_MODE                 'true' pour contourner l'auth en développement
   AUTH_JWT_SECRET          Clé HMAC partagée avec auth-selfhost-rust (OBLIGATOIRE en prod)
   AUTH_SERVICE_LOGIN_URL   URL de la page de login auth-selfhost-rust (ex: http://auth:8000/login)
+  REVAUTH_HOME_URL         URL de l'espace membre rev0auth (ex: http://auth:8000/home/friend)
+                           → redirect après logout (défaut: AUTH_SERVICE_LOGIN_URL si absent)
   TARGET_CONTAINER         Nom du container SongSurf  (défaut: songsurf)
   TARGET_URL               URL interne de SongSurf    (défaut: http://songsurf:8081)
   INACTIVITY_WARN_TIMEOUT  Secondes sans activité avant avertissement (défaut: 3600)
@@ -51,6 +53,7 @@ WATCHER_SECRET         = os.getenv('WATCHER_SECRET', secrets.token_hex(32))
 DEV_MODE               = os.getenv('DEV_MODE', 'false').lower() == 'true'
 AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
 AUTH_SERVICE_LOGIN_URL = os.getenv('AUTH_SERVICE_LOGIN_URL', '')
+REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', AUTH_SERVICE_LOGIN_URL)
 
 TARGET_CONTAINER         = os.getenv('TARGET_CONTAINER', 'songsurf')
 TARGET_URL               = os.getenv('TARGET_URL', 'http://songsurf:8081').rstrip('/')
@@ -448,7 +451,7 @@ def logout():
         logger.info("💤 Logout — mise en veille de SongSurf")
         threading.Thread(target=_stop_songsurf, daemon=True).start()
 
-    target = AUTH_SERVICE_LOGIN_URL or '/'
+    target = REVAUTH_HOME_URL or AUTH_SERVICE_LOGIN_URL or '/'
     resp = redirect(target)
     resp.delete_cookie('access_token', path='/', samesite='Lax')
     return resp

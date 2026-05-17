@@ -50,7 +50,7 @@
 		<button class="btn btn-ghost btn-sm" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
 			{$theme === 'dark' ? '☀️' : '🌙'}
 		</button>
-		<a href="/logout" class="btn btn-ghost btn-sm">Déconnexion</a>
+		<a href="/logout" class="btn btn-ghost btn-sm">← Mon espace</a>
 	</nav>
 </header>
 
