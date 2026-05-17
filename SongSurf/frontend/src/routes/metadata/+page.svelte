@@ -1475,4 +1475,36 @@
 		width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	}
 	.home-artist-meta { font-size: 11px; color: var(--text-3); }
+
+	/* ── Responsive (sm < 480px) ─────────────────────────────── */
+	@media (max-width: 480px) {
+		/* Two-panel → stacked */
+		.meta-layout { flex-direction: column; height: auto; overflow: visible; }
+		.meta-sidebar { width: 100%; height: 300px; border-right: none; border-bottom: 1px solid var(--sep); }
+		.meta-main { overflow-y: visible; padding: var(--s3); }
+
+		/* Inputs need 16px to avoid iOS zoom */
+		.meta-input { font-size: 16px; }
+
+		/* Artist/album headers: stack photo + info */
+		.artist-panel { flex-direction: column; gap: var(--s4); padding: var(--s3) 0; }
+		.artist-pic-zone { width: 100px; height: 100px; }
+		.album-header { flex-direction: column; gap: var(--s4); padding: var(--s3) 0 var(--s4); }
+		.album-cover-zone { width: 120px; height: 120px; }
+
+		/* Tag rows: label above value */
+		.meta-row { flex-direction: column; align-items: flex-start; gap: var(--s1); min-height: unset; padding: var(--s2) var(--s3); }
+		.meta-key { width: 100%; }
+		.meta-input { width: 100%; }
+
+		/* Save bar: stack buttons */
+		.save-bar { flex-wrap: wrap; }
+
+		/* Home gallery: fewer columns on tiny screens */
+		.home-gallery { padding: var(--s3); }
+		.home-gallery-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+
+		/* Hide drag handles (D&D is desktop-only) */
+		.lib-drag-handle { display: none; }
+	}
 </style>

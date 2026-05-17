@@ -7,3 +7,11 @@
 @media (max-width: 900px) {
   .url-group { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 480px) {
+  .container { padding: 0 var(--s3); }
+  .header { padding: var(--s2) var(--s3); }
+  .header-title { font-size: 17px; }
+  .header-nav { flex-wrap: wrap; justify-content: flex-end; gap: var(--s2); }
+  .badge { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+}

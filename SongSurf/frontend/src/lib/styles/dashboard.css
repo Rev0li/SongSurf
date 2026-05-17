@@ -255,3 +255,14 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
   .side-column { order: -1; }
   .top-analyzer-wrap { top: 53px; }
 }
+@media (max-width: 480px) {
+  .page-body { padding: 0 var(--s3) var(--s8); }
+  .top-analyzer-wrap { padding: 0 var(--s3); }
+  .folder-actions { min-height: 44px; padding: 10px 8px; }
+  .lib-name { max-width: none; flex: 1; }
+  .lib-song-name { max-width: none; flex: 1; }
+  .lib-drag-hint { display: none; }
+  .library-tree { max-height: 360px; }
+  .metadata-actions { flex-direction: column; }
+  .metadata-actions .btn { width: 100%; }
+}

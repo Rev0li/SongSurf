@@ -99,20 +99,33 @@
 	let zipping = false;
 
 	async function downloadZip() {
-		const isPermanent = $user?.role === 'admin';
-		if (!isPermanent) {
-			const ok = confirm(
-				'Télécharger la bibliothèque en ZIP ?\n\n' +
-				'⚠️ Votre musique sera supprimée du serveur 60 secondes après le téléchargement.'
-			);
-			if (!ok) return;
-		}
+		const ok = confirm(
+			'Télécharger la bibliothèque en ZIP ?\n\n' +
+			'⚠️ Votre musique sera supprimée du serveur dès que le téléchargement est terminé.'
+		);
+		if (!ok) return;
+
 		zipping = true;
 		try {
 			const res = await api.prepareZip();
 			if (!res.success) { addToast(res.error || 'Impossible de créer le ZIP.', 'error'); return; }
 			addToast(`ZIP prêt : ${res.count} fichiers (${res.size_mb} MB). Téléchargement…`, 'info');
 			window.location.href = (res.download_url || '/api/download-zip') + '?t=' + Date.now();
+
+			// Polling jusqu'à ce que le serveur ait supprimé la bibliothèque (max 5 min)
+			let attempts = 0;
+			const poll = setInterval(async () => {
+				attempts++;
+				try {
+					const data = await api.getLibrary();
+					const empty = (data?.artists?.length ?? 0) === 0 && (data?.playlists?.length ?? 0) === 0;
+					if (empty || attempts >= 150) {
+						clearInterval(poll);
+						tree = data;
+						if (empty) addToast('✅ Bibliothèque vidée — musique supprimée du serveur.', 'info');
+					}
+				} catch { /* ignore */ }
+			}, 2000);
 		} catch (err) {
 			addToast(err.message || 'Erreur ZIP.', 'error');
 		} finally {

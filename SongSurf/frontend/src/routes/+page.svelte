@@ -1,5 +1,6 @@
 <script>
 	import { fly } from 'svelte/transition';
+	import { get } from 'svelte/store';
 	import { user, lastCompleted, theme } from '$lib/stores.js';
 	import DownloadPanel from '$lib/components/DownloadPanel.svelte';
 	import ProgressZone from '$lib/components/ProgressZone.svelte';
@@ -15,7 +16,12 @@
 	let completedSong = null;
 	let dismissTimer = null;
 
-	$: if ($lastCompleted) {
+	// Initialised with the current store value so we don't re-show a song
+	// that already completed before this page component mounted.
+	let shownTimestamp = get(lastCompleted)?.timestamp ?? '';
+
+	$: if ($lastCompleted && $lastCompleted.timestamp !== shownTimestamp) {
+		shownTimestamp = $lastCompleted.timestamp;
 		completedSong = $lastCompleted;
 		libraryRef?.refresh();
 		clearTimeout(dismissTimer);
@@ -41,7 +47,6 @@
 			<span class="badge" title={$user.sub}>{$user.email}</span>
 		{/if}
 		<a href="/metadata" class="btn btn-ghost btn-sm">Métadonnées</a>
-		<a href="/donation" class="btn btn-ghost btn-sm">Soutenir</a>
 		<button class="btn btn-ghost btn-sm" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
 			{$theme === 'dark' ? '☀️' : '🌙'}
 		</button>
@@ -119,4 +124,7 @@
 		line-height: 1;
 	}
 	.dl-notif-close:hover { color: var(--text); background: var(--bg-4); }
+	@media (max-width: 480px) {
+		.dl-notif { right: 12px; left: 12px; bottom: 16px; max-width: none; min-width: unset; }
+	}
 </style>

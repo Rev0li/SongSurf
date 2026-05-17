@@ -134,4 +134,9 @@
 	.pcs-title { font-size: var(--font-size-lg); font-weight: 600; margin-bottom: var(--space-2); }
 	.pcs-subtitle { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: var(--space-4); }
 	.pcs-form { display: flex; flex-direction: column; gap: var(--space-3); }
+	@media (max-width: 480px) {
+		.donation-wrap { padding: var(--space-5) var(--s3); }
+		.crypto-card { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+		.crypto-copy { width: 100%; padding: 12px; text-align: center; min-height: 44px; }
+	}
 </style>

@@ -14,7 +14,7 @@ Storage: /data/music/Artist/Album/  (flat, no user-sub prefix)
 Phase 3: see documentation/CONNECTOR.md
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -1219,27 +1219,36 @@ def download_zip():
 
     _sub      = user['sub']
     music_dir = _user_music_dir(user)
+    file_size = zip_path.stat().st_size
 
-    def _post_download_cleanup():
+    def _stream_and_cleanup():
         try:
-            zip_path.unlink(missing_ok=True)
-            with user_zip_lock:
-                user_zip_state.pop(_sub, None)
-            # Only wipe per-user subdir — never BASE_MUSIC_DIR (DEV_MODE guard)
-            if music_dir != BASE_MUSIC_DIR and music_dir.exists():
-                shutil.rmtree(music_dir, ignore_errors=True)
-                logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
-        except Exception as e:
-            logger.warning(f"⚠️ Post-download cleanup: {e}")
+            with open(zip_path, 'rb') as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            # Appelé par le WSGI quand le stream est terminé (ou connexion coupée)
+            try:
+                zip_path.unlink(missing_ok=True)
+                with user_zip_lock:
+                    user_zip_state.pop(_sub, None)
+                if music_dir != BASE_MUSIC_DIR and music_dir.exists():
+                    shutil.rmtree(music_dir, ignore_errors=True)
+                    logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
+            except Exception as e:
+                logger.warning(f"⚠️ Post-download cleanup: {e}")
 
-    response = send_file(
-        zip_path,
-        as_attachment=True,
-        download_name='SongSurf_musiques.zip',
+    return Response(
+        _stream_and_cleanup(),
         mimetype='application/zip',
+        headers={
+            'Content-Disposition': 'attachment; filename=SongSurf_musiques.zip',
+            'Content-Length': file_size,
+        },
     )
-    response.call_on_close(_post_download_cleanup)
-    return response
 
 
 # ── Admin-only utilities ───────────────────────────────────────────────────────

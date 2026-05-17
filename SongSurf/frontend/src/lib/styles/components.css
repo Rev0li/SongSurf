@@ -121,7 +121,7 @@
   border: 1px solid var(--sep);
   background: var(--bg-3);
   color: var(--text);
-  font-size: 15px;
+  font-size: 16px;
   font-family: var(--font-body);
   transition: border-color .15s, box-shadow .15s;
   outline: none;
@@ -219,3 +219,8 @@
 .empty-state      { text-align: center; padding: var(--s8) var(--s4); }
 .empty-state-icon { font-size: 32px; margin-bottom: var(--s3); opacity: .5; }
 .empty-state-text { color: var(--text-3); font-size: 14px; margin: 0; }
+
+/* ── Responsive (sm < 480px) ─────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .btn-sm { min-height: 44px; padding: 10px 14px; }
+}
