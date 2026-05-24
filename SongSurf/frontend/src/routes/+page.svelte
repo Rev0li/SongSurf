@@ -1,6 +1,4 @@
 <script>
-	import { fly } from 'svelte/transition';
-	import { get } from 'svelte/store';
 	import { user, lastCompleted, theme } from '$lib/stores.js';
 	import DownloadPanel from '$lib/components/DownloadPanel.svelte';
 	import ProgressZone from '$lib/components/ProgressZone.svelte';
@@ -13,19 +11,11 @@
 
 	let libraryRef;
 	let queueRef;
-	let completedSong = null;
-	let dismissTimer = null;
-
-	// Initialised with the current store value so we don't re-show a song
-	// that already completed before this page component mounted.
-	let shownTimestamp = get(lastCompleted)?.timestamp ?? '';
+	let shownTimestamp = '';
 
 	$: if ($lastCompleted && $lastCompleted.timestamp !== shownTimestamp) {
 		shownTimestamp = $lastCompleted.timestamp;
-		completedSong = $lastCompleted;
 		libraryRef?.refresh();
-		clearTimeout(dismissTimer);
-		dismissTimer = setTimeout(() => { completedSong = null; }, 4500);
 	}
 
 	function handleAddToQueue(item) {
@@ -62,69 +52,3 @@
 	<LibraryTree bind:this={libraryRef} />
 </div>
 
-<!-- Download completion popup -->
-{#if completedSong}
-	<div class="dl-notif" transition:fly={{ y: 16, duration: 250 }}>
-		<span class="dl-notif-icon">✅</span>
-		<div class="dl-notif-text">
-			<span class="dl-notif-title">{completedSong.title}</span>
-			<span class="dl-notif-artist">{completedSong.artist}</span>
-		</div>
-		<button class="dl-notif-close" on:click={() => completedSong = null}>✕</button>
-	</div>
-{/if}
-
-<style>
-	.dl-notif {
-		position: fixed;
-		bottom: 24px;
-		right: 24px;
-		z-index: 200;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 12px 16px;
-		background: var(--bg-2);
-		border: 1px solid var(--sep);
-		border-left: 3px solid var(--accent);
-		border-radius: var(--r-md);
-		box-shadow: var(--shadow-hover);
-		max-width: 300px;
-		min-width: 200px;
-	}
-	.dl-notif-icon { font-size: 18px; flex-shrink: 0; }
-	.dl-notif-text { flex: 1; min-width: 0; }
-	.dl-notif-title {
-		display: block;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--text);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.dl-notif-artist {
-		display: block;
-		font-size: 11px;
-		color: var(--text-3);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		margin-top: 2px;
-	}
-	.dl-notif-close {
-		background: none;
-		border: none;
-		color: var(--text-3);
-		cursor: pointer;
-		font-size: 11px;
-		padding: 3px 5px;
-		flex-shrink: 0;
-		border-radius: var(--r-sm);
-		line-height: 1;
-	}
-	.dl-notif-close:hover { color: var(--text); background: var(--bg-4); }
-	@media (max-width: 480px) {
-		.dl-notif { right: 12px; left: 12px; bottom: 16px; max-width: none; min-width: unset; }
-	}
-</style>
