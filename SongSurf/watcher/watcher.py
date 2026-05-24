@@ -406,9 +406,10 @@ def _cors_headers(origin: str) -> dict:
     }
 
 
-@app.route('/api/queue-direct', methods=['OPTIONS'])
-@app.route('/ping', methods=['OPTIONS'])
-def cors_preflight():
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def cors_preflight(path=''):
+    """Generic CORS preflight for all paths — covers /api/preview, /api/queue-direct, /ping, etc."""
     origin = request.headers.get('Origin', '')
     hdrs = _cors_headers(origin)
     if not hdrs:
