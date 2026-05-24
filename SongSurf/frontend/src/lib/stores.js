@@ -13,11 +13,17 @@ export const downloadStatus = writable({
 	batch_total: 0,
 	batch_done: 0,
 	batch_percent: 0,
+	is_mine: true,
 });
 
 export const workerBusy = derived(
 	downloadStatus,
 	($s) => !!$s.in_progress || ($s.queue_size ?? 0) > 0 || !!$s.batch_active
+);
+
+export const workerBusyByOther = derived(
+	downloadStatus,
+	($s) => (!!$s.in_progress || ($s.queue_size ?? 0) > 0 || !!$s.batch_active) && !$s.is_mine
 );
 
 export const lastCompleted = writable(null); // { artist, title, timestamp } | null

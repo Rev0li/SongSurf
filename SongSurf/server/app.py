@@ -530,6 +530,12 @@ def get_status():
         _daily_reset_if_needed()
         status['daily_count'] = _daily_count
     status['daily_limit'] = DAILY_DOWNLOAD_LIMIT
+    current_user = _get_current_user()
+    current_dl = status.get('current_download') or {}
+    status['is_mine'] = (
+        not current_dl or
+        current_dl.get('user_sub') == (current_user or {}).get('sub')
+    )
     return jsonify(status)
 
 
@@ -1251,6 +1257,42 @@ def download_zip():
     )
 
 
+# ── Admin logs ────────────────────────────────────────────────────────────────
+
+@app.route('/api/admin/dl-logs')
+@auth_required
+def api_admin_dl_logs():
+    user = _get_current_user()
+    if user.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Admin requis'}), 403
+
+    pseudo = (request.args.get('pseudo') or '').strip().lower()
+    limit  = min(max(1, int(request.args.get('limit', '100'))), 500)
+
+    log_path = LOG_DIR / 'downloads.log'
+    entries  = []
+    try:
+        if log_path.exists():
+            with open(log_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(' | ')
+                    if len(parts) < 5:
+                        continue
+                    ts, log_pseudo, artist, album, title = parts[0], parts[1], parts[2], parts[3], parts[4]
+                    if pseudo and log_pseudo.strip().lower() != pseudo:
+                        continue
+                    entries.append({'timestamp': ts, 'pseudo': log_pseudo.strip(),
+                                    'artist': artist.strip(), 'album': album.strip(), 'title': title.strip()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    entries.reverse()
+    return jsonify({'success': True, 'entries': entries[:limit], 'total': len(entries)})
+
+
 # ── Admin-only utilities ───────────────────────────────────────────────────────
 
 @app.route('/api/admin/extract-covers', methods=['POST'])
@@ -1713,6 +1755,7 @@ def queue_worker():
                     'in_progress':      True,
                     'current_download': {
                         'url': url, 'metadata': metadata,
+                        'user_sub': user_sub,
                         'started_at': datetime.now().isoformat()
                     },
                     'last_error': None,
