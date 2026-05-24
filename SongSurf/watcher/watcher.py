@@ -486,6 +486,10 @@ def proxy(path):
 
     user = _get_user_from_request()
     if not user:
+        origin = request.headers.get('Origin', '')
+        if origin.startswith('chrome-extension://') or origin == 'null':
+            # Extension can't follow cross-origin redirects — return JSON 401 with CORS headers
+            return jsonify({'ok': False, 'error': 'unauthenticated', 'login_url': AUTH_SERVICE_LOGIN_URL}), 401
         if AUTH_SERVICE_LOGIN_URL:
             return redirect(AUTH_SERVICE_LOGIN_URL)
         return render_template('pages/unavailable.html'), 503
