@@ -42,18 +42,27 @@ from urllib.parse import urlparse
 app = Flask(__name__, template_folder='templates', static_folder=None)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
-# Allowed CORS origins: Chrome extension + optional custom origin
-_CORS_ORIGINS = set(filter(None, [
-    # Chrome extensions send Origin: chrome-extension://<id>
-    # We allow all extension origins; the real auth guard is the JWT cookie.
-    'null',  # some browsers send "null" for extensions
-] + [o.strip() for o in os.getenv('CORS_EXTRA_ORIGINS', '').split(',') if o.strip()]))
-
 WATCHER_SECRET         = os.getenv('WATCHER_SECRET', secrets.token_hex(32))
 DEV_MODE               = os.getenv('DEV_MODE', 'false').lower() == 'true'
 AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
 AUTH_SERVICE_LOGIN_URL = os.getenv('AUTH_SERVICE_LOGIN_URL', '')
 REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', AUTH_SERVICE_LOGIN_URL)
+
+# Allowed CORS origins: Chrome extensions + auth portal origin + optional extras
+def _build_cors_origins() -> set:
+    origins = {'null'}  # some browsers send "null" for extensions
+    # Auto-allow the auth portal origin so the profile page can fetch dl-logs
+    if AUTH_SERVICE_LOGIN_URL:
+        parsed = urlparse(AUTH_SERVICE_LOGIN_URL)
+        if parsed.scheme and parsed.netloc:
+            origins.add(f"{parsed.scheme}://{parsed.netloc}")
+    for o in os.getenv('CORS_EXTRA_ORIGINS', '').split(','):
+        o = o.strip()
+        if o:
+            origins.add(o)
+    return origins
+
+_CORS_ORIGINS = _build_cors_origins()
 
 TARGET_CONTAINER         = os.getenv('TARGET_CONTAINER', 'songsurf')
 TARGET_URL               = os.getenv('TARGET_URL', 'http://songsurf:8081').rstrip('/')
@@ -454,7 +463,7 @@ def logout():
 
     target = REVAUTH_HOME_URL or AUTH_SERVICE_LOGIN_URL or '/'
     resp = redirect(target)
-    resp.delete_cookie('access_token', path='/', samesite='Lax')
+    resp.delete_cookie('access_token', path='/', samesite='None', secure=True)
     return resp
 
 
@@ -477,7 +486,7 @@ def proxy(path):
             resp = redirect(clean_url)
             resp.set_cookie(
                 'access_token', url_token,
-                httponly=True, samesite='Lax', path='/',
+                httponly=True, samesite='None', secure=True, path='/',
                 max_age=60 * 60 * 24,
             )
             logger.info(f"✅ Token handoff — user={user['sub']} role={user['role']}, cookie posé")
