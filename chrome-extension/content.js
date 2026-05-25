@@ -82,17 +82,13 @@
     panelEl.id = 'songsurf-panel';
 
     const isSong = urlType === 'song';
-    const thumb  = meta.thumbnail || '';
 
     panelEl.innerHTML = `
       <div id="ssp-inner">
         <div id="ssp-header">
-          ${thumb ? `<img id="ssp-thumb" src="${thumb}" alt="">` : ''}
-          <div id="ssp-titles">
-            <div id="ssp-type">${TYPE_META[urlType]?.emoji || ''} ${TYPE_META[urlType]?.label || urlType}</div>
-            <div id="ssp-title" title="${esc(meta.title)}">${esc(meta.title)}</div>
-            ${!isSong ? `<div id="ssp-count">${meta.song_count || '?'} titres</div>` : ''}
-          </div>
+          <div id="ssp-type">${TYPE_META[urlType]?.emoji || ''} ${TYPE_META[urlType]?.label || urlType}</div>
+          <div id="ssp-title" title="${esc(meta.title)}">${esc(meta.title)}</div>
+          ${!isSong ? `<div id="ssp-count">${meta.song_count || '?'} titres</div>` : ''}
         </div>
 
         <div class="ssp-field">
@@ -102,6 +98,10 @@
         <div class="ssp-field">
           <label>${isSong ? 'Album' : 'Nom du dossier'}</label>
           <input id="ssp-album" type="text" value="${esc(isSong ? meta.album : meta.title)}" placeholder="Album">
+        </div>
+        <div class="ssp-field">
+          <label>Année</label>
+          <input id="ssp-year" type="text" value="${esc(meta.year)}" placeholder="Année" maxlength="4" style="width:90px">
         </div>
 
         <div id="ssp-actions">
@@ -133,19 +133,14 @@
         to   { opacity: 1; transform: translateY(0); }
       }
       #ssp-inner { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-      #ssp-header { display: flex; gap: 10px; align-items: flex-start; }
-      #ssp-thumb {
-        width: 52px; height: 52px; object-fit: cover;
-        border-radius: 6px; flex-shrink: 0; background: #2d3748;
-      }
-      #ssp-titles { flex: 1; min-width: 0; }
+      #ssp-header { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
       #ssp-type { font-size: 11px; color: #60a5fa; font-weight: 600;
-                  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
+                  letter-spacing: .04em; text-transform: uppercase; }
       #ssp-title {
         font-size: 13px; font-weight: 600; color: #fff;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      #ssp-count { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+      #ssp-count { font-size: 11px; color: #9ca3af; }
       .ssp-field { display: flex; flex-direction: column; gap: 4px; }
       .ssp-field label {
         font-size: 10px; font-weight: 700; color: #9ca3af;
@@ -186,17 +181,15 @@
     });
 
     document.getElementById('ssp-confirm').addEventListener('click', async () => {
-      const btn     = document.getElementById('ssp-confirm');
-      const artist  = document.getElementById('ssp-artist').value.trim();
-      const album   = document.getElementById('ssp-album').value.trim();
+      const btn    = document.getElementById('ssp-confirm');
+      const artist = document.getElementById('ssp-artist').value.trim();
+      const album  = document.getElementById('ssp-album').value.trim();
+      const year   = document.getElementById('ssp-year').value.trim();
 
       btn.disabled    = true;
       btn.textContent = '…';
 
-      const payload = { url, artist, album };
-      if (isSong) payload.title = meta.title;
-
-      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_URL', url, meta: { artist, album, title: meta.title } });
+      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_URL', url, meta: { artist, album, year, title: meta.title } });
 
       closePanel();
       if (result && result.success) {
