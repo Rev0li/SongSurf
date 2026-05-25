@@ -558,57 +558,6 @@ def library_move_song():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/library/rename-folder', methods=['POST'])
-@auth_required
-def library_rename_folder():
-    try:
-        user      = _get_current_user()
-        music_dir = _user_music_dir(user)
-        data        = request.get_json() or {}
-        folder_path = (data.get('folder_path') or '').strip()
-        new_name    = (data.get('new_name') or '').strip()
-        if not folder_path or not new_name:
-            return jsonify({'success': False, 'error': 'folder_path/new_name requis'}), 400
-
-        src = (music_dir / folder_path).resolve()
-        if not str(src).startswith(str(music_dir.resolve())):
-            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
-        if not src.exists() or not src.is_dir():
-            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
-
-        cleaned = ''.join(ch for ch in new_name if ch not in '<>:"/\\|?*').strip()
-        if not cleaned:
-            return jsonify({'success': False, 'error': 'Nom invalide'}), 400
-
-        dst = src.parent / cleaned
-        merged = False
-        if dst.exists() and dst != src:
-            # Merge: move all contents of src into dst
-            for item in list(src.iterdir()):
-                target = dst / item.name
-                if target.exists():
-                    counter = 1
-                    stem = item.stem if item.is_file() else item.name
-                    suffix = item.suffix if item.is_file() else ''
-                    while target.exists():
-                        if item.is_dir():
-                            target = dst / f"{item.name} ({counter})"
-                        else:
-                            target = dst / f"{stem} ({counter}){suffix}"
-                        counter += 1
-                shutil.move(str(item), str(target))
-            src.rmdir()
-            merged = True
-        elif dst != src:
-            src.rename(dst)
-        for mp3 in dst.rglob('*.mp3'):
-            _sync_mp3_tags(mp3, music_dir)
-        return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir)), 'merged': merged})
-    except Exception as e:
-        logger.error(f"❌ /api/library/rename-folder: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/library/move-folder', methods=['POST'])
 @auth_required
 def library_move_folder():
@@ -662,85 +611,6 @@ def library_move_folder():
         return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
     except Exception as e:
         logger.error(f"❌ /api/library/move-folder: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/library/delete-folder', methods=['POST'])
-@auth_required
-def library_delete_folder():
-    """Delete an artist or album folder and all its contents."""
-    try:
-        user      = _get_current_user()
-        music_dir = _user_music_dir(user)
-        data        = request.get_json() or {}
-        folder_path = (data.get('folder_path') or '').strip()
-        if not folder_path:
-            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
-
-        target = (music_dir / folder_path).resolve()
-        base   = music_dir.resolve()
-
-        if not str(target).startswith(str(base) + os.sep):
-            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
-        if not target.exists():
-            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
-        if not target.is_dir():
-            return jsonify({'success': False, 'error': 'Cible n\'est pas un dossier'}), 400
-
-        shutil.rmtree(str(target))
-
-        parent = target.parent
-        if parent != base and parent.exists() and not any(parent.iterdir()):
-            parent.rmdir()
-
-        return jsonify({'success': True})
-    except Exception as e:
-        logger.error(f"❌ /api/library/delete-folder: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/library/upload-image', methods=['POST'])
-@auth_required
-def library_upload_image():
-    try:
-        user      = _get_current_user()
-        music_dir = _user_music_dir(user)
-        target_folder = (request.form.get('target_folder') or '').strip()
-        image         = request.files.get('image')
-        if not target_folder:
-            return jsonify({'success': False, 'error': 'Dossier cible requis'}), 400
-        if image is None:
-            return jsonify({'success': False, 'error': 'Fichier image requis'}), 400
-
-        dst_dir = (music_dir / target_folder).resolve()
-        if not str(dst_dir).startswith(str(music_dir.resolve())):
-            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
-        if not dst_dir.exists() or not dst_dir.is_dir():
-            return jsonify({'success': False, 'error': 'Dossier cible introuvable'}), 404
-
-        filename = (image.filename or '').lower()
-        ext = ''
-        if '.' in filename:
-            ext = '.' + filename.rsplit('.', 1)[1]
-        if ext not in {'.jpg', '.jpeg', '.png', '.webp'}:
-            ctype = (image.content_type or '').lower()
-            if 'jpeg' in ctype or 'jpg' in ctype:
-                ext = '.jpg'
-            elif 'png' in ctype:
-                ext = '.png'
-            elif 'webp' in ctype:
-                ext = '.webp'
-            else:
-                return jsonify({'success': False, 'error': 'Format non supporté (jpg, png, webp)'}), 400
-
-        for old in ('folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp'):
-            (dst_dir / old).unlink(missing_ok=True)
-
-        out_path = dst_dir / f"folder{ext}"
-        image.save(out_path)
-        return jsonify({'success': True, 'path': str(out_path.relative_to(music_dir))})
-    except Exception as e:
-        logger.error(f"❌ /api/library/upload-image: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1077,15 +947,6 @@ def download_playlist():
         return jsonify({'success': True, 'added': added, 'total': len(songs), 'queue_size': download_queue.qsize()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/cancel', methods=['POST'])
-@auth_required
-def cancel_download():
-    if not download_status['in_progress']:
-        return jsonify({'success': False, 'error': 'Aucun téléchargement en cours'}), 400
-    cancel_flag.set()
-    return jsonify({'success': True})
 
 
 # ── ZIP ────────────────────────────────────────────────────────────────────────

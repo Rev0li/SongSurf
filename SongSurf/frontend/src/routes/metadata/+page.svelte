@@ -342,15 +342,9 @@
 
 	// ── Derived for right panel ───────────────────────────────────────────────────
 	$: albumFolderPath = meta?.path ? meta.path.split('/').slice(0, -1).join('/') : '';
-	$: albumCoverUrl   = albumFolderPath
-		? `/api/library/folder-cover?folder_path=${encodeURIComponent(albumFolderPath)}&t=${coverTs}`
-		: '';
-	$: selectedAlbumCoverUrl = selectedAlbum
-		? `/api/library/folder-cover?folder_path=${encodeURIComponent(selectedAlbum.path)}&t=${albumCoverTs}`
-		: '';
-	$: artistPicUrl    = selectedArtist
-		? `/api/library/artist-picture?folder_path=${encodeURIComponent(selectedArtist.path)}&t=${artistPicTs}`
-		: '';
+	$: albumCoverUrl         = albumFolderPath ? api.getFolderCoverUrl(albumFolderPath, coverTs) : '';
+	$: selectedAlbumCoverUrl = selectedAlbum   ? api.getFolderCoverUrl(selectedAlbum.path, albumCoverTs) : '';
+	$: artistPicUrl          = selectedArtist  ? api.getArtistPictureUrl(selectedArtist.path, artistPicTs) : '';
 
 	// ID3 layout
 	const ID3_PRIMARY   = ['title','artist','album_artist','album','year','track_number','disc_number','genre'];
@@ -509,7 +503,7 @@
 							<button class="home-artist-card" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
 								<div class="home-artist-cover">
 									<img
-										src={`/api/library/artist-picture?folder_path=${encodeURIComponent(artist.path)}&t=1`}
+										src={api.getArtistPictureUrl(artist.path, artistPicTs)}
 										alt="" loading="lazy"
 										on:error={(e) => e.currentTarget.style.display='none'}
 									/>
@@ -588,7 +582,7 @@
 									<button class="artist-album-card" on:click={() => selectAlbum(album, selectedArtist)}>
 										<div class="artist-album-cover">
 											<img
-												src={`/api/library/folder-cover?folder_path=${encodeURIComponent(album.path)}&t=${artistTs}`}
+												src={api.getFolderCoverUrl(album.path, artistTs)}
 												alt=""
 												loading="lazy"
 												on:error={(e) => e.currentTarget.style.display='none'}

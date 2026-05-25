@@ -36,9 +36,6 @@ export const api = {
 	downloadPlaylist(payload) {
 		return request('/api/download-playlist', { method: 'POST', body: JSON.stringify(payload) });
 	},
-	cancel() {
-		return request('/api/cancel', { method: 'POST' });
-	},
 	prepareZip() {
 		return request('/api/prepare-zip', { method: 'POST' });
 	},
@@ -48,38 +45,10 @@ export const api = {
 			body: JSON.stringify({ source, target_folder: targetFolder }),
 		});
 	},
-	renameFolder(folderPath, newName) {
-		return request('/api/library/rename-folder', {
-			method: 'POST',
-			body: JSON.stringify({ folder_path: folderPath, new_name: newName }),
-		});
-	},
 	moveFolder(folderPath, newParent) {
 		return request('/api/library/move-folder', {
 			method: 'POST',
 			body: JSON.stringify({ folder_path: folderPath, new_parent: newParent }),
-		});
-	},
-	deleteFolder(folderPath) {
-		return request('/api/library/delete-folder', {
-			method: 'POST',
-			body: JSON.stringify({ folder_path: folderPath }),
-		});
-	},
-	uploadLibraryImage(file, targetFolder) {
-		const form = new FormData();
-		form.append('image', file);
-		form.append('target_folder', targetFolder);
-		return fetch('/api/library/upload-image', {
-			method: 'POST',
-			credentials: 'same-origin',
-			body: form,
-		}).then(async (res) => {
-			const text = await res.text();
-			let data;
-			try { data = text ? JSON.parse(text) : {}; } catch { data = { success: false, error: text }; }
-			if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
-			return data;
 		});
 	},
 	cancelPrefetch(token) {
@@ -88,8 +57,8 @@ export const api = {
 	getPrefetchCoverUrl(token) {
 		return `/api/prefetch/cover?token=${encodeURIComponent(token)}&t=${Date.now()}`;
 	},
-	getFolderCoverUrl(folderPath) {
-		return `/api/library/folder-cover?folder_path=${encodeURIComponent(folderPath)}&t=${Date.now()}`;
+	getFolderCoverUrl(folderPath, ts = Date.now()) {
+		return `/api/library/folder-cover?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},
 	songMeta(path) {
 		return request(`/api/library/song-meta?path=${encodeURIComponent(path)}`);
@@ -100,8 +69,8 @@ export const api = {
 	consumeExtensionQueue() {
 		return request('/api/extension-queue/consume', { method: 'POST' });
 	},
-	getArtistPictureUrl(folderPath) {
-		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${Date.now()}`;
+	getArtistPictureUrl(folderPath, ts = Date.now()) {
+		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},
 	uploadSongCover(path, file) {
 		const form = new FormData();
