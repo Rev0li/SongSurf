@@ -284,14 +284,20 @@ user_zip_state = {}  # {sub: {'zip_path': str, 'count': int, 'size_mb': float}}
 user_zip_lock  = threading.Lock()
 
 
+ADMIN_PSEUDO = os.getenv('ADMIN_PSEUDO', 'rev0admin')
+
+
 def _user_pseudo(user: dict) -> str:
     """Derive a filesystem-safe pseudo from a user dict.
 
     Uses the part before '@' in the email, falls back to sub.
     '_pseudo' key is accepted as a pre-computed override (used by queue worker).
+    Admin role always maps to ADMIN_PSEUDO so the folder is stable regardless of email.
     """
     if user.get('_pseudo'):
         return user['_pseudo']
+    if user.get('role') == 'admin' and ADMIN_PSEUDO:
+        return ADMIN_PSEUDO
     email = (user.get('email') or '').strip().lower()
     if email and '@' in email:
         raw = email.split('@')[0]

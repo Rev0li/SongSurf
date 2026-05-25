@@ -43,6 +43,7 @@ services:
       - DEV_MODE=${DEV_MODE:-false}
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
       - AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL:-}
+      - REVAUTH_HOME_URL=${REVAUTH_HOME_URL:-}
       - TARGET_CONTAINER=songsurf
       - TARGET_URL=${TARGET_URL:-http://songsurf:8081}
       - WATCHER_PORT=${WATCHER_PORT:-8080}
