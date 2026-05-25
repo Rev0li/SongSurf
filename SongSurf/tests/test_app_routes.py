@@ -18,8 +18,6 @@ def flask_setup(tmp_path_factory):
     music = tmp_path_factory.mktemp('music')
     temp  = tmp_path_factory.mktemp('temp')
     logs  = tmp_path_factory.mktemp('logs')
-    (logs / 'donations').mkdir(exist_ok=True)
-
     env_patch = {
         'WATCHER_SECRET':   WATCHER_SECRET,
         'DEV_MODE':         'false',
@@ -33,7 +31,6 @@ def flask_setup(tmp_path_factory):
             app_mod.BASE_MUSIC_DIR = music
             app_mod.TEMP_DIR       = temp
             app_mod.LOG_DIR        = logs
-            app_mod.DONATION_DIR   = logs / 'donations'
             app_mod.app.config['TESTING'] = True
 
             with app_mod.app.test_client() as c:

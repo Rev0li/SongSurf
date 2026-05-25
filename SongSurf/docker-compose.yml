@@ -78,10 +78,6 @@ services:
       - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
       - DEV_MODE=${DEV_MODE:-false}
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
-      - DONATION_BTC=${DONATION_BTC:-}
-      - DONATION_ETH=${DONATION_ETH:-}
-      - DONATION_SOL=${DONATION_SOL:-}
-      - DONATION_XMR=${DONATION_XMR:-}
 
     volumes:
       - ./data/music:/data/music
