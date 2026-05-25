@@ -97,9 +97,6 @@ export const api = {
 	saveSongMeta(path, tags) {
 		return request('/api/library/song-meta/save', { method: 'POST', body: JSON.stringify({ path, tags }) });
 	},
-	libraryIssues() {
-		return request('/api/library/issues');
-	},
 	consumeExtensionQueue() {
 		return request('/api/extension-queue/consume', { method: 'POST' });
 	},

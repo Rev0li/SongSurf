@@ -1,5 +1,5 @@
 <script>
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
 	import { addToast } from '$lib/stores.js';
@@ -8,16 +8,6 @@
 	let tree = null;
 	let filter = '';
 	let expanded = new Set();
-
-	// ── Scan (inline warnings) ────────────────────────────────────────────────────
-	let scanning = false;
-	let scanDone = false;
-	let songIssueMap   = new Map();
-	let albumHasIssue  = new Map();
-	let artistHasIssue = new Map();
-
-	// ── Dismissed album warnings (persisted in localStorage) ─────────────────────
-	let dismissedAlbums = new Set();
 
 	// ── Selection ─────────────────────────────────────────────────────────────────
 	// selectedType: null | 'artist' | 'album' | 'song'
@@ -131,64 +121,9 @@
 
 	// ── Lifecycle ─────────────────────────────────────────────────────────────────
 	onMount(async () => {
-		try {
-			const raw = localStorage.getItem('ss_dismissed_albums');
-			if (raw) dismissedAlbums = new Set(JSON.parse(raw));
-		} catch { /* ignore */ }
 		try { tree = await api.getLibrary(); }
 		catch { tree = { artists: [], playlists: [] }; }
 	});
-
-	// ── Scan ──────────────────────────────────────────────────────────────────────
-	async function runScan() {
-		if (scanning) return;
-		scanning = true;
-		try {
-			const data = await api.libraryIssues();
-			const s = new Map(), al = new Map(), ar = new Map();
-			for (const item of (data.issues ?? [])) {
-				const songOnly = item.issues.filter((i) => i !== 'no_artist_picture');
-				if (songOnly.length) s.set(item.path, songOnly);
-				const parts = item.path.split('/');
-				if (parts.length >= 2 && songOnly.length) al.set(parts.slice(0, -1).join('/'), true);
-				if (parts.length >= 1 && item.issues.length) ar.set(parts[0], true);
-			}
-			// Remove dismissed albums from results
-			for (const albumPath of dismissedAlbums) {
-				for (const key of s.keys()) {
-					if (key.startsWith(albumPath + '/')) s.delete(key);
-				}
-				al.delete(albumPath);
-			}
-			// Clean up artist flags where all albums are dismissed
-			for (const artistPath of ar.keys()) {
-				if (![...al.keys()].some(k => k.startsWith(artistPath + '/'))) ar.delete(artistPath);
-			}
-			songIssueMap = s; albumHasIssue = al; artistHasIssue = ar;
-			scanDone = true;
-		} catch { /* ignore */ }
-		finally { scanning = false; }
-	}
-
-	function dismissAlbumIssues(albumPath) {
-		for (const key of [...songIssueMap.keys()]) {
-			if (key.startsWith(albumPath + '/')) songIssueMap.delete(key);
-		}
-		albumHasIssue.delete(albumPath);
-		const artistPath = albumPath.split('/')[0];
-		if (![...albumHasIssue.keys()].some(k => k.startsWith(artistPath + '/'))) {
-			artistHasIssue.delete(artistPath);
-		}
-		songIssueMap = songIssueMap; albumHasIssue = albumHasIssue; artistHasIssue = artistHasIssue;
-		dismissedAlbums = new Set([...dismissedAlbums, albumPath]);
-		try { localStorage.setItem('ss_dismissed_albums', JSON.stringify([...dismissedAlbums])); } catch {}
-		addToast('Avertissements ignorés pour cet album.', 'info');
-	}
-
-	function resetDismissed() {
-		dismissedAlbums = new Set();
-		try { localStorage.removeItem('ss_dismissed_albums'); } catch {}
-	}
 
 	// ── Selection helpers ─────────────────────────────────────────────────────────
 	function toggleExpand(path) {
@@ -399,12 +334,6 @@
 		? (tree?.artists ?? []).find(a => a.path === selectedArtist.path)?.albums ?? []
 		: [];
 
-	function issueTitle(issues) {
-		const L = { title:'titre', artist:'artiste', album:'album', year:'année',
-		            no_album_cover:'pochette manquante', unreadable:'illisible' };
-		return issues.map((i) => L[i] ?? i).join(', ');
-	}
-
 	function songDisplayName(name) { return name.replace(/\.mp3$/i, ''); }
 	function fmtBytes(n) {
 		if (n < 1048576) return `${(n/1024).toFixed(1)} KB`;
@@ -466,21 +395,6 @@
 	<aside class="meta-sidebar">
 		<div class="sidebar-top">
 			<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
-			<div class="sidebar-top-actions">
-				<button
-					class="btn btn-sm {scanning ? 'btn-ghost' : scanDone ? 'btn-orange' : 'btn-ghost'}"
-					on:click={runScan} disabled={scanning}
-					title="Scanner toute la bibliothèque pour les problèmes de métadonnées"
-				>
-					{scanning ? '⏳ Scan…' : '🔍 Scan all'}
-				</button>
-				{#if dismissedAlbums.size > 0}
-					<button class="btn btn-sm btn-ghost dismissed-badge" on:click={resetDismissed}
-						title="Réinitialiser les albums ignorés">
-						{dismissedAlbums.size} ignoré{dismissedAlbums.size > 1 ? 's' : ''} ✕
-					</button>
-				{/if}
-			</div>
 		</div>
 
 		<div class="sidebar-scroll">
@@ -504,9 +418,6 @@
 								<span class="tree-icon">🎤</span>
 								<span class="tree-label">{artist.name}</span>
 								<span class="tree-count">{artist.albums.reduce((n,al)=>n+al.songs.length,0)}</span>
-								{#if scanDone && artistHasIssue.has(artist.path)}
-									<span class="row-warn" title="Problèmes de métadonnées">⚠️</span>
-								{/if}
 							</button>
 						</div>
 
@@ -533,9 +444,6 @@
 											<span class="tree-icon">💿</span>
 											<span class="tree-label">{album.name}</span>
 											<span class="tree-count">{album.songs.length}</span>
-											{#if scanDone && albumHasIssue.has(album.path)}
-												<span class="row-warn">⚠️</span>
-											{/if}
 										</button>
 									</div>
 									{#if expanded.has(album.path) || q}
@@ -548,9 +456,6 @@
 												on:click={() => selectSong(song.path)}
 											>
 												<span class="song-name">{songDisplayName(song.name)}</span>
-												{#if scanDone && songIssueMap.has(song.path)}
-													<span class="song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
-												{/if}
 											</button>
 										{/each}
 									{/if}
@@ -572,9 +477,6 @@
 							<span class="tree-icon">📁</span>
 							<span class="tree-label">{pl.name}</span>
 							<span class="tree-count">{pl.songs.length}</span>
-							{#if scanDone && albumHasIssue.has(pl.path)}
-								<span class="row-warn">⚠️</span>
-							{/if}
 						</button>
 						{#if expanded.has(pl.path) || q}
 							{#each pl.songs as song (song.path)}
@@ -586,9 +488,6 @@
 									on:click={() => selectSong(song.path)}
 								>
 									<span class="song-name">{songDisplayName(song.name)}</span>
-									{#if scanDone && songIssueMap.has(song.path)}
-										<span class="song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
-									{/if}
 								</button>
 							{/each}
 						{/if}
@@ -753,16 +652,6 @@
 						<div class="album-track-count">
 							{selectedAlbum.songs.length} titre{selectedAlbum.songs.length > 1 ? 's' : ''}
 						</div>
-						{#if scanDone && albumHasIssue.has(selectedAlbum.path)}
-							<div class="album-issue-row">
-								<div class="album-issue-badge">⚠️ Problèmes de métadonnées détectés</div>
-								<button class="btn btn-ghost btn-sm" style="font-size:11px"
-									on:click={() => dismissAlbumIssues(selectedAlbum.path)}
-									title="Ne plus afficher les avertissements pour cet album">
-									Ignorer
-								</button>
-							</div>
-						{/if}
 						<p class="cover-hint" style="margin-top:var(--s4)">
 							Pochette : glisse ou colle <kbd>Ctrl+V</kbd> pour remplacer
 						</p>
@@ -781,9 +670,6 @@
 								>
 									<span class="track-num">{i + 1}</span>
 									<span class="track-name">{songDisplayName(song.name)}</span>
-									{#if scanDone && songIssueMap.has(song.path)}
-										<span class="song-warn" title={issueTitle(songIssueMap.get(song.path))}>⚠️</span>
-									{/if}
 									<span class="track-chevron">›</span>
 								</button>
 							{/each}
