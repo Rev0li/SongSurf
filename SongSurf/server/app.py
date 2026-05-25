@@ -18,7 +18,6 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, Respo
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
-from werkzeug.utils import secure_filename
 from mutagen.mp3 import MP3
 from mutagen.id3 import APIC
 import hmac
@@ -45,11 +44,6 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 WATCHER_SECRET = os.getenv('WATCHER_SECRET', '')
 DEV_MODE       = os.getenv('DEV_MODE', 'false').lower() == 'true'
 
-DONATION_BTC = os.getenv('DONATION_BTC', '')
-DONATION_ETH = os.getenv('DONATION_ETH', '')
-DONATION_SOL = os.getenv('DONATION_SOL', '')
-DONATION_XMR = os.getenv('DONATION_XMR', '')
-
 DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))  # 0 = unlimited
 
 _DEV_USER = {'sub': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
@@ -66,9 +60,7 @@ else:
     TEMP_DIR       = _base / 'temp'
     LOG_DIR        = _base / 'logs'
 
-DONATION_DIR = LOG_DIR / 'donations'
-
-for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR, DONATION_DIR]:
+for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -419,12 +411,6 @@ def dashboard():
     return _spa()
 
 
-@app.route('/donation')
-@auth_required
-def donation_page():
-    return _spa()
-
-
 @app.route('/_app/<path:filename>')
 def svelte_assets(filename):
     """Serve SvelteKit's generated JS/CSS bundles (no auth needed)."""
@@ -437,61 +423,6 @@ def svelte_assets(filename):
 @auth_required
 def api_me():
     return jsonify(_get_current_user())
-
-
-# ── Donation config ────────────────────────────────────────────────────────────
-
-@app.route('/api/donation-config')
-@auth_required
-def api_donation_config():
-    return jsonify({'btc': DONATION_BTC, 'eth': DONATION_ETH, 'sol': DONATION_SOL, 'xmr': DONATION_XMR})
-
-
-@app.route('/api/donation/upload-coupon', methods=['POST'])
-@auth_required
-def donation_upload_coupon():
-    try:
-        coupon_code = (request.form.get('coupon_code') or '').strip()
-        note        = (request.form.get('note') or '').strip()
-        image       = request.files.get('coupon_image')
-
-        if not coupon_code:
-            return jsonify({'success': False, 'error': 'Code coupon requis'}), 400
-
-        safe_code = re.sub(r'[^A-Za-z0-9\-_.]', '_', coupon_code)[:80]
-        ext = '.jpg'
-        if image is not None:
-            src_name = secure_filename(image.filename or 'coupon')
-            if '.' in src_name:
-                ext_guess = '.' + src_name.rsplit('.', 1)[1].lower()
-                if ext_guess in {'.jpg', '.jpeg', '.png', '.webp'}:
-                    ext = ext_guess
-
-        stamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
-        out_name = f"coupon_{safe_code}_{stamp}_{secrets.token_hex(6)}{ext}"
-        out_path = DONATION_DIR / out_name
-
-        if image is not None:
-            image.save(out_path)
-
-        user = _get_current_user()
-        meta = {
-            'timestamp':   datetime.now().isoformat(),
-            'coupon_code': coupon_code,
-            'note':        note,
-            'file_name':   out_name if image is not None else None,
-            'role':        (user or {}).get('role', ''),
-            'sub':         (user or {}).get('sub', ''),
-            'ip':          request.headers.get('X-Forwarded-For', request.remote_addr or ''),
-        }
-        with open(DONATION_DIR / 'coupons.jsonl', 'a', encoding='utf-8') as f:
-            f.write(json.dumps(meta, ensure_ascii=False) + '\n')
-
-        logger.info(f"💝 Coupon reçu: {coupon_code}")
-        return jsonify({'success': True, 'message': 'Coupon reçu, merci ❤️'})
-    except Exception as e:
-        logger.error(f"❌ /api/donation/upload-coupon: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -1157,24 +1088,6 @@ def cancel_download():
     return jsonify({'success': True})
 
 
-@app.route('/api/cleanup', methods=['POST'])
-@auth_required
-def cleanup():
-    deleted = []
-    _cancel_admin_prefetch('')
-    if TEMP_DIR.exists():
-        for f in TEMP_DIR.iterdir():
-            if f.is_file():
-                f.unlink()
-                deleted.append(f.name)
-    with queue_lock:
-        download_status.update({
-            'in_progress': False, 'current_download': None, 'last_error': None,
-            'batch_active': False, 'batch_total': 0, 'batch_done': 0, 'batch_percent': 0,
-        })
-    return jsonify({'success': True, 'deleted': len(deleted)})
-
-
 # ── ZIP ────────────────────────────────────────────────────────────────────────
 
 @app.route('/api/prepare-zip', methods=['POST'])
@@ -1609,6 +1522,15 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
                 except Exception:
                     pass
 
+        # TYER fallback for ID3v2.3 files that use TYER instead of TDRC
+        if not id3.get('year'):
+            tyer = tags.get('TYER')
+            if tyer is not None:
+                try:
+                    id3['year'] = str(tyer.text[0]).strip()[:4]
+                except Exception:
+                    pass
+
         # APIC (embedded cover)
         id3['has_embedded_cover'] = any(k.startswith('APIC') for k in tags.keys())
 
@@ -1664,76 +1586,6 @@ def library_song_meta():
         return jsonify({'success': True, **_read_full_meta(target, music_dir)})
     except Exception as e:
         logger.error(f"❌ /api/library/song-meta: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/library/issues')
-@auth_required
-def library_issues():
-    """Scans the library for MP3s with missing/unknown metadata fields."""
-    try:
-        user      = _get_current_user()
-        music_dir = _user_music_dir(user)
-
-        _UNKNOWN = {'', 'unknown artist', 'unknown album', 'unknown title', 'unknown'}
-
-        issues = []
-        for mp3 in sorted(music_dir.rglob('*.mp3'), key=lambda p: str(p).lower()):
-            try:
-                from mutagen.mp3 import MP3
-                from mutagen.id3 import ID3
-                audio = MP3(mp3, ID3=ID3)
-                tags  = audio.tags or {}
-
-                def _val(frame_id):
-                    f = tags.get(frame_id)
-                    if f is None: return ''
-                    try:    return str(f.text[0]).strip()
-                    except: return ''
-
-                title  = _val('TIT2')
-                artist = _val('TPE1')
-                album  = _val('TALB')
-                year   = _val('TDRC')
-
-                _COVER_NAMES      = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
-                _ARTIST_PIC_NAMES = (
-                    'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp',
-                    'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
-                )
-
-                flags = []
-                if title.lower()  in _UNKNOWN or not title:  flags.append('title')
-                if artist.lower() in _UNKNOWN or not artist:  flags.append('artist')
-                if album.lower()  in _UNKNOWN or not album:   flags.append('album')
-                if not year:                                   flags.append('year')
-
-                # Cover warnings (only once per album folder — deduplicated by set below)
-                album_folder = mp3.parent
-                if not any((album_folder / n).exists() for n in _COVER_NAMES):
-                    flags.append('no_album_cover')
-
-                rel_parts = mp3.relative_to(music_dir).parts
-                if len(rel_parts) == 3:
-                    artist_folder = music_dir / rel_parts[0]
-                    if not any((artist_folder / n).exists() for n in _ARTIST_PIC_NAMES):
-                        flags.append('no_artist_picture')
-
-                if flags:
-                    issues.append({
-                        'path':   str(mp3.relative_to(music_dir)),
-                        'title':  title or '—',
-                        'artist': artist or '—',
-                        'album':  album or '—',
-                        'year':   year or '—',
-                        'issues': flags,
-                    })
-            except Exception:
-                issues.append({'path': str(mp3.relative_to(music_dir)), 'issues': ['unreadable']})
-
-        return jsonify({'success': True, 'count': len(issues), 'issues': issues})
-    except Exception as e:
-        logger.error(f"❌ /api/library/issues: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

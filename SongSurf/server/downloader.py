@@ -242,8 +242,9 @@ class YouTubeDownloader:
                 f"channel={info.get('channel')!r} → resolved={artist!r}"
             )
 
+            release_year = str(info.get('release_year') or '')
             release_date = info.get('release_date') or info.get('upload_date', '')
-            year = release_date[:4] if len(release_date) >= 4 else ''
+            year = release_year[:4] if release_year else (release_date[:4] if len(release_date) >= 4 else '')
 
             artist = self._primary_artist(artist)
 
