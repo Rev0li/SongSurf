@@ -197,7 +197,15 @@
 						<div class="lib-summary-row">
 							<span class="lib-summary-left">
 								<span class="lib-caret">{expanded.has(artist.path) || q ? '▾' : '▸'}</span>
-								<span class="lib-icon">🎤</span>
+								{#if artist.has_picture}
+									<img
+										class="lib-artist-pic"
+										src="/api/library/artist-picture?folder_path={encodeURIComponent(artist.path)}"
+										alt={artist.name}
+									/>
+								{:else}
+									<span class="lib-icon">🎤</span>
+								{/if}
 								<span class="lib-name">{artist.name}</span>
 								<span class="lib-count">{artist.albums.reduce((n, al) => n + al.songs.length, 0)}</span>
 							</span>
@@ -302,4 +310,12 @@
 		line-height: 1;
 	}
 	.lib-drag-handle:active { cursor: grabbing; }
+
+	.lib-artist-pic {
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
 </style>

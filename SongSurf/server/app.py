@@ -506,7 +506,10 @@ def _build_library_tree(music_dir: Path) -> dict:
                 'path':  str(album_dir.relative_to(music_dir)),
                 'songs': [{'name': s.name, 'path': str(s.relative_to(music_dir))} for s in songs],
             })
-        artists.append({'name': top.name, 'path': str(top.relative_to(music_dir)), 'albums': albums})
+        _PIC_NAMES = ('folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
+                      'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp')
+        has_picture = any((top / n).exists() for n in _PIC_NAMES)
+        artists.append({'name': top.name, 'path': str(top.relative_to(music_dir)), 'albums': albums, 'has_picture': has_picture})
     return {'artists': artists, 'playlists': playlists}
 
 
