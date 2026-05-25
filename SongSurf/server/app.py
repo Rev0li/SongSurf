@@ -660,7 +660,7 @@ def library_folder_cover():
 @app.route('/api/library/artist-picture')
 @auth_required
 def library_artist_picture():
-    """Artist picture: looks for artist.jpg first, then folder images."""
+    """Artist picture: looks for folder.jpg first, then artist.jpg (legacy fallback)."""
     try:
         user        = _get_current_user()
         music_dir   = _user_music_dir(user)
@@ -671,10 +671,10 @@ def library_artist_picture():
         if not folder.exists() or not folder.is_dir():
             return '', 204
         for name, mime in (
-            ('artist.jpg', 'image/jpeg'), ('artist.jpeg', 'image/jpeg'),
-            ('artist.png', 'image/png'),  ('artist.webp', 'image/webp'),
             ('folder.jpg', 'image/jpeg'), ('folder.jpeg', 'image/jpeg'),
             ('folder.png', 'image/png'),  ('folder.webp', 'image/webp'),
+            ('artist.jpg', 'image/jpeg'), ('artist.jpeg', 'image/jpeg'),
+            ('artist.png', 'image/png'),  ('artist.webp', 'image/webp'),
         ):
             p = folder / name
             if p.exists():
@@ -803,7 +803,7 @@ def upload_artist_cover():
 
         mime = file.content_type or 'image/jpeg'
         ext  = '.jpg' if 'jpeg' in mime or 'jpg' in mime else '.png'
-        with open(folder / f'artist{ext}', 'wb') as f:
+        with open(folder / f'folder{ext}', 'wb') as f:
             f.write(file.read())
 
         return jsonify({'success': True})
@@ -1336,8 +1336,8 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
 
         _COVER_NAMES = ('cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp')
         _ARTIST_PIC_NAMES = (
-            'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp',
             'folder.jpg', 'folder.jpeg', 'folder.png', 'folder.webp',
+            'artist.jpg', 'artist.jpeg', 'artist.png', 'artist.webp',
         )
 
         tags = audio.tags or {}
