@@ -994,7 +994,6 @@
 	.song-row:hover { background: rgba(255,255,255,.05); color: var(--text); }
 	.song-row.selected { background: rgba(10,132,255,.15); color: var(--blue); }
 	.song-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.song-warn { font-size: 10px; flex-shrink: 0; }
 
 	/* ── Main ─────────────────────────────────────────────────── */
 	.meta-main { flex: 1; overflow-y: auto; padding: var(--s6); background: var(--bg); }
@@ -1133,15 +1132,7 @@
 		font-size: 13px; color: var(--text-3);
 		margin-bottom: var(--s2);
 	}
-	.album-issue-badge {
-		display: inline-block;
-		font-size: 12px; color: var(--orange);
-		background: rgba(255,159,10,.1);
-		border: 1px solid rgba(255,159,10,.25);
-		border-radius: var(--r-sm);
-		padding: 3px 10px;
-		margin-bottom: var(--s2);
-	}
+
 
 	/* ── Tracklist ────────────────────────────────────────────── */
 	.tracklist { display: flex; flex-direction: column; }
@@ -1167,9 +1158,6 @@
 	.track-chevron { flex-shrink: 0; font-size: 14px; color: var(--text-3); }
 
 	/* ── Back button (song → album) ───────────────────────────── */
-	.song-back-bar {
-		margin-bottom: var(--s3);
-	}
 	.back-btn {
 		background: none; border: none; padding: 0;
 		color: var(--blue); font-size: 13px; font-weight: 500;
@@ -1311,13 +1299,6 @@
 		transition: color .1s;
 	}
 	.home-btn:hover { color: var(--blue); }
-
-	/* ── Sidebar top actions row ──────────────────────────────── */
-	.sidebar-top-actions { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
-	.dismissed-badge { font-size: 10px; color: var(--text-3); padding: 2px 7px; }
-
-	/* ── Album issue dismiss row ──────────────────────────────── */
-	.album-issue-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
 
 	/* ── Home gallery (artist grid) ───────────────────────────── */
 	.home-gallery {
