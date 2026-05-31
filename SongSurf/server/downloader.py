@@ -99,7 +99,7 @@ class YouTubeDownloader:
 
     def _download_to_temp(self, url, temp_filename, progress_hook=None):
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -318,8 +318,8 @@ class YouTubeDownloader:
                 playlist_title = playlist_title[8:]
 
             playlist_artist = (
-                info.get('artist') or info.get('creator') or
-                info.get('uploader') or info.get('channel')
+                info.get('album_artist') or info.get('artist') or
+                info.get('creator') or info.get('uploader') or info.get('channel')
             )
             playlist_artist = self._primary_artist(playlist_artist)
 
