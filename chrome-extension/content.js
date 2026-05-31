@@ -13,6 +13,7 @@
         const list = u.searchParams.get('list') || '';
         return list.startsWith('OLAK5uy_') ? 'album' : 'playlist';
       }
+      if (u.pathname.startsWith('/channel/') || u.pathname.startsWith('/artist/')) return 'artist';
     } catch {}
     return null;
   }
@@ -32,6 +33,7 @@
     song:     { emoji: '🎵', label: 'Chanson'  },
     album:    { emoji: '💿', label: 'Album'    },
     playlist: { emoji: '📋', label: 'Playlist' },
+    artist:   { emoji: '🎤', label: 'Artiste'  },
   };
 
   // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -67,52 +69,12 @@
     }, 3500);
   }
 
-  // ── Panel (mini analyze card) ─────────────────────────────────────────────────
+  // ── Shared panel styles ───────────────────────────────────────────────────────
 
-  let panelEl = null;
-
-  function closePanel() {
-    if (panelEl) { panelEl.remove(); panelEl = null; }
-  }
-
-  function showPanel(meta, url, urlType) {
-    closePanel();
-
-    panelEl = document.createElement('div');
-    panelEl.id = 'songsurf-panel';
-
-    const isSong = urlType === 'song';
-
-    panelEl.innerHTML = `
-      <div id="ssp-inner">
-        <div id="ssp-header">
-          <div id="ssp-type">${TYPE_META[urlType]?.emoji || ''} ${TYPE_META[urlType]?.label || urlType}</div>
-          <div id="ssp-title" title="${esc(meta.title)}">${esc(meta.title)}</div>
-          ${!isSong ? `<div id="ssp-count">${meta.song_count || '?'} titres</div>` : ''}
-        </div>
-
-        <div class="ssp-field">
-          <label>Artiste</label>
-          <input id="ssp-artist" type="text" value="${esc(meta.artist)}" placeholder="Artiste">
-        </div>
-        <div class="ssp-field">
-          <label>${isSong ? 'Album' : 'Nom du dossier'}</label>
-          <input id="ssp-album" type="text" value="${esc(isSong ? meta.album : meta.title)}" placeholder="Album">
-        </div>
-        <div class="ssp-field">
-          <label>Année</label>
-          <input id="ssp-year" type="text" value="${esc(meta.year)}" placeholder="Année" maxlength="4" style="width:90px">
-        </div>
-
-        <div id="ssp-actions">
-          <button id="ssp-cancel">Annuler</button>
-          <button id="ssp-confirm">Ajouter →</button>
-        </div>
-      </div>
-    `;
-
-    // ── Styles ──
+  function ensurePanelStyles() {
+    if (document.getElementById('songsurf-panel-styles')) return;
     const style = document.createElement('style');
+    style.id = 'songsurf-panel-styles';
     style.textContent = `
       #songsurf-panel {
         position: fixed;
@@ -172,9 +134,55 @@
       #ssp-confirm:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
     `;
     document.head.appendChild(style);
+  }
+
+  // ── Panel (song / album / playlist — with editable metadata) ─────────────────
+
+  let panelEl = null;
+
+  function closePanel() {
+    if (panelEl) { panelEl.remove(); panelEl = null; }
+  }
+
+  function showPanel(meta, url, urlType) {
+    closePanel();
+    ensurePanelStyles();
+
+    panelEl = document.createElement('div');
+    panelEl.id = 'songsurf-panel';
+
+    const isSong = urlType === 'song';
+
+    panelEl.innerHTML = `
+      <div id="ssp-inner">
+        <div id="ssp-header">
+          <div id="ssp-type">${TYPE_META[urlType]?.emoji || ''} ${TYPE_META[urlType]?.label || urlType}</div>
+          <div id="ssp-title" title="${esc(meta.title)}">${esc(meta.title)}</div>
+          ${!isSong ? `<div id="ssp-count">${meta.song_count || '?'} titres</div>` : ''}
+        </div>
+
+        <div class="ssp-field">
+          <label>Artiste</label>
+          <input id="ssp-artist" type="text" value="${esc(meta.artist)}" placeholder="Artiste">
+        </div>
+        <div class="ssp-field">
+          <label>${isSong ? 'Album' : 'Nom du dossier'}</label>
+          <input id="ssp-album" type="text" value="${esc(isSong ? meta.album : meta.title)}" placeholder="Album">
+        </div>
+        <div class="ssp-field">
+          <label>Année</label>
+          <input id="ssp-year" type="text" value="${esc(meta.year)}" placeholder="Année" maxlength="4" style="width:90px">
+        </div>
+
+        <div id="ssp-actions">
+          <button id="ssp-cancel">Annuler</button>
+          <button id="ssp-confirm">Ajouter →</button>
+        </div>
+      </div>
+    `;
+
     document.body.appendChild(panelEl);
 
-    // ── Events ──
     document.getElementById('ssp-cancel').addEventListener('click', () => {
       closePanel();
       updateButtonForUrl(location.href);
@@ -201,7 +209,82 @@
         updateButtonForUrl(location.href);
       }
     });
+  }
 
+  // ── Panel artiste (discographie — batch sans métadonnées) ─────────────────────
+
+  function scrapeAlbumUrls() {
+    const seen = new Set();
+    const urls = [];
+
+    // Target only the "Albums" shelf — not Singles, Videos, EPs, etc.
+    const shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer');
+    for (const shelf of shelves) {
+      const heading = shelf.querySelector('yt-formatted-string.title');
+      if (!heading || !heading.textContent.trim().toLowerCase().includes('album')) continue;
+
+      shelf.querySelectorAll('a[href*="browse/MPREb_"]').forEach(link => {
+        try {
+          const href = link.getAttribute('href');
+          const m = href.match(/browse\/(MPREb_[^/?&#]+)/);
+          if (m) {
+            const url = `https://music.youtube.com/browse/${m[1]}`;
+            if (!seen.has(url)) { seen.add(url); urls.push(url); }
+          }
+        } catch {}
+      });
+    }
+
+    return urls;
+  }
+
+  function showArtistPanel(albums) {
+    closePanel();
+    ensurePanelStyles();
+
+    const artistName = document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || 'Artiste';
+    const n = albums.length;
+
+    panelEl = document.createElement('div');
+    panelEl.id = 'songsurf-panel';
+
+    panelEl.innerHTML = `
+      <div id="ssp-inner">
+        <div id="ssp-header">
+          <div id="ssp-type">🎤 Artiste · Discographie</div>
+          <div id="ssp-title" title="${esc(artistName)}">${esc(artistName)}</div>
+          <div id="ssp-count">${n} album${n > 1 ? 's' : ''} détecté${n > 1 ? 's' : ''}</div>
+        </div>
+        <div id="ssp-actions">
+          <button id="ssp-cancel">Annuler</button>
+          <button id="ssp-confirm">Tout ajouter →</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(panelEl);
+
+    document.getElementById('ssp-cancel').addEventListener('click', () => {
+      closePanel();
+      updateButtonForUrl(location.href);
+    });
+
+    document.getElementById('ssp-confirm').addEventListener('click', async () => {
+      const btn = document.getElementById('ssp-confirm');
+      btn.disabled    = true;
+      btn.textContent = '…';
+
+      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_BATCH', urls: albums });
+
+      closePanel();
+      if (result && result.success) {
+        showToast('✅', `${result.added} album${result.added > 1 ? 's' : ''} ajouté${result.added > 1 ? 's' : ''} à la queue SongSurf`);
+        flashButton('green');
+      } else {
+        showToast('❌', (result && result.error) || 'Erreur', true);
+        updateButtonForUrl(location.href);
+      }
+    });
   }
 
   function esc(str) {
@@ -247,6 +330,21 @@
 
       const type = detectType(location.href);
       if (!type) return;
+
+      // ── Artiste : scraping DOM synchrone, pas d'appel API ──
+      if (type === 'artist') {
+        const albums = scrapeAlbumUrls();
+        if (!albums.length) {
+          showToast('⚠️', 'Aucun album détecté — fais défiler la discographie d\'abord', true);
+          updateButtonForUrl(location.href);
+          return;
+        }
+        showArtistPanel(albums);
+        setButtonLabel('Fermer ✕', '');
+        return;
+      }
+
+      // ── Song / album / playlist : preview API ──
       const url = getCleanUrl(location.href, type);
 
       isBusy = true;
@@ -268,7 +366,6 @@
         return;
       }
 
-      // Show the edit panel — button stays visible underneath
       showPanel(result, url, type);
       setButtonLabel('Fermer ✕', '');
     });
@@ -306,7 +403,9 @@
     lastType = type;
     const m = TYPE_META[type];
     setButtonLabel(`+ SongSurf · ${m.label}`, m.emoji);
-    floatBtn.title = `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
+    floatBtn.title = type === 'artist'
+      ? 'Détecter les albums de cet artiste et ajouter à SongSurf'
+      : `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
   }
 
   // ── SPA watcher ───────────────────────────────────────────────────────────────

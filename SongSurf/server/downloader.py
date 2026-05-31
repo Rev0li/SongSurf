@@ -90,6 +90,13 @@ class YouTubeDownloader:
             f"{metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}"
         )
 
+    def _cookies_opts(self):
+        """Returns yt-dlp cookiefile option if /data/cookies.txt exists."""
+        path = os.getenv('YTDLP_COOKIES', '/data/cookies.txt')
+        if path and Path(path).is_file():
+            return {'cookiefile': path}
+        return {}
+
     def _download_to_temp(self, url, temp_filename, progress_hook=None):
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -105,6 +112,7 @@ class YouTubeDownloader:
             'writethumbnail': True,
             'nocheckcertificate': True,
         }
+        ydl_opts.update(self._cookies_opts())
         if progress_hook is not None:
             ydl_opts['progress_hooks'] = [progress_hook]
         if self.ffmpeg_location:
@@ -221,6 +229,7 @@ class YouTubeDownloader:
                 'skip_download': True,
                 'noplaylist':    True,
             }
+            ydl_opts.update(self._cookies_opts())
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -294,6 +303,7 @@ class YouTubeDownloader:
                 'skip_download':  True,
                 'extract_flat':   'in_playlist',
             }
+            ydl_opts.update(self._cookies_opts())
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)

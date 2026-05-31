@@ -1140,6 +1140,29 @@ def admin_prefetch_cancel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ── Extension Chrome — cookies sync ───────────────────────────────────────────
+
+_COOKIES_FILE = Path(os.environ.get('YTDLP_COOKIES', '/data/cookies.txt'))
+
+@app.route('/api/cookies/update', methods=['POST'])
+@auth_required
+def update_cookies():
+    """Extension Chrome — reçoit les cookies YouTube et les écrit pour yt-dlp."""
+    try:
+        data    = request.get_json(silent=True) or {}
+        content = (data.get('cookies') or '').strip()
+        if not content:
+            return jsonify({'success': False, 'error': 'Cookies manquants'}), 400
+        _COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _COOKIES_FILE.write_text(content, encoding='utf-8')
+        count = sum(1 for l in content.splitlines() if l and not l.startswith('#'))
+        logger.info(f"🍪 Cookies mis à jour depuis l'extension Chrome ({count} entrées)")
+        return jsonify({'success': True, 'count': count})
+    except Exception as e:
+        logger.error(f"❌ /api/cookies/update: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ── Extension Chrome — preview + queue direct ──────────────────────────────────
 
 def _detect_url_mode(url: str) -> str:
@@ -1152,6 +1175,10 @@ def _detect_url_mode(url: str) -> str:
         if parsed.path == '/playlist':
             list_id = (parse_qs(parsed.query).get('list') or [''])[0]
             return 'album' if list_id.startswith('OLAK5uy_') else 'playlist'
+        if '/browse/' in parsed.path:
+            browse_id = parsed.path.rstrip('/').split('/')[-1]
+            if browse_id.startswith('MPREb_'):
+                return 'album'
     except Exception:
         pass
     return 'song'

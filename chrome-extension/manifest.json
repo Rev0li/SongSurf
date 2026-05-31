@@ -6,11 +6,13 @@
 
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
 
   "host_permissions": [
-    "https://music.youtube.com/*"
+    "https://music.youtube.com/*",
+    "https://*.youtube.com/*"
   ],
 
   "background": {

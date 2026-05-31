@@ -42,3 +42,29 @@ document.getElementById('btn-open-options')?.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
   window.close();
 });
+
+// Sync cookies
+const syncBtn    = document.getElementById('btn-sync-cookies');
+const syncStatus = document.getElementById('sync-status');
+
+function showSyncStatus(msg, isError = false) {
+  syncStatus.style.display = 'block';
+  syncStatus.style.color   = isError ? '#f87171' : '#34d399';
+  syncStatus.textContent   = msg;
+  setTimeout(() => { syncStatus.style.display = 'none'; }, 4000);
+}
+
+syncBtn?.addEventListener('click', async () => {
+  syncBtn.disabled    = true;
+  syncBtn.textContent = '⏳ Synchronisation…';
+
+  chrome.runtime.sendMessage({ type: 'SYNC_COOKIES' }, (res) => {
+    syncBtn.disabled    = false;
+    syncBtn.textContent = '🍪 Sync cookies YouTube';
+    if (res && res.success) {
+      showSyncStatus(`✓ ${res.count} cookies envoyés`);
+    } else {
+      showSyncStatus(res?.error || 'Erreur inconnue', true);
+    }
+  });
+});
