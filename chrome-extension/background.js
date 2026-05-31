@@ -1,5 +1,7 @@
-// SongSurf Clip — background service worker
+// SongSurf Clip — background script (MV2 Firefox + MV3 Chrome)
 // Handles: API calls to SongSurf, periodic ping, icon badge
+
+const action = chrome.action || chrome.browserAction;
 
 const PING_ALARM   = 'songsurf-ping';
 const PING_MINUTES = 0.5; // every 30 seconds
@@ -42,13 +44,13 @@ function setStatus(status) {
 
 function updateBadge() {
   if (serverStatus === 'offline') {
-    chrome.action.setBadgeText({ text: '!' });
-    chrome.action.setBadgeBackgroundColor({ color: '#e53e3e' });
+    action.setBadgeText({ text: '!' });
+    action.setBadgeBackgroundColor({ color: '#e53e3e' });
   } else if (serverStatus === 'online') {
-    chrome.action.setBadgeText({ text: '' });
+    action.setBadgeText({ text: '' });
   } else {
-    chrome.action.setBadgeText({ text: '?' });
-    chrome.action.setBadgeBackgroundColor({ color: '#718096' });
+    action.setBadgeText({ text: '?' });
+    action.setBadgeBackgroundColor({ color: '#718096' });
   }
 }
 
