@@ -228,6 +228,8 @@ class YouTubeDownloader:
                 'no_warnings':   True,
                 'skip_download': True,
                 'noplaylist':    True,
+                # format requis sinon yt-dlp tente une sélection qui peut échouer
+                'format':        'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
             }
             ydl_opts.update(self._cookies_opts())
 
