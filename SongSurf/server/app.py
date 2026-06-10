@@ -1010,6 +1010,7 @@ def download_zip():
         return jsonify({'success': False, 'error': 'ZIP introuvable'}), 404
 
     _sub      = user['sub']
+    _is_admin = user.get('role') == 'admin'
     music_dir = _user_music_dir(user)
     file_size = zip_path.stat().st_size
 
@@ -1027,7 +1028,9 @@ def download_zip():
                 zip_path.unlink(missing_ok=True)
                 with user_zip_lock:
                     user_zip_state.pop(_sub, None)
-                if music_dir != BASE_MUSIC_DIR and music_dir.exists():
+                # Bibliothèque membre = temporaire, supprimée après export.
+                # La bibliothèque admin est persistante : jamais supprimée.
+                if not _is_admin and music_dir != BASE_MUSIC_DIR and music_dir.exists():
                     shutil.rmtree(music_dir, ignore_errors=True)
                     logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
             except Exception as e:
