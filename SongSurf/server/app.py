@@ -894,6 +894,7 @@ def start_download():
 
         metadata = {
             'artist':       data.get('artist', 'Unknown Artist'),
+            'album_artist': data.get('album_artist', ''),
             'album':        data.get('album',  'Unknown Album'),
             'title':        data.get('title',  'Unknown Title'),
             'year':         data.get('year',   ''),
@@ -934,6 +935,7 @@ def download_playlist():
                 break
             metadata = {
                 'artist':       playlist.get('artist') or song.get('artist') or 'Unknown Artist',
+                'album_artist': playlist.get('artist') or '',
                 'album':        playlist.get('title', 'Unknown Album'),
                 'title':        song['title'],
                 'year':         playlist.get('year', ''),
@@ -1258,6 +1260,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                 meta = result.get('metadata', {})
                 metadata = {
                     'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
+                    'album_artist': meta.get('album_artist', ''),
                     'album':        (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
                     'title':        meta.get('title', 'Unknown Title'),
                     'year':         meta.get('year', ''),
@@ -1287,6 +1290,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     break
                 metadata = {
                     'artist':       artist_name,
+                    'album_artist': artist_name,
                     'album':        album_name,
                     'title':        song.get('title', 'Unknown Title'),
                     'year':         result.get('year', ''),

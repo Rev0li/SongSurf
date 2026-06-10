@@ -11,7 +11,7 @@ FONCTIONNALITÉ:
 
 from pathlib import Path
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, APIC
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, APIC
 import re
 import shutil
 import subprocess
@@ -132,6 +132,7 @@ class MusicOrganizer:
 
             self._update_tags(final_path, {
                 'artist':       artist,
+                'album_artist': metadata.get('album_artist', ''),
                 'album':        album,
                 'title':        title,
                 'year':         year,
@@ -191,6 +192,12 @@ class MusicOrganizer:
             audio.tags['TIT2'] = TIT2(encoding=3, text=metadata.get('title', ''))
             audio.tags['TPE1'] = TPE1(encoding=3, text=metadata.get('artist', ''))
             audio.tags['TALB'] = TALB(encoding=3, text=metadata.get('album', ''))
+
+            # TPE2 (album artist) : c'est lui que Jellyfin utilise pour grouper
+            # les albums — toujours écrit, fallback sur l'artiste principal.
+            album_artist = str(metadata.get('album_artist') or '').strip() or metadata.get('artist', '')
+            if album_artist:
+                audio.tags['TPE2'] = TPE2(encoding=3, text=album_artist)
 
             if metadata.get('year'):
                 audio.tags['TDRC'] = TDRC(encoding=3, text=metadata.get('year', ''))

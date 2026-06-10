@@ -120,6 +120,7 @@
 					album:  item.album,
 					year:   item.year ?? '',
 					track_number: item.track_number ?? '',
+					album_artist: item.album_artist ?? '',
 				});
 			}
 

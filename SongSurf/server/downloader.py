@@ -262,6 +262,7 @@ class YouTubeDownloader:
             metadata = {
                 'title':         title,
                 'artist':        artist,
+                'album_artist':  self._primary_artist(info.get('album_artist')) if info.get('album_artist') else '',
                 'album':         album,
                 'year':          year,
                 'track_number':  info.get('track_number') or '',
