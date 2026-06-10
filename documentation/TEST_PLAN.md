@@ -2,8 +2,9 @@
 
 Describes all tests to validate security, auth pipeline, and download functionality.
 
-**Status (2026-05-07):** pytest suite added — `SongSurf/tests/` — 99 automated tests, 99 passing.
+**Status (2026-06-10):** pytest suite — `SongSurf/tests/` — 110 automated tests, 110 passing.
 Run: `cd SongSurf && python3 -m pytest`
+New coverage since 2026-05: track number (TRCK) pass-through, multi-artist TPE1 list, album artist TPE2, artist string splitting (`_split_artists` / `_artist_list`).
 
 Automated coverage:
 - W-1 → W-9, W-10/11 (JWT validation, DEV_MODE, secret, claims, tamper)
@@ -80,7 +81,7 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 | D-7 | Download completes | Wait for worker, check `GET /api/status` | `last_completed.success = true`, file in `/data/music/<sub>/` |
 | D-8 | File organized correctly | Check output path | `Artist/Album/Title.mp3` |
 | D-9 | Reject while busy | POST `/api/download` when one is in progress | 429 — download en cours |
-| D-10 | Cancel in-progress | POST `/api/cancel` | Download stops, `in_progress = false` |
+| D-10 | ~~Cancel in-progress~~ | — | **Not implemented**: no cancel route exists (`cancel_flag` is never set) |
 
 ### 3.3 Playlist download
 

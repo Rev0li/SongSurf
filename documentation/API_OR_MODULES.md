@@ -1,277 +1,190 @@
 # API & Modules — SongSurf
 
----
+Reference generated from the current code (`server/app.py`, `server/downloader.py`, `server/organizer.py`, `watcher/watcher.py`). All endpoints return JSON unless noted.
 
-## Backend Modules
-
-### `SongSurf/server/app.py` — Flask Application
-
-Entry point. Owns:
-- Flask app configuration and secret management
-- Route definitions for admin and guest APIs
-- Download queue (`queue.Queue`) and worker thread
-- Guest session registry (`dict` with TTL metadata)
-- Auth decorators (`@login_required`, `@guest_required`)
-- Watcher-mode vs. standalone-mode auth switching
-
-**Auth logic:**
-```
-WATCHER_SECRET set → check X-Watcher-Token header only
-WATCHER_SECRET not set → check Flask session cookie (standalone)
-```
+**Auth:** every `/api/*` route requires the Watcher-injected `X-Watcher-Token` header (`@auth_required`). The user identity comes from `X-User-Id` / `X-User-Role` / `X-User-Email`. In `DEV_MODE` (no `WATCHER_SECRET`) a local admin dev user is injected.
 
 ---
 
-### `SongSurf/server/downloader.py` — YouTubeDownloader
+## SongSurf HTTP API
 
-**Class: `YouTubeDownloader(temp_dir, music_dir)`**
+### Health & identity
 
-| Method | Description |
-|---|---|
-| `extract_metadata(url)` | Runs yt-dlp in info-only mode. Returns title, artist, album, year, thumbnail URL, duration, and `is_playlist`. Raises `ValueError` if duration exceeds `MAX_DURATION_SECONDS`. |
-| `download_song(url, title, artist, album, year, output_dir)` | Downloads a single track to `temp_dir`, converts to MP3 via FFmpeg, returns the final `.mp3` path. |
-| `download_playlist(url, output_dir, progress_callback)` | Downloads all tracks in a playlist sequentially. Calls `progress_callback(index, total, metadata)` per track. |
-| `_find_ffmpeg()` | Auto-detects ffmpeg binary (checks `$PATH` and common install locations). |
-| `_normalize_url(url)` | Strips tracking parameters, normalizes YouTube Music URLs. |
-
-**Class: `DownloadProgress`**
-
-Tracks live state (`percent`, `speed`, `eta`, `status`) updated via yt-dlp progress hook. Serialized by `to_dict()` and returned by `/api/status`.
-
----
-
-### `SongSurf/server/organizer.py` — MusicOrganizer
-
-**Class: `MusicOrganizer(music_dir)`**
-
-| Method | Description |
-|---|---|
-| `organize(mp3_path, title, artist, album, year)` | Writes ID3 tags, detects featuring artists, moves file to `Artist/Album/Title.mp3` under `music_dir`. Returns final path. |
-| `write_tags(path, title, artist, album, year, track)` | Writes ID3 tags using Mutagen. |
-| `extract_featuring(title, artist)` | Parses `feat.` / `ft.` patterns from title; splits featuring artists into proper tag. Returns `(clean_title, full_artist)`. |
-| `save_cover(mp3_path, image_url_or_bytes)` | Embeds album art in ID3 APIC frame and saves JPEG sidecar next to the MP3. |
-
----
-
-### `watcher/watcher.py` — Watcher Proxy
-
-**Flask app on port 8080.**
-
-| Route | Method | Description |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/` | GET | Redirect based on session state (admin → loading, guest → loading, anon → login) |
-| `/login` | GET / POST | Admin login form; sets session on success |
-| `/guest/login` | GET / POST | Guest login form |
-| `/logout` | GET | Clears admin session |
-| `/guest/logout` | GET | Clears guest session |
-| `/watcher/loading` | GET | Loading page; polls `/watcher/ready` |
-| `/watcher/ready` | GET | Returns 200 when SongSurf is healthy, 503 while starting |
-| `/<path:path>` | ANY | Catch-all proxy: validates session, starts SongSurf if needed, forwards request with `X-Watcher-Token` header |
-
-**Inactivity logic:**
-1. Every request updates `last_request_time`
-2. Background thread checks every 60s
-3. `last_request_time > INACTIVITY_TIMEOUT` → push warning to admin UI
-4. `last_request_time > INACTIVITY_TIMEOUT + INACTIVITY_GRACE_TIMEOUT` → stop SongSurf container via Docker SDK
-
----
-
-## HTTP API Reference (SongSurf)
-
-All endpoints are JSON. Admin routes require a valid `X-Watcher-Token` header (or session cookie in standalone mode). Guest routes require a valid guest session cookie.
-
-### Health
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/ping` | GET | None | Healthcheck — returns `{"status": "ok"}` |
-
----
-
-### Admin — Extraction & Download
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/api/extract` | POST | Admin | Extract metadata from a YouTube Music URL |
-| `/api/download` | POST | Admin | Queue a single-song download |
-| `/api/download-playlist` | POST | Admin | Queue a full playlist/album download |
-| `/api/cancel` | POST | Admin | Cancel the current download |
-| `/api/status` | GET | Admin | Poll current download progress and queue state |
-
-**`POST /api/extract` — request:**
-```json
-{ "url": "https://music.youtube.com/watch?v=..." }
-```
-
-**`POST /api/extract` — response:**
-```json
-{
-  "success": true,
-  "type": "song",
-  "is_playlist": false,
-  "metadata": {
-    "title": "Blinding Lights",
-    "artist": "The Weeknd",
-    "album": "After Hours",
-    "year": "2019",
-    "url": "https://...",
-    "thumbnail": "https://...",
-    "duration": 200
-  }
-}
-```
-
-**`POST /api/download` — request:**
-```json
-{
-  "url": "https://music.youtube.com/watch?v=...",
-  "title": "Blinding Lights",
-  "artist": "The Weeknd",
-  "album": "After Hours",
-  "year": "2019"
-}
-```
+| `/ping` | GET | Healthcheck (no auth) — used by Watcher and Docker healthcheck |
+| `/api/me` | GET | `{sub, role, email}` of the current user |
+| `/api/status` | GET | Download progress, queue size, batch progress, daily counter, `is_mine` |
 
 **`GET /api/status` — response:**
 ```json
 {
   "in_progress": true,
-  "current_download": { "title": "Blinding Lights", "artist": "The Weeknd" },
-  "progress": { "percent": 67, "speed": "812 KB/s", "eta": "8s", "status": "downloading" },
+  "current_download": { "url": "…", "metadata": {…}, "user_sub": "…", "started_at": "…" },
+  "progress": { "percent": 67, "phase": "downloading", "speed": "812 KB/s", "eta": "8s" },
   "queue_size": 2,
-  "batch_active": false,
-  "batch_total": 0,
-  "batch_done": 0,
-  "batch_percent": 0,
-  "error": null
+  "batch_active": true, "batch_total": 12, "batch_done": 4, "batch_percent": 38.5,
+  "extension_pending_count": 0,
+  "daily_count": 7, "daily_limit": 0,
+  "is_mine": true,
+  "last_completed": {…}, "last_error": null
 }
 ```
+Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (90) → `completed` (100).
+
+### Extraction & download
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/extract` | POST | `{url}` → metadata. Single song: flattened fields + `is_playlist: false`. Album/playlist: `{type, title, artist, year, thumbnail_url, thumbnail_candidates, songs[], total_songs, total_duration, prefetch_token, is_playlist: true}` |
+| `/api/download` | POST | Queue one song. Body: `{url, title, artist, album, year, track_number, album_artist, artists[]}`. 429 if a download is already queued/running or the daily limit is reached |
+| `/api/download-playlist` | POST | Queue all songs. Body: `{playlist_metadata: {title, artist, year, songs[]}}` — each song keeps its own `artists` and `track_number`; album-level artist becomes `TPE2`. Returns `{added, total, queue_size}` |
+
+Songs in playlist extraction carry: `{title, artist, artists[], url, id, duration, track_number}`.
+
+### ZIP export
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/prepare-zip` | POST | Zips the user's whole library → `{count, size_mb, download_url}` |
+| `/api/download-zip` | GET | Streams the ZIP. **Member libraries are deleted after the stream completes; the admin library is never deleted** |
+
+### Library
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}], playlists: [...]}` (flat folders = legacy) |
+| `/api/library/move` | POST | `{source, target_folder}` — move one MP3; re-syncs TPE1/TALB to the new folder position |
+| `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists) |
+| `/api/library/folder-cover` | GET | `?folder_path=` → cover image (cover/folder/artist.*, falls back to embedded APIC) |
+| `/api/library/artist-picture` | GET | `?folder_path=` → artist picture (folder.* / artist.*) |
+
+### Metadata editor
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/library/song-meta` | GET | `?path=` → full dump: file info, audio info (duration, bitrate…), all ID3 frames (multi-value frames joined with `"; "`), custom TXXX tags, cover presence |
+| `/api/library/song-meta/save` | POST | `{path, tags: {title, artist, album_artist, album, year, track_number, disc_number, genre, composer, copyright, publisher, bpm, key, language, isrc, encoded_by, comment}}` — empty value deletes the frame. **`artist`, `genre`, `composer` accept `;`-separated input → written as real ID3v2.4 multi-value frames. `album_artist` stays single-value (Jellyfin grouping key)** |
+| `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
+| `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
+| `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
+
+### Admin-only
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
+| `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
+
+### Prefetch (album preview)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/prefetch/cover` | GET | `?token=` → real cover extracted from the prefetched first track (204 while pending) |
+| `/api/prefetch/cancel` | POST | `{token}` → cancel + cleanup the prefetched file |
+
+### Browser extension
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → stored in a pending list (`extension_pending`), not downloaded directly |
+| `/api/extension-queue/consume` | POST | Frontend drains the pending list into its visual queue |
+| `/api/preview` | POST | `{url}` → lightweight metadata (no prefetch side-effect) for the extension's confirmation UI |
+| `/api/cookies/update` | POST | `{cookies}` (Netscape format) → written to `/data/cookies.txt` for yt-dlp |
 
 ---
 
-### Admin — Library Management
+## Watcher HTTP surface
 
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/api/library` | GET | Admin | Returns folder tree of `/data/music` |
-| `/api/library/move` | POST | Admin | Move a song to a different folder |
-| `/api/library/rename-folder` | POST | Admin | Rename a folder |
-| `/api/library/upload-image` | POST | Admin | Upload custom album art for a folder |
-| `/api/library/folder-cover` | GET | Admin | Get album art for a folder |
-| `/api/admin/prepare-zip` | POST | Admin | Package admin library as a ZIP |
-| `/api/prefetch/cancel` | POST | Admin | Cancel background prefetch |
-| `/api/prefetch/cover` | GET | Admin | Get prefetched cover art for preview |
-
----
-
-### Guest — Extraction & Download
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/api/guest/extract` | POST | Guest | Extract metadata (same as admin, restricted URLs) |
-| `/api/guest/download` | POST | Guest | Queue single-song download (quota-checked) |
-| `/api/guest/download-playlist` | POST | Guest | Queue playlist (quota-checked) |
-| `/api/guest/cancel` | POST | Guest | Cancel current download |
-| `/api/guest/status` | GET | Guest | Poll download progress + session state |
-| `/api/guest/prepare-zip` | POST | Guest | Package guest session files as ZIP |
-| `/api/guest/extend-session` | POST | Guest | Add time to session TTL |
-
-**`GET /api/guest/status` — response:**
-```json
-{
-  "in_progress": false,
-  "session_remaining_seconds": 2847,
-  "warn_threshold": 300,
-  "quota_used": 3,
-  "quota_max": 10,
-  "downloads": [
-    { "title": "Blinding Lights", "artist": "The Weeknd", "status": "completed" }
-  ],
-  "progress": { "percent": 100, "status": "completed" },
-  "error": null
-}
-```
+| Route | Method | Description |
+|---|---|---|
+| `/ping` | GET | Watcher healthcheck |
+| `/watcher/loading` | GET | Loading page while SongSurf boots |
+| `/watcher/ready` | GET | 200 when SongSurf answers `/ping`, 503 while starting |
+| `/watcher/inactivity-status` | GET | `{idle_seconds, warned}` for the frontend banner |
+| `/watcher/keepalive` | POST | Resets the inactivity timer (requires auth) |
+| `/logout` | GET/POST | Clears the auth cookie, redirects to `REVAUTH_HOME_URL` / login |
+| `/<any>` | ANY | Catch-all: validate JWT → start container if needed → proxy with injected headers. API callers get JSON 503 `{retry: true}` while SongSurf boots |
+| `OPTIONS *` | OPTIONS | CORS preflight for the extension |
 
 ---
 
-## Frontend JS API Client (`frontend/src/lib/api.js`)
+## Backend modules
 
-Thin wrapper around `fetch`. All methods return parsed JSON or throw on non-2xx responses.
+### `server/downloader.py` — `YouTubeDownloader(temp_dir, music_dir)`
 
-### Admin methods
+| Method | Description |
+|---|---|
+| `extract_metadata(url)` | Info-only yt-dlp run → `{title, artist, artists[], album_artist, album, year, track_number, thumbnail_url, thumbnail_candidates[], duration, view_count}`. Raises on duration > `MAX_DURATION_SECONDS` |
+| `extract_playlist_metadata(url)` | `extract_flat` run → playlist metadata + per-song list (see API above). Artist fallbacks: album_artist → artist → first song → title pattern |
+| `download(url, metadata)` | bestaudio → MP3 (FFmpeg `preferredquality 0`), staged in temp, cache-aware (reuses prefetched files) |
+| `prefetch_first_track(url, metadata)` | Background MP3 prefetch for cover preview |
+| `get_progress()` | Serialized `DownloadProgress` state |
+| `_artist_list(info_artists, fallback)` / `_split_artists(s)` | Artist list normalization (yt-dlp list preferred; split on `&`/`,`/`et`/`and`/`/`; strips ` - Topic`; deduped) |
+| `_primary_artist(s)` | First artist of the list (names the folder) |
+| `_detect_type(url)` | `'song'` / `'playlist'` from URL shape (`v=`, `list=`, `/browse/`) |
+| `_cookies_opts()` | Adds `cookiefile` when `/data/cookies.txt` exists |
+
+`DownloadProgress` — percent/speed/eta/phase updated by the yt-dlp progress hook.
+
+### `server/organizer.py` — `MusicOrganizer(music_dir)`
+
+| Method | Description |
+|---|---|
+| `organize(file_path, metadata)` | Featuring detection → `Artist/Album/Title.mp3` placement (duplicate-safe) → `_update_tags` → `cover.jpg`. `metadata`: `{artist, artists[], album_artist, album, title, year, track_number, track_total}` |
+| `detect_featuring(title, artist)` | Parses `feat./ft./featuring` patterns → `{main_artist, feat_artists[], clean_title, has_feat}` |
+| `_update_tags(path, tags, thumbnail)` | Mutagen: TIT2, **TPE1 multi-value**, **TPE2 (album_artist or primary artist, always set)**, TALB, TDRC, **TRCK `n/total`**, APIC (cropped/resized JPEG) |
+| `extract_album_covers(overwrite)` | Backfills `cover.jpg` per album (sidecar → APIC → FFmpeg frame fallbacks) |
+
+### `watcher/watcher.py`
+
+| Function | Description |
+|---|---|
+| `_validate_jwt(token)` | HS256 decode with `AUTH_JWT_SECRET`; requires `sub`, `role`, `exp`, `token_type=access` |
+| `_get_user_from_request()` | Cookie → claims → `{sub, role, email}`; `DEV_MODE` fallback |
+| `_proxy(user)` | Forwards with `X-Watcher-Token` + `X-User-*`; starts container when down |
+| `_inactivity_watcher()` | Background thread: warn → grace → `container.stop()` |
+
+---
+
+## Frontend API client (`frontend/src/lib/api.js`)
 
 ```js
-api.getStatus()                          // → /api/status
-api.extractMetadata(url)                 // → POST /api/extract
-api.download(url, metadata)              // → POST /api/download
-api.downloadPlaylist(url, metadata)      // → POST /api/download-playlist
-api.cancel()                             // → POST /api/cancel
-api.getLibrary()                         // → GET /api/library
-api.moveFile(src, dest)                  // → POST /api/library/move
-api.renameFolder(path, name)             // → POST /api/library/rename-folder
-api.uploadCover(formData)                // → POST /api/library/upload-image
-api.prepareAdminZip()                    // → POST /api/admin/prepare-zip
-api.cancelPrefetch()                     // → POST /api/prefetch/cancel
-```
-
-### Guest methods
-
-```js
-api.getGuestStatus()                     // → GET /api/guest/status
-api.guestExtractMetadata(url)            // → POST /api/guest/extract
-api.guestDownload(url, metadata)         // → POST /api/guest/download
-api.guestDownloadPlaylist(url, metadata) // → POST /api/guest/download-playlist
-api.guestCancel()                        // → POST /api/guest/cancel
-api.guestPrepareZip()                    // → POST /api/guest/prepare-zip
-api.extendGuestSession()                 // → POST /api/guest/extend-session
-```
-
-### Low-level helpers
-
-```js
-api.get('/api/custom-endpoint')
-api.post('/api/custom', { key: 'value' })
+api.me()                                   // GET  /api/me
+api.getStatus()                            // GET  /api/status
+api.extract(url)                           // POST /api/extract
+api.download(payload)                      // POST /api/download
+api.downloadPlaylist(payload)              // POST /api/download-playlist
+api.prepareZip()                           // POST /api/prepare-zip
+api.getLibrary()                           // GET  /api/library
+api.moveSong(source, targetFolder)         // POST /api/library/move
+api.moveFolder(folderPath, newParent)      // POST /api/library/move-folder
+api.songMeta(path)                         // GET  /api/library/song-meta
+api.saveSongMeta(path, tags)               // POST /api/library/song-meta/save
+api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
+api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
+api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
+api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder)
+api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder)
+api.cancelPrefetch(token)                  // POST /api/prefetch/cancel
+api.getPrefetchCoverUrl(token)             // GET  /api/prefetch/cover (URL builder)
+api.consumeExtensionQueue()                // POST /api/extension-queue/consume
 ```
 
 ---
 
-## Guest Session Model
+## Docker service contracts
 
-Each guest session is an entry in the in-memory `guest_sessions` dict:
+### Volumes (SongSurf)
 
-```python
-guest_sessions[session_id] = {
-    "created_at": datetime,
-    "expires_at": datetime,
-    "songs_downloaded": int,
-    "downloads": [],          # list of completed download metadata
-    "music_dir": Path,        # /data/music_guest/<session_id>/
-    "temp_dir": Path,         # /data/temp_guest/<session_id>/
-    "zip_path": Path | None,  # set after prepare-zip
-    "cleanup_after": datetime | None  # set after ZIP, delayed 120s
-}
-```
+| Host | Container | Purpose |
+|---|---|---|
+| `./data/music` | `/data/music` | Libraries (per-user subfolders in prod) |
+| `./data/temp` | `/data/temp` | Download staging + ZIP staging |
+| `./logs` | `/app/logs` | `activity.log`, `downloads.log` |
 
-Session state is not persisted to disk — a container restart invalidates all active guest sessions.
-
----
-
-## Docker Service Contracts
+Watcher mounts `/var/run/docker.sock` for container lifecycle.
 
 ### Healthchecks
 
-| Service | Command | Interval | Start period |
-|---|---|---|---|
-| Watcher | `curl -f http://localhost:8080/ping` | 30s | 10s |
-| SongSurf | `curl -f http://localhost:8081/ping` | 10s | 15s |
-
-### Volume Mounts
-
-| Host path | Container path | Service |
-|---|---|---|
-| `./data/music` | `/data/music` | SongSurf |
-| `./data/music_guest` | `/data/music_guest` | SongSurf |
-| `./data/temp` | `/data/temp` | SongSurf |
-| `./data/temp_guest` | `/data/temp_guest` | SongSurf |
-| `./logs` | `/app/logs` | SongSurf |
-| `/var/run/docker.sock` | `/var/run/docker.sock` | Watcher (Docker SDK) |
+Both services expose `/ping`; Compose healthchecks poll them (Watcher gates SongSurf readiness on it too).

@@ -1,222 +1,91 @@
-# CONNECTOR — SongSurf ↔ auth-selfhost-rust
+# CONNECTOR — SongSurf ↔ rev0auth
 
-This file documents the integration contract between the two projects.  
-It is the single source of truth for both sides; keep it in sync when either project changes its auth interface.
+Integration contract between the two projects. **Status: implemented** (Phase 3 done). Keep this file in sync if either side changes its auth interface.
 
-**SongSurf repo:** `~/dev/bot_music/`  
-**Auth repo:** `~/dev/rev0auth/` (branch `feature/saas-dashboard-clean-1`)
+- SongSurf repo: `~/dev/rev0Univers/SongSurf/`
+- Auth repo: `~/dev/rev0Univers/auth/`
 
 ---
 
-## How the Integration Works
+## How the integration works
 
 ```
 Browser
-  │
   │  cookie: access_token=<JWT>
   ▼
-Watcher :8080
-  │  reads cookie → validates JWT (HMAC HS256, shared secret)
+Watcher (WATCHER_PORT)
+  │  validates JWT locally (HS256, AUTH_JWT_SECRET — shared secret)
   │  extracts claims → injects headers
   ▼
 SongSurf :8081
-  │  trusts headers (no re-validation)
+  │  verifies X-Watcher-Token, trusts X-User-* headers (no re-validation)
   ▼
-  /data/music/<user_sub>/   ← permanent (Admin role)
-  /data/music/<user_sub>/   ← deleted after ZIP download (Member role)
+  /data/music/<pseudo>/   ← admin: permanent · member: deleted after ZIP export
 ```
+
+`pseudo` is derived from the email local part (sanitized); the admin role always maps to `ADMIN_PSEUDO` (default `rev0admin`).
 
 ---
 
-## JWT Contract (issued by auth-selfhost-rust)
+## JWT contract (issued by rev0auth)
 
-The auth service issues JWTs at `POST /auth/login` as **HttpOnly cookies** (`access_token`).
+Issued at login as an **HttpOnly cookie** named `access_token`.
 
-### Claims
+### Claims (all required by Watcher)
 
 | Claim | Type | Example | Notes |
 |---|---|---|---|
-| `sub` | string (UUID) | `"550e8400-e29b-41d4-..."` | Stable user identifier — used as folder name |
-| `email` | string | `"alice@example.com"` | Display name fallback |
-| `role` | string enum | `"Admin"` or `"Member"` | Controls storage persistence |
-| `token_type` | string | `"access"` | Always `"access"` for access tokens |
-| `iat` | int (Unix) | `1713400000` | Issued at |
-| `exp` | int (Unix) | `1713400900` | Expiry (access = 15 min, refresh = 7 days) |
+| `sub` | string | `"550e8400-…"` | Stable user identifier |
+| `email` | string | `"alice@example.com"` | Used to derive the library folder name |
+| `role` | string | `"Admin"` / `"Member"` | Lowercased by Watcher; controls storage persistence |
+| `token_type` | string | `"access"` | Refresh tokens are rejected |
+| `exp` | int | unix ts | Expiry (access ≈ 15 min) |
 
 ### Signing
 
 - Algorithm: **HS256**
-- Secret: shared via `JWT_SECRET` environment variable (same value in both services)
+- Secret: `AUTH_JWT_SECRET` — **must be byte-identical** in `auth/.secrets` (VPS) and `SongSurf/SongSurf/.secrets` (NAS). Rotation requires restarting both stacks (see root `rev0Univers/CLAUDE.md`).
 
-### Cookie Format
+### Cookie
 
 ```
 Set-Cookie: access_token=<JWT>; HttpOnly; Secure; SameSite=Lax; Path=/
 ```
 
-A separate CSRF token cookie is set without `HttpOnly` for double-submit validation (not required by SongSurf since it's not a browser-managed CSRF target — SongSurf receives server-to-server headers from Watcher).
+In production the cookie must be shared across subdomains (`COOKIE_DOMAIN=.<root-domain>`) so the browser sends it to the SongSurf host — see `REV0AUTH_INTEGRATION.md`.
 
 ---
 
-## Watcher Integration (TODO — Phase 3)
-
-Watcher must be updated to validate the JWT instead of a form password.
-
-### Required env vars (Watcher)
-
-```dotenv
-# Shared with auth-selfhost-rust — must be identical
-JWT_SECRET=<same value as auth service JWT_SECRET>
-
-# Auth service base URL (for /auth/me fallback if needed)
-# AUTH_SERVICE_URL=http://auth:8000
-```
-
-### Validation logic (Python, to add in watcher.py)
-
-```python
-import jwt as pyjwt  # pip install PyJWT
-
-JWT_SECRET = os.getenv('JWT_SECRET', '')
-
-def _validate_jwt(token: str) -> dict | None:
-    """
-    Validates an HS256 JWT and returns claims, or None if invalid.
-    Install: pip install PyJWT
-    """
-    # TODO Phase 3: replace Watcher password auth with this
-    try:
-        claims = pyjwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=['HS256'],
-            options={'require': ['sub', 'role', 'exp']},
-        )
-        if claims.get('token_type') != 'access':
-            return None
-        return claims
-    except pyjwt.PyJWTError:
-        return None
-
-def _extract_jwt_from_request() -> str | None:
-    """Reads JWT from the access_token HttpOnly cookie."""
-    return request.cookies.get('access_token')
-```
-
-### Replace login check in proxy catch-all (watcher.py)
-
-```python
-# Current (password-based):
-role = session.get('role')
-if not role:
-    return redirect(ADMIN_LOGIN_PATH)
-
-# Phase 3 replacement:
-token = _extract_jwt_from_request()
-claims = _validate_jwt(token) if token else None
-if not claims:
-    return redirect(AUTH_SERVICE_LOGIN_URL)  # redirect to auth service login page
-
-role = claims['role'].lower()   # 'admin' or 'member'
-user_sub = claims['sub']
-user_email = claims.get('email', '')
-```
-
-### Headers injected by Watcher into every SongSurf request
+## Headers injected by Watcher into every SongSurf request
 
 ```
-X-Watcher-Token:   <WATCHER_SECRET>   ← existing, unchanged
-X-User-Id:         <sub claim>         ← NEW: used as folder name
-X-User-Role:       <role claim>        ← existing, now sourced from JWT
-X-User-Email:      <email claim>       ← NEW: for display/logging
+X-Watcher-Token:  <WATCHER_SECRET>    internal shared secret (constant-time checked)
+X-User-Id:        <sub claim>
+X-User-Role:      <role claim, lowercased>
+X-User-Email:     <email claim>
 ```
+
+SongSurf rejects any request without a valid `X-Watcher-Token` (401), which is why port 8081 must never be reachable from outside the host.
 
 ---
 
-## SongSurf Integration (TODO — Phase 3)
+## Storage model
 
-SongSurf reads the injected headers — no JWT validation needed here.
-
-### Required env var changes
-
-```dotenv
-# Remove: SONGSURF_PASSWORD, SONGSURF_GUEST_PASSWORD
-# Keep:   WATCHER_SECRET  (still used to verify requests come from Watcher)
-```
-
-### New user identity decorator (to add in app.py)
-
-```python
-def get_user_identity() -> dict:
-    """
-    Extracts user identity from Watcher-injected headers.
-    Returns dict with sub, role, email.
-    # TODO Phase 3: replace login_required / guest_required decorators with this
-    """
-    return {
-        'sub':   request.headers.get('X-User-Id', ''),
-        'role':  request.headers.get('X-User-Role', 'member').lower(),
-        'email': request.headers.get('X-User-Email', ''),
-    }
-```
-
-### Storage routing logic (to add in app.py)
-
-```python
-def _user_music_dir(user_sub: str) -> Path:
-    """
-    Returns the music directory for a given user.
-    # TODO Phase 3: replace MUSIC_DIR / GUEST_MUSIC_DIR split with this
-    """
-    return MUSIC_DIR / user_sub
-
-def _is_permanent_user(role: str) -> bool:
-    """
-    Admin role = files never deleted.
-    Member role = files deleted after ZIP download.
-    # TODO Phase 3: replaces admin/guest distinction
-    """
-    return role == 'admin'
-```
-
----
-
-## Auth Service Endpoint Needed
-
-The auth service currently has **no `/validate` or `/me` endpoint**. Watcher validates the JWT locally using the shared `JWT_SECRET` (Option B agreed).
-
-If the secret ever needs to be rotated without a redeploy, add this to auth-selfhost-rust:
-
-```rust
-// TODO Phase 3 (optional): add to auth-selfhost-rust routes
-// GET /auth/me  →  returns {sub, email, role} from a valid cookie
-// This allows Watcher to validate without sharing JWT_SECRET
-```
-
----
-
-## Storage Model (Phase 3 target)
-
-| User role | Folder | Cleanup |
+| Role | Folder | Cleanup |
 |---|---|---|
-| `Admin` | `/data/music/<sub>/` | Never deleted |
-| `Member` | `/data/music/<sub>/` | Deleted after user downloads their ZIP |
+| `admin` | `/data/music/<ADMIN_PSEUDO>/` | Never deleted |
+| `member` | `/data/music/<pseudo>/` | Deleted after the user downloads their ZIP (`/api/download-zip`) |
 
-Both roles use the same dashboard. The only difference is post-ZIP cleanup behavior.
+Both roles use the same dashboard; only the post-ZIP cleanup differs.
 
 ---
 
-## Phase 3 Checklist
+## Failure modes
 
-- [ ] Add `PyJWT` to `watcher/requirements.txt`
-- [ ] Add `JWT_SECRET` to `.env.example` and docker-compose
-- [ ] Implement `_validate_jwt()` + `_extract_jwt_from_request()` in `watcher.py`
-- [ ] Replace session-based auth in Watcher with JWT validation
-- [ ] Inject `X-User-Id` and `X-User-Email` headers from Watcher
-- [ ] Update `login_required` decorator in `app.py` to read `X-User-Id`
-- [ ] Replace `MUSIC_DIR` / `GUEST_MUSIC_DIR` split with `_user_music_dir(sub)`
-- [ ] Remove TTL cleanup thread (Member files kept until ZIP download)
-- [ ] Add ZIP-triggered cleanup: when Member downloads ZIP, schedule folder deletion
-- [ ] Remove `SONGSURF_PASSWORD`, `SONGSURF_GUEST_PASSWORD` from config
-- [ ] Remove Watcher login forms (`/administrator`, `/guest/login` routes)
-- [ ] Update `documentation/ARCHITECTURE.md` to reflect new auth flow
+| Situation | Watcher behavior |
+|---|---|
+| No cookie / invalid / expired JWT | 302 → `AUTH_SERVICE_LOGIN_URL` (browser) or 503 (API callers) |
+| `AUTH_SERVICE_LOGIN_URL` unset | 503 unavailable page |
+| `AUTH_JWT_SECRET` empty | every request 503 + warning in logs (no crash) |
+| `token_type != "access"` | rejected |
+| `DEV_MODE=true` | full bypass with local admin dev user — never in production |
