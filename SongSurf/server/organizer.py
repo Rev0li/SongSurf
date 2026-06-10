@@ -11,7 +11,7 @@ FONCTIONNALITÉ:
 
 from pathlib import Path
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, APIC
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCON, APIC
 import re
 import shutil
 import subprocess
@@ -222,6 +222,12 @@ class MusicOrganizer:
             if track:
                 total = str(metadata.get('track_total') or '').strip()
                 audio.tags['TRCK'] = TRCK(encoding=3, text=f"{track}/{total}" if total else track)
+
+            # TCON multi-valeurs : genres iTunes (FR puis EN) injectés par le
+            # queue worker pour les téléchargements admin. Absent → pas de frame.
+            genres = [str(g).strip() for g in (metadata.get('genres') or []) if str(g).strip()]
+            if genres:
+                audio.tags['TCON'] = TCON(encoding=3, text=genres)
 
             if thumbnail_path and thumbnail_path.exists():
                 img_data, mime_type = self._convert_image_to_jpeg(thumbnail_path)

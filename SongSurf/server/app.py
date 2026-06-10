@@ -35,6 +35,7 @@ import io
 
 from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
+from genre_lookup import lookup_genres
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -912,6 +913,7 @@ def start_download():
             'url':         url,
             'metadata':    metadata,
             'user_sub':    user['sub'],
+            'user_role':   user.get('role', 'member'),
             'user_pseudo': _user_pseudo(user),
             'added_at':    datetime.now().isoformat(),
         })
@@ -955,6 +957,7 @@ def download_playlist():
                 'url':         song['url'],
                 'metadata':    metadata,
                 'user_sub':    user['sub'],
+                'user_role':   user.get('role', 'member'),
                 'user_pseudo': _user_pseudo(user),
                 'added_at':    datetime.now().isoformat(),
             })
@@ -1282,6 +1285,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'url':         url,
                     'metadata':    metadata,
                     'user_sub':    user['sub'],
+                    'user_role':   user.get('role', 'member'),
                     'user_pseudo': _user_pseudo(user),
                     'added_at':    datetime.now().isoformat(),
                 })
@@ -1313,6 +1317,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'url':         song['url'],
                     'metadata':    metadata,
                     'user_sub':    user['sub'],
+                    'user_role':   user.get('role', 'member'),
                     'user_pseudo': _user_pseudo(user),
                     'added_at':    datetime.now().isoformat(),
                 })
@@ -1548,6 +1553,14 @@ def queue_worker():
                     raise Exception("Annulé par l'utilisateur")
                 if not result['success']:
                     raise Exception(result.get('error', 'Erreur inconnue'))
+
+                # Genre iTunes (admin uniquement) — échec silencieux, jamais bloquant.
+                if item.get('user_role') == 'admin' and not metadata.get('genres'):
+                    metadata['genres'] = lookup_genres(
+                        metadata.get('artist', ''),
+                        metadata.get('title', ''),
+                        metadata.get('album', ''),
+                    )
 
                 org_result = org.organize(result['file_path'], metadata)
                 if not org_result['success']:
