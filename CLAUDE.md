@@ -81,6 +81,7 @@ Written by `organizer._update_tags` on every download:
 - `TPE1` artist(s) — **multi-value** (null-separated ID3v2.4): yt-dlp `artists` list when available, fallback split on `&`/`,`/`et`; featurings detected in the title are appended. Never a combined `"A & B"` string (it would fragment Jellyfin artists).
 - `TPE2` album artist — **always written, single value** (Jellyfin's album-grouping key); album artist for album downloads, falls back to primary artist.
 - `TRCK` track number as `n/total` (album position or yt-dlp `track_number`).
+- `TCON` genre — **admin downloads only**, auto-fetched from the iTunes Search API (`server/genre_lookup.py`, FR + US storefronts, deduped multi-value, cached per album, silent failure). YouTube itself provides no usable genre.
 - `APIC` embedded cover + `cover.jpg` in the album folder.
 
 The metadata editor (`/metadata` page → `/api/library/song-meta/save`) accepts `;`-separated values for artist/genre/composer and writes real multi-value frames. `TPE2` deliberately stays single-value.
