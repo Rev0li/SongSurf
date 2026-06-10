@@ -717,6 +717,7 @@
 								</h3>
 
 								<div class="section-subtitle">Principaux (Jellyfin / Ampifin)</div>
+								<div class="multi-hint">💡 Artiste(s), genre, compositeur : sépare plusieurs valeurs par « ; » — ex. <code>ArtisteA; ArtisteB</code></div>
 								<div class="meta-grid">
 									{#each ID3_PRIMARY as key}
 										<div class="meta-row {jellyfinMissing.includes(key) ? 'row-warn' : ''}">
@@ -1203,6 +1204,13 @@
 		background: rgba(0,0,0,.1);
 	}
 	.jellyfin-warn { font-size: 11px; font-weight: 500; color: var(--orange); text-transform: none; letter-spacing: 0; }
+
+	.multi-hint {
+		padding: var(--s2) var(--s4);
+		font-size: 11px; color: var(--text-3);
+		border-bottom: 1px solid rgba(84,84,88,.2);
+	}
+	.multi-hint code { font-size: 10px; background: rgba(0,0,0,.25); padding: 1px 4px; border-radius: 3px; }
 
 	/* ── Grid rows ────────────────────────────────────────────── */
 	.meta-grid { display: flex; flex-direction: column; }
