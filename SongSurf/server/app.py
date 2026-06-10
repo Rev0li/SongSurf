@@ -703,6 +703,9 @@ def save_song_meta():
         'key':          TKEY, 'language':     TLAN, 'isrc':         TSRC,
         'encoded_by':   TENC,
     }
+    # Champs multi-valeurs : « A; B » → valeurs ID3v2.4 null-séparées.
+    # album_artist (TPE2) reste single : c'est la clé de groupement Jellyfin.
+    _MULTI_VALUE_FIELDS = {'artist', 'genre', 'composer'}
     try:
         user      = _get_current_user()
         music_dir = _user_music_dir(user)
@@ -726,7 +729,11 @@ def save_song_meta():
             v = str(tags_data[field]).strip()
             key = FrameClass.__name__
             if v:
-                audio.tags[key] = FrameClass(encoding=3, text=[v])
+                if field in _MULTI_VALUE_FIELDS:
+                    values = [s.strip() for s in v.split(';') if s.strip()] or [v]
+                else:
+                    values = [v]
+                audio.tags[key] = FrameClass(encoding=3, text=values)
             else:
                 audio.tags.delall(key)
 
@@ -894,6 +901,7 @@ def start_download():
 
         metadata = {
             'artist':       data.get('artist', 'Unknown Artist'),
+            'artists':      data.get('artists') or [],
             'album_artist': data.get('album_artist', ''),
             'album':        data.get('album',  'Unknown Album'),
             'title':        data.get('title',  'Unknown Title'),
@@ -935,6 +943,7 @@ def download_playlist():
                 break
             metadata = {
                 'artist':       playlist.get('artist') or song.get('artist') or 'Unknown Artist',
+                'artists':      song.get('artists') or [],
                 'album_artist': playlist.get('artist') or '',
                 'album':        playlist.get('title', 'Unknown Album'),
                 'title':        song['title'],
@@ -1260,6 +1269,8 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                 meta = result.get('metadata', {})
                 metadata = {
                     'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
+                    # override artiste → la liste extraite n'est plus fiable
+                    'artists':      [] if (override or {}).get('artist') else meta.get('artists') or [],
                     'album_artist': meta.get('album_artist', ''),
                     'album':        (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
                     'title':        meta.get('title', 'Unknown Title'),
@@ -1290,6 +1301,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     break
                 metadata = {
                     'artist':       artist_name,
+                    'artists':      song.get('artists') or [],
                     'album_artist': artist_name,
                     'album':        album_name,
                     'title':        song.get('title', 'Unknown Title'),
@@ -1422,7 +1434,11 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
             frame = tags.get(frame_id)
             if frame is not None:
                 try:
-                    id3[label] = str(frame.text[0]) if hasattr(frame, 'text') else str(frame)
+                    if hasattr(frame, 'text'):
+                        # Multi-valeurs (TPE1 null-séparé, etc.) → « A; B »
+                        id3[label] = '; '.join(str(t) for t in frame.text)
+                    else:
+                        id3[label] = str(frame)
                 except Exception:
                     pass
 

@@ -136,6 +136,45 @@ class TestOrganizeFilePlacement:
         tags = mock_tags.call_args[0][1]
         assert tags['album_artist'] == 'AlbumArtist'
 
+    def test_multi_artists_passed_to_tags(self, organizer, tmp_path):
+        src = tmp_path / 'source.mp3'
+        self._make_mp3(src)
+
+        with patch.object(organizer, '_update_tags') as mock_tags, \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            result = organizer.organize(str(src), {
+                'artist':  'ArtisteA',
+                'artists': ['ArtisteA', 'ArtisteB'],
+                'album':   'Album',
+                'title':   'Song',
+                'year':    '',
+            })
+
+        assert result['success']
+        tags = mock_tags.call_args[0][1]
+        assert tags['artists'] == ['ArtisteA', 'ArtisteB']
+        # Le dossier reste celui de l'artiste principal
+        assert (organizer.music_dir / 'ArtisteA' / 'Album' / 'Song.mp3').exists()
+
+    def test_feat_artists_merged_into_tpe1_list(self, organizer, tmp_path):
+        src = tmp_path / 'source.mp3'
+        self._make_mp3(src)
+
+        with patch.object(organizer, '_update_tags') as mock_tags, \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            result = organizer.organize(str(src), {
+                'artist': 'Main',
+                'album':  'Album',
+                'title':  'Song (feat. Guest)',
+                'year':   '',
+            })
+
+        assert result['success']
+        tags = mock_tags.call_args[0][1]
+        assert tags['artists'] == ['Main', 'Guest']
+
     def test_track_number_absent_defaults_empty(self, organizer, tmp_path):
         src = tmp_path / 'source.mp3'
         self._make_mp3(src)

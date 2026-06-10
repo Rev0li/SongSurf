@@ -110,6 +110,15 @@ class MusicOrganizer:
                 title = f"{title} (feat. {feat_str})"
                 logger.info(f"   🎭 Featuring détecté: {feat_str} → artiste principal: {artist}")
 
+            # TPE1 multi-valeurs : artistes extraits + featurings du titre.
+            # L'artiste principal reste en première position (dossier + TPE2 fallback).
+            tag_artists = [str(a).strip() for a in (metadata.get('artists') or []) if str(a).strip()]
+            if not tag_artists:
+                tag_artists = [artist]
+            for fa in feat_info['feat_artists']:
+                if fa not in tag_artists:
+                    tag_artists.append(fa)
+
             artist = self._clean_filename(artist)
             album  = self._clean_filename(album)
             title  = self._clean_filename(title)
@@ -132,6 +141,7 @@ class MusicOrganizer:
 
             self._update_tags(final_path, {
                 'artist':       artist,
+                'artists':      tag_artists,
                 'album_artist': metadata.get('album_artist', ''),
                 'album':        album,
                 'title':        title,
@@ -190,7 +200,13 @@ class MusicOrganizer:
                 pass
 
             audio.tags['TIT2'] = TIT2(encoding=3, text=metadata.get('title', ''))
-            audio.tags['TPE1'] = TPE1(encoding=3, text=metadata.get('artist', ''))
+
+            # TPE1 multi-valeurs (null-séparées en ID3v2.4) : Jellyfin crédite
+            # chaque artiste séparément — jamais de chaîne combinée « A & B ».
+            artists = [str(a).strip() for a in (metadata.get('artists') or []) if str(a).strip()]
+            if not artists:
+                artists = [metadata.get('artist', '')]
+            audio.tags['TPE1'] = TPE1(encoding=3, text=artists)
             audio.tags['TALB'] = TALB(encoding=3, text=metadata.get('album', ''))
 
             # TPE2 (album artist) : c'est lui que Jellyfin utilise pour grouper

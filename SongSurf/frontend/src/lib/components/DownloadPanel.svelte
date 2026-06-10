@@ -191,6 +191,8 @@
 			year:   '',
 			track_number: extract.track_number ?? '',
 			album_artist: extract.album_artist ?? '',
+			// Artiste modifié à la main → la liste multi-artistes extraite n'est plus fiable
+			artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
 		};
 
 		stopPrefetchPolling();

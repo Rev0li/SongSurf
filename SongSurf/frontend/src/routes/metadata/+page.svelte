@@ -350,8 +350,12 @@
 	const ID3_PRIMARY   = ['title','artist','album_artist','album','year','track_number','disc_number','genre'];
 	const ID3_SECONDARY = ['composer','conductor','bpm','key','language','isrc','publisher','copyright','encoded_by','comment'];
 
+	// Champs multi-valeurs : « A; B » écrit deux valeurs ID3 distinctes (TPE1 null-séparé)
+	const MULTI_FIELDS = new Set(['artist', 'genre', 'composer']);
+	const MULTI_HINT   = 'Plusieurs valeurs possibles — sépare par « ; »';
+
 	const ID3_LABELS = {
-		title:'Titre', artist:'Artiste (TPE1)', album_artist:'Artiste album (TPE2)',
+		title:'Titre', artist:'Artiste(s) (TPE1)', album_artist:'Artiste album (TPE2)',
 		conductor:'Chef d\'orchestre', album:'Album', year:'Année / Date',
 		track_number:'N° piste (TRCK)', disc_number:'N° disque (TPOS)',
 		genre:'Genre (TCON)', composer:'Compositeur (TCOM)',
@@ -721,7 +725,8 @@
 												id="f-{key}"
 												class="meta-input {jellyfinMissing.includes(key) ? 'input-warn' : ''}"
 												value={editValues[key] ?? ''}
-												placeholder="—"
+												placeholder={MULTI_FIELDS.has(key) ? 'A; B' : '—'}
+												title={MULTI_FIELDS.has(key) ? MULTI_HINT : ''}
 												on:input={(e) => setField(key, e.currentTarget.value)}
 											/>
 										</div>
@@ -741,7 +746,8 @@
 													id="f-{key}"
 													class="meta-input {key === 'isrc' || key === 'encoded_by' ? 'mono' : ''}"
 													value={editValues[key] ?? ''}
-													placeholder="—"
+													placeholder={MULTI_FIELDS.has(key) ? 'A; B' : '—'}
+													title={MULTI_FIELDS.has(key) ? MULTI_HINT : ''}
 													on:input={(e) => setField(key, e.currentTarget.value)}
 												/>
 											</div>

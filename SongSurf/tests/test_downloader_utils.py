@@ -39,6 +39,37 @@ class TestNormalizeUrl:
         assert downloader._normalize_url(url) == url
 
 
+# ── _split_artists / _artist_list ─────────────────────────────────────────────
+
+class TestSplitArtists:
+    def test_single_artist(self, downloader):
+        assert downloader._split_artists('Queen') == ['Queen']
+
+    def test_ampersand_split(self, downloader):
+        assert downloader._split_artists('ArtisteA & ArtisteB') == ['ArtisteA', 'ArtisteB']
+
+    def test_comma_and_et_split(self, downloader):
+        assert downloader._split_artists('A, B et C') == ['A', 'B', 'C']
+
+    def test_topic_suffix_stripped(self, downloader):
+        assert downloader._split_artists('Daft Punk - Topic') == ['Daft Punk']
+
+    def test_empty_returns_empty_list(self, downloader):
+        assert downloader._split_artists('') == []
+        assert downloader._split_artists(None) == []
+
+
+class TestArtistList:
+    def test_ytdlp_list_has_priority(self, downloader):
+        assert downloader._artist_list(['A', 'B'], 'Fallback') == ['A', 'B']
+
+    def test_fallback_string_split(self, downloader):
+        assert downloader._artist_list(None, 'A & B') == ['A', 'B']
+
+    def test_deduplication(self, downloader):
+        assert downloader._artist_list(['A', 'A & B'], '') == ['A', 'B']
+
+
 # ── _detect_type ──────────────────────────────────────────────────────────────
 
 class TestDetectType:

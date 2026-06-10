@@ -257,11 +257,13 @@ class YouTubeDownloader:
             release_date = info.get('release_date') or info.get('upload_date', '')
             year = release_year[:4] if release_year else (release_date[:4] if len(release_date) >= 4 else '')
 
-            artist = self._primary_artist(artist)
+            artists = self._artist_list(info.get('artists'), artist)
+            artist  = artists[0] if artists else 'Unknown Artist'
 
             metadata = {
                 'title':         title,
                 'artist':        artist,
+                'artists':       artists,
                 'album_artist':  self._primary_artist(info.get('album_artist')) if info.get('album_artist') else '',
                 'album':         album,
                 'year':          year,
@@ -377,18 +379,20 @@ class YouTubeDownloader:
                 if entry is None:
                     continue
                 entry_title = entry.get('title', 'Unknown')
-                song_artist = (
+                raw_artist = (
                     entry.get('artist') or entry.get('creator') or
                     entry.get('channel') or entry.get('uploader') or playlist_artist
                 )
-                song_artist = self._primary_artist(song_artist)
+                song_artists = self._artist_list(entry.get('artists'), raw_artist)
+                song_artist  = song_artists[0] if song_artists else 'Unknown Artist'
 
                 # Fallback utile sur certains albums YT Music: "Artist - Title"
                 if song_artist == 'Unknown Artist' and ' - ' in entry_title:
                     title_parts = entry_title.split(' - ', 1)
                     maybe_artist = self._primary_artist(title_parts[0])
                     if maybe_artist and maybe_artist != 'Unknown Artist':
-                        song_artist = maybe_artist
+                        song_artist  = maybe_artist
+                        song_artists = [maybe_artist]
                         entry_title = title_parts[1].strip() or entry_title
 
                 entry_id = (entry.get('id') or '').strip()
@@ -405,6 +409,7 @@ class YouTubeDownloader:
                 song = {
                     'title':        entry_title,
                     'artist':       song_artist,
+                    'artists':      song_artists,
                     'url':          entry_url,
                     'id':           entry_id,
                     'duration':     entry.get('duration') or 0,
@@ -470,21 +475,33 @@ class YouTubeDownloader:
 
         return 'song'
 
-    def _primary_artist(self, artist):
-        """Normalise l'artiste et garde le premier nom principal."""
+    def _split_artists(self, artist):
+        """Découpe une chaîne 'A & B, C' en liste de noms d'artistes propres."""
         if not artist:
-            return 'Unknown Artist'
-
+            return []
         artist = str(artist).strip()
         if artist.endswith(' - Topic'):
             artist = artist[:-8].strip()
-
         parts = re.split(r'\s*(?:,|;|\||&|\band\b|\bet\b|/)\s*', artist, flags=re.IGNORECASE)
-        for part in parts:
-            p = part.strip()
-            if p:
-                return p
-        return artist or 'Unknown Artist'
+        return [p.strip() for p in parts if p.strip()]
+
+    def _artist_list(self, info_artists, fallback):
+        """Liste d'artistes : priorité au champ 'artists' yt-dlp (fiable sur
+        YT Music), sinon découpage de la chaîne fallback. Dédupliquée, ordonnée."""
+        artists = []
+        source = info_artists if isinstance(info_artists, list) and info_artists else [fallback]
+        for a in source:
+            for p in self._split_artists(a):
+                if p not in artists:
+                    artists.append(p)
+        return artists
+
+    def _primary_artist(self, artist):
+        """Normalise l'artiste et garde le premier nom principal."""
+        parts = self._split_artists(artist)
+        if parts:
+            return parts[0]
+        return (str(artist).strip() if artist else '') or 'Unknown Artist'
 
     def _clean_filename(self, name):
         """Nettoie un nom de fichier (supprime les caractères interdits)."""
