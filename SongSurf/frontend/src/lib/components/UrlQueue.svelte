@@ -119,6 +119,7 @@
 					artist: item.artist,
 					album:  item.album,
 					year:   item.year ?? '',
+					track_number: item.track_number ?? '',
 				});
 			}
 

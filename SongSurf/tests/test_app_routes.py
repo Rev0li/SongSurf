@@ -135,15 +135,6 @@ def test_st3_user_isolation(flask_setup):
 
 # ── ST-4: Path traversal blocked ─────────────────────────────────────────────
 
-def test_st4_path_traversal_delete_folder(flask_setup):
-    c, *_ = flask_setup
-    r = c.post('/api/library/delete-folder',
-               json={'folder_path': '../../etc'},
-               headers=auth_headers())
-    assert r.status_code == 400
-    assert not r.get_json()['success']
-
-
 def test_st4_path_traversal_move_song(flask_setup):
     c, *_ = flask_setup
     r = c.post('/api/library/move',
@@ -152,12 +143,12 @@ def test_st4_path_traversal_move_song(flask_setup):
     assert r.status_code in (400, 404)
 
 
-def test_st4_path_traversal_rename_folder(flask_setup):
+def test_st4_path_traversal_move_folder(flask_setup):
     c, *_ = flask_setup
-    r = c.post('/api/library/rename-folder',
-               json={'folder_path': '../../../etc', 'new_name': 'evil'},
+    r = c.post('/api/library/move-folder',
+               json={'folder_path': '../../../etc', 'new_parent': 'Artist'},
                headers=auth_headers())
-    assert r.status_code == 400
+    assert r.status_code in (400, 404)
 
 
 # ── D-2 / D-3 / D-5: URL validation at /api/extract ─────────────────────────
@@ -246,4 +237,4 @@ def test_d9_reject_download_while_in_progress(flask_setup):
 def test_user_music_dir_path_traversal_raises(flask_setup):
     _, _, _, app_mod = flask_setup
     with pytest.raises(ValueError, match='path escapes'):
-        app_mod._user_music_dir('../../etc/passwd')
+        app_mod._user_music_dir({'sub': 'x', '_pseudo': '../../etc/passwd'})

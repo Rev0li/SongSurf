@@ -264,6 +264,7 @@ class YouTubeDownloader:
                 'artist':        artist,
                 'album':         album,
                 'year':          year,
+                'track_number':  info.get('track_number') or '',
                 'thumbnail_url': info.get('thumbnail', ''),
                 'duration':      duration,
                 'view_count':    info.get('view_count', 0)
@@ -401,11 +402,12 @@ class YouTubeDownloader:
                     entry_url = f"{track_base_url}/watch?v={entry_id}"
 
                 song = {
-                    'title':    entry_title,
-                    'artist':   song_artist,
-                    'url':      entry_url,
-                    'id':       entry_id,
-                    'duration': entry.get('duration') or 0,
+                    'title':        entry_title,
+                    'artist':       song_artist,
+                    'url':          entry_url,
+                    'id':           entry_id,
+                    'duration':     entry.get('duration') or 0,
+                    'track_number': entry.get('playlist_index') or len(songs) + 1,
                 }
                 songs.append(song)
                 total_duration += song['duration']

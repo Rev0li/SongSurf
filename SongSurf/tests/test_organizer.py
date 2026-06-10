@@ -96,23 +96,41 @@ class TestOrganizeFilePlacement:
         final = organizer.music_dir / 'TestArtist' / 'TestAlbum' / 'TestSong.mp3'
         assert final.exists()
 
-    def test_playlist_mode_flat_structure(self, organizer, tmp_path):
+    def test_track_number_passed_to_tags(self, organizer, tmp_path):
         src = tmp_path / 'source.mp3'
         self._make_mp3(src)
 
-        with patch.object(organizer, '_update_tags'), \
+        with patch.object(organizer, '_update_tags') as mock_tags, \
              patch.object(organizer, '_ensure_album_cover'), \
              patch.object(organizer, '_find_thumbnail', return_value=None):
             result = organizer.organize(str(src), {
-                'artist': 'Artist',
-                'album':  'MyPlaylist',
-                'title':  'Song',
-                'year':   '',
-            }, playlist_mode=True)
+                'artist':       'Artist',
+                'album':        'Album',
+                'title':        'Song',
+                'year':         '2024',
+                'track_number': 3,
+                'track_total':  12,
+            })
 
         assert result['success']
-        final = organizer.music_dir / 'MyPlaylist' / 'Song.mp3'
-        assert final.exists()
+        tags = mock_tags.call_args[0][1]
+        assert tags['track_number'] == 3
+        assert tags['track_total'] == 12
+
+    def test_track_number_absent_defaults_empty(self, organizer, tmp_path):
+        src = tmp_path / 'source.mp3'
+        self._make_mp3(src)
+
+        with patch.object(organizer, '_update_tags') as mock_tags, \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            result = organizer.organize(str(src), {
+                'artist': 'Artist', 'album': 'Album', 'title': 'Song', 'year': '',
+            })
+
+        assert result['success']
+        tags = mock_tags.call_args[0][1]
+        assert tags['track_number'] == ''
 
     def test_duplicate_gets_counter_suffix(self, organizer, tmp_path):
         def make_and_organize(i):

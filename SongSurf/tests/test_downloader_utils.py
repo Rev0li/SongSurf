@@ -21,14 +21,14 @@ def downloader(tmp_path_factory):
 # ── _normalize_url ────────────────────────────────────────────────────────────
 
 class TestNormalizeUrl:
-    def test_music_youtube_converted(self, downloader):
+    # music.youtube.com est préservé (contenus exclusifs YT Music)
+    def test_music_youtube_preserved(self, downloader):
         url = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'
-        assert downloader._normalize_url(url) == 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        assert downloader._normalize_url(url) == url
 
-    def test_music_youtube_with_extra_params(self, downloader):
+    def test_music_youtube_with_extra_params_preserved(self, downloader):
         url = 'https://music.youtube.com/watch?v=abc123&list=PLabc'
-        result = downloader._normalize_url(url)
-        assert result == 'https://www.youtube.com/watch?v=abc123'
+        assert downloader._normalize_url(url) == url
 
     def test_regular_youtube_unchanged(self, downloader):
         url = 'https://www.youtube.com/watch?v=abc123'

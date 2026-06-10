@@ -485,7 +485,7 @@ def _build_library_tree(music_dir: Path) -> dict:
         return {'artists': artists, 'playlists': playlists}
     for top in sorted([d for d in music_dir.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
         direct_songs = sorted(
-            [f for f in top.iterdir() if f.is_file() and f.suffix.lower() in ('.mp3', '.mp4')],
+            [f for f in top.iterdir() if f.is_file() and f.suffix.lower() == '.mp3'],
             key=lambda p: p.name.lower()
         )
         if direct_songs:
@@ -498,7 +498,7 @@ def _build_library_tree(music_dir: Path) -> dict:
         albums = []
         for album_dir in sorted([d for d in top.iterdir() if d.is_dir()], key=lambda p: p.name.lower()):
             songs = sorted(
-                [f for f in album_dir.iterdir() if f.is_file() and f.suffix.lower() in ('.mp3', '.mp4')],
+                [f for f in album_dir.iterdir() if f.is_file() and f.suffix.lower() == '.mp3'],
                 key=lambda p: p.name.lower()
             )
             albums.append({
@@ -543,7 +543,7 @@ def library_move_song():
 
         if not str(src).startswith(str(base)) or not str(dst_dir).startswith(str(base)):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
-        if not src.exists() or src.suffix.lower() not in ('.mp3', '.mp4'):
+        if not src.exists() or src.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier source invalide'}), 404
 
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -893,10 +893,11 @@ def start_download():
             return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
 
         metadata = {
-            'artist': data.get('artist', 'Unknown Artist'),
-            'album':  data.get('album',  'Unknown Album'),
-            'title':  data.get('title',  'Unknown Title'),
-            'year':   data.get('year',   ''),
+            'artist':       data.get('artist', 'Unknown Artist'),
+            'album':        data.get('album',  'Unknown Album'),
+            'title':        data.get('title',  'Unknown Title'),
+            'year':         data.get('year',   ''),
+            'track_number': data.get('track_number', ''),
         }
         download_queue.put({
             'url':         url,
@@ -932,10 +933,12 @@ def download_playlist():
             if download_queue.full():
                 break
             metadata = {
-                'artist': playlist.get('artist') or song.get('artist') or 'Unknown Artist',
-                'album':  playlist.get('title', 'Unknown Album'),
-                'title':  song['title'],
-                'year':   playlist.get('year', ''),
+                'artist':       playlist.get('artist') or song.get('artist') or 'Unknown Artist',
+                'album':        playlist.get('title', 'Unknown Album'),
+                'title':        song['title'],
+                'year':         playlist.get('year', ''),
+                'track_number': song.get('track_number', ''),
+                'track_total':  len(songs),
             }
             download_queue.put({
                 'url':         song['url'],
@@ -1251,10 +1254,11 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     return
                 meta = result.get('metadata', {})
                 metadata = {
-                    'artist': (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
-                    'album':  (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
-                    'title':  meta.get('title', 'Unknown Title'),
-                    'year':   meta.get('year', ''),
+                    'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
+                    'album':        (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
+                    'title':        meta.get('title', 'Unknown Title'),
+                    'year':         meta.get('year', ''),
+                    'track_number': meta.get('track_number', ''),
                 }
             if not download_queue.full():
                 download_queue.put({
@@ -1279,10 +1283,12 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                 if download_queue.full():
                     break
                 metadata = {
-                    'artist': artist_name,
-                    'album':  album_name,
-                    'title':  song.get('title', 'Unknown Title'),
-                    'year':   result.get('year', ''),
+                    'artist':       artist_name,
+                    'album':        album_name,
+                    'title':        song.get('title', 'Unknown Title'),
+                    'year':         result.get('year', ''),
+                    'track_number': song.get('track_number', ''),
+                    'track_total':  len(songs),
                 }
                 download_queue.put({
                     'url':         song['url'],
@@ -1520,8 +1526,7 @@ def queue_worker():
                 if not result['success']:
                     raise Exception(result.get('error', 'Erreur inconnue'))
 
-                org_result = org.organize(result['file_path'], metadata,
-                                          playlist_mode=False, media_mode='mp3')
+                org_result = org.organize(result['file_path'], metadata)
                 if not org_result['success']:
                     raise Exception(org_result.get('error', 'Erreur organisation'))
 

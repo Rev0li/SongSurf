@@ -11,7 +11,7 @@ FONCTIONNALITÉ:
 
 from pathlib import Path
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, APIC
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, APIC
 import re
 import shutil
 import subprocess
@@ -76,23 +76,14 @@ class MusicOrganizer:
             'has_feat': len(feat_artists) > 0
         }
 
-    def organize(self, file_path, metadata, playlist_mode=False, media_mode='mp3'):
+    def organize(self, file_path, metadata):
         """
-        Organise un fichier audio/vidéo téléchargé.
-
-        Mode normal (playlist_mode=False) :
-            Structure  Artist/Album/Title.mp3
-            Featuring auto-détecté.
-
-        Mode playlist (playlist_mode=True) :
-            Structure  Album/Title.mp3  (dossier = nom de l'album)
-            Pas de tri par artiste, chaque chanson garde ses propres tags ID3.
+        Organise un fichier MP3 téléchargé en structure Artist/Album/Title.mp3.
+        Featuring auto-détecté, tags ID3 mis à jour, cover.jpg créé si absent.
 
         Args:
             file_path (str): Chemin du fichier temporaire
-            metadata (dict): {artist, album, title, year}
-            playlist_mode (bool): True = mode playlist (dossier plat par album)
-            media_mode (str): 'mp3' ou 'mp4'
+            metadata (dict): {artist, album, title, year, track_number?, track_total?}
 
         Returns:
             dict: {success, final_path, error}
@@ -105,89 +96,49 @@ class MusicOrganizer:
 
             logger.info(f"📁 Organisation: {file_path.name}")
 
-            media_mode = str(media_mode or 'mp3').lower().strip()
-            extension = '.mp4' if media_mode == 'mp4' else '.mp3'
-
             raw_artist = metadata.get('artist', 'Unknown Artist')
             album      = metadata.get('album',  'Unknown Album')
             raw_title  = metadata.get('title',  'Unknown Title')
             year       = metadata.get('year',   '')
 
-            thumbnail_path = None
+            feat_info = self.detect_featuring(raw_title, raw_artist)
+            artist = feat_info['main_artist']
+            title  = feat_info['clean_title']
 
-            if playlist_mode:
-                # ── MODE PLAYLIST : Album/Title.mp3 ──────────────────────
-                artist = self._clean_filename(raw_artist)
-                album  = self._clean_filename(album)
-                title  = self._clean_filename(raw_title)
+            if feat_info['has_feat']:
+                feat_str = ', '.join(feat_info['feat_artists'])
+                title = f"{title} (feat. {feat_str})"
+                logger.info(f"   🎭 Featuring détecté: {feat_str} → artiste principal: {artist}")
 
-                logger.info(f"   🎵 Mode Playlist — dossier: {album} / titre: {title}")
+            artist = self._clean_filename(artist)
+            album  = self._clean_filename(album)
+            title  = self._clean_filename(title)
 
-                dest_dir = self.music_dir / album
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                final_path = dest_dir / f"{title}{extension}"
+            logger.info(f"   🎤 {artist} / 💿 {album} / 🎵 {title} ({year})")
 
-                if final_path.exists():
-                    counter = 1
-                    while final_path.exists():
-                        final_path = dest_dir / f"{title} ({counter}){extension}"
-                        counter += 1
+            album_dir = self.music_dir / artist / album
+            album_dir.mkdir(parents=True, exist_ok=True)
+            final_path = album_dir / f"{title}.mp3"
 
-                shutil.copy2(file_path, final_path)
-                thumbnail_path = self._find_thumbnail(file_path)
+            if final_path.exists():
+                logger.debug(f"   ⚠️ Doublon détecté, ajout d'un suffixe")
+                counter = 1
+                while final_path.exists():
+                    final_path = album_dir / f"{title} ({counter}).mp3"
+                    counter += 1
 
-                if media_mode == 'mp3':
-                    self._update_tags(final_path, {
-                        'artist': artist,
-                        'album':  album,
-                        'title':  title,
-                        'year':   year,
-                    }, thumbnail_path)
-                    self._ensure_album_cover(dest_dir, final_path, thumbnail_path)
-                else:
-                    self._ensure_album_cover_from_thumbnail(dest_dir, final_path, thumbnail_path)
+            shutil.copy2(file_path, final_path)
+            thumbnail_path = self._find_thumbnail(file_path)
 
-            else:
-                # ── MODE NORMAL : Artist/Album/Title.mp3 ─────────────────
-                feat_info = self.detect_featuring(raw_title, raw_artist)
-                artist = feat_info['main_artist']
-                title  = feat_info['clean_title']
-
-                if feat_info['has_feat']:
-                    feat_str = ', '.join(feat_info['feat_artists'])
-                    title = f"{title} (feat. {feat_str})"
-                    logger.info(f"   🎭 Featuring détecté: {feat_str} → artiste principal: {artist}")
-
-                artist = self._clean_filename(artist)
-                album  = self._clean_filename(album)
-                title  = self._clean_filename(title)
-
-                logger.info(f"   🎤 {artist} / 💿 {album} / 🎵 {title} ({year})")
-
-                album_dir = self.music_dir / artist / album
-                album_dir.mkdir(parents=True, exist_ok=True)
-                final_path = album_dir / f"{title}{extension}"
-
-                if final_path.exists():
-                    logger.debug(f"   ⚠️ Doublon détecté, ajout d'un suffixe")
-                    counter = 1
-                    while final_path.exists():
-                        final_path = album_dir / f"{title} ({counter}){extension}"
-                        counter += 1
-
-                shutil.copy2(file_path, final_path)
-                thumbnail_path = self._find_thumbnail(file_path)
-
-                if media_mode == 'mp3':
-                    self._update_tags(final_path, {
-                        'artist': artist,
-                        'album':  album,
-                        'title':  title,
-                        'year':   year,
-                    }, thumbnail_path)
-                    self._ensure_album_cover(album_dir, final_path, thumbnail_path)
-                else:
-                    self._ensure_album_cover_from_thumbnail(album_dir, final_path, thumbnail_path)
+            self._update_tags(final_path, {
+                'artist':       artist,
+                'album':        album,
+                'title':        title,
+                'year':         year,
+                'track_number': metadata.get('track_number', ''),
+                'track_total':  metadata.get('track_total', ''),
+            }, thumbnail_path)
+            self._ensure_album_cover(album_dir, final_path, thumbnail_path)
 
             # ── Nettoyage commun ──────────────────────────────────────────
             file_path.unlink()
@@ -244,6 +195,11 @@ class MusicOrganizer:
             if metadata.get('year'):
                 audio.tags['TDRC'] = TDRC(encoding=3, text=metadata.get('year', ''))
 
+            track = str(metadata.get('track_number') or '').strip()
+            if track:
+                total = str(metadata.get('track_total') or '').strip()
+                audio.tags['TRCK'] = TRCK(encoding=3, text=f"{track}/{total}" if total else track)
+
             if thumbnail_path and thumbnail_path.exists():
                 img_data, mime_type = self._convert_image_to_jpeg(thumbnail_path)
                 if img_data:
@@ -298,30 +254,6 @@ class MusicOrganizer:
 
         return False
 
-    def _ensure_album_cover_from_thumbnail(self, album_dir, track_path, thumbnail_path, overwrite=False):
-        """Crée cover.jpg à partir du sidecar yt-dlp, sinon fallback ffmpeg."""
-        try:
-            album_dir = Path(album_dir)
-            cover_path = album_dir / 'cover.jpg'
-            if not overwrite and cover_path.exists() and cover_path.stat().st_size > 0:
-                return False
-
-            if thumbnail_path and Path(thumbnail_path).exists():
-                img_data, _ = self._convert_image_to_jpeg(Path(thumbnail_path))
-                if img_data:
-                    cover_path.write_bytes(img_data)
-                    logger.debug(f"   🖼️ cover.jpg créé depuis thumbnail: {cover_path.relative_to(self.music_dir)}")
-                    return True
-
-            if self._extract_cover_with_ffmpeg(track_path, cover_path):
-                logger.debug(f"   🖼️ cover.jpg extrait via ffmpeg: {cover_path.relative_to(self.music_dir)}")
-                return True
-
-            return False
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur création cover sidecar: {e}")
-            return False
-
     def _extract_cover_with_ffmpeg(self, media_path, cover_path):
         """Extrait une image cover.jpg depuis un média avec ffmpeg."""
         try:
@@ -362,8 +294,8 @@ class MusicOrganizer:
         Génère cover.jpg dans chaque dossier album de la bibliothèque.
 
         Structure gérée:
-                    - Mode normal   : Artist/Album/*.(mp3|mp4)
-                    - Mode playlist : Album/*.(mp3|mp4)
+                    - Artist/Album/*.mp3
+                    - Album/*.mp3  (dossiers plats legacy)
         """
         scanned = 0
         created = 0
@@ -384,12 +316,12 @@ class MusicOrganizer:
                     continue
 
                 direct_media = sorted(
-                    [p for p in subdir.iterdir() if p.is_file() and p.suffix.lower() in ('.mp3', '.mp4')],
+                    [p for p in subdir.iterdir() if p.is_file() and p.suffix.lower() == '.mp3'],
                     key=lambda p: p.name.lower()
                 )
                 subdirs = [d for d in subdir.iterdir() if d.is_dir()]
 
-                # Mode playlist: Album/*.(mp3|mp4)
+                # Dossier plat legacy: Album/*.mp3
                 if direct_media:
                     scanned += 1
                     if self._ensure_album_cover(subdir, direct_media[0], overwrite=overwrite):
@@ -398,10 +330,10 @@ class MusicOrganizer:
                         skipped += 1
                     continue
 
-                # Mode normal: Artist/Album/*.(mp3|mp4)
+                # Mode normal: Artist/Album/*.mp3
                 for album_dir in subdirs:
                     media_files = sorted(
-                        [p for p in album_dir.iterdir() if p.is_file() and p.suffix.lower() in ('.mp3', '.mp4')],
+                        [p for p in album_dir.iterdir() if p.is_file() and p.suffix.lower() == '.mp3'],
                         key=lambda p: p.name.lower()
                     )
                     if not media_files:

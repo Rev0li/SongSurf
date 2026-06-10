@@ -189,6 +189,7 @@
 			artist: asText(artist, 'Unknown Artist'),
 			album:  asText(album,  'Unknown Album'),
 			year:   '',
+			track_number: extract.track_number ?? '',
 		};
 
 		stopPrefetchPolling();
