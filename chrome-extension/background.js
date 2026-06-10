@@ -155,16 +155,20 @@ async function getCookiesAndSend() {
   }
 }
 
-async function queueBatch(urls) {
+async function queueBatch(items) {
   await loadConfig();
   if (!songSurfUrl)
     return { success: false, error: 'URL SongSurf non configurée. Ouvre les options.' };
   let added = 0, failed = 0;
-  for (const url of urls) {
+  for (const item of items) {
+    // Accept both plain URL strings and {url, artist, album} objects
+    const body = typeof item === 'string'
+      ? { url: item }
+      : { url: item.url, artist: item.artist || '', album: item.album || '' };
     try {
-      const data = await apiPost('/api/queue-direct', { url }, 10000);
+      const data = await apiPost('/api/queue-direct', body, 10000);
       if (data._status === 401 || data._status === 503)
-        return { success: added > 0, added, failed: failed + (urls.length - added - failed), error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+        return { success: added > 0, added, failed: failed + (items.length - added - failed), error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
       if (data.success) added++;
       else failed++;
     } catch {
@@ -187,7 +191,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'QUEUE_BATCH') {
-    queueBatch(msg.urls || []).then(sendResponse);
+    queueBatch(msg.items || msg.urls || []).then(sendResponse);
     return true;
   }
   if (msg.type === 'SYNC_COOKIES') {

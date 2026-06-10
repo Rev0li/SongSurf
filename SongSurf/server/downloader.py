@@ -298,6 +298,8 @@ class YouTubeDownloader:
         """
         try:
             logger.info(f"💿 Extraction playlist: {url}")
+            is_music_youtube = 'music.youtube.com' in url
+            track_base_url   = 'https://music.youtube.com' if is_music_youtube else 'https://www.youtube.com'
 
             ydl_opts = {
                 'quiet':          True,
@@ -348,7 +350,7 @@ class YouTubeDownloader:
                 first_entry = info['entries'][0] if info['entries'] else None
                 if first_entry and first_entry.get('id'):
                     try:
-                        first_song_url  = f"https://www.youtube.com/watch?v={first_entry['id']}"
+                        first_song_url  = f"{track_base_url}/watch?v={first_entry['id']}"
                         first_song_info = self.extract_metadata(first_song_url)
                         if first_song_info['success']:
                             playlist_artist = self._primary_artist(first_song_info['metadata'].get('artist', 'Unknown Artist'))
@@ -392,11 +394,11 @@ class YouTubeDownloader:
                 if entry_url and not re.match(r'^https?://', entry_url, flags=re.IGNORECASE):
                     # yt-dlp extract_flat peut retourner seulement l'ID vidéo ici.
                     if entry_id:
-                        entry_url = f"https://www.youtube.com/watch?v={entry_id}"
+                        entry_url = f"{track_base_url}/watch?v={entry_id}"
                     else:
-                        entry_url = f"https://www.youtube.com/watch?v={entry_url}"
+                        entry_url = f"{track_base_url}/watch?v={entry_url}"
                 if not entry_url and entry_id:
-                    entry_url = f"https://www.youtube.com/watch?v={entry_id}"
+                    entry_url = f"{track_base_url}/watch?v={entry_id}"
 
                 song = {
                     'title':    entry_title,
@@ -442,11 +444,8 @@ class YouTubeDownloader:
     # ──────────────────────────────────────────────────────────────
 
     def _normalize_url(self, url):
-        """Convertit une URL YouTube Music en URL YouTube classique."""
-        if 'music.youtube.com' in url:
-            match = re.search(r'[?&]v=([^&]+)', url)
-            if match:
-                return f'https://www.youtube.com/watch?v={match.group(1)}'
+        # yt-dlp gère nativement music.youtube.com — ne pas convertir pour
+        # préserver l'accès aux contenus exclusifs YouTube Music.
         return url
 
     def _detect_type(self, url: str) -> str:

@@ -13,7 +13,7 @@
         const list = u.searchParams.get('list') || '';
         return list.startsWith('OLAK5uy_') ? 'album' : 'playlist';
       }
-      if (u.pathname.startsWith('/channel/') || u.pathname.startsWith('/artist/')) return 'artist';
+      if (u.pathname.startsWith('/channel/') || u.pathname.startsWith('/artist/') || u.pathname.startsWith('/@')) return 'artist';
     } catch {}
     return null;
   }
@@ -214,8 +214,9 @@
   // ── Panel artiste (discographie — batch sans métadonnées) ─────────────────────
 
   function scrapeAlbumUrls() {
-    const seen = new Set();
-    const urls = [];
+    const seen       = new Set();
+    const items      = [];
+    const artistName = document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || '';
 
     // Target only the "Albums" shelf — not Singles, Videos, EPs, etc.
     const shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer');
@@ -229,20 +230,27 @@
           const m = href.match(/browse\/(MPREb_[^/?&#]+)/);
           if (m) {
             const url = `https://music.youtube.com/browse/${m[1]}`;
-            if (!seen.has(url)) { seen.add(url); urls.push(url); }
+            if (!seen.has(url)) {
+              seen.add(url);
+              // Scrape album title from the card element
+              const card    = link.closest('ytmusic-two-row-item-renderer') || link.parentElement;
+              const titleEl = card && (card.querySelector('.title') || card.querySelector('yt-formatted-string'));
+              const albumTitle = (titleEl?.title || titleEl?.textContent || '').trim();
+              items.push({ url, artist: artistName, album: albumTitle });
+            }
           }
         } catch {}
       });
     }
 
-    return urls;
+    return items;
   }
 
   function showArtistPanel(albums) {
     closePanel();
     ensurePanelStyles();
 
-    const artistName = document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || 'Artiste';
+    const artistName = (albums[0] && albums[0].artist) || document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || 'Artiste';
     const n = albums.length;
 
     panelEl = document.createElement('div');
@@ -274,7 +282,7 @@
       btn.disabled    = true;
       btn.textContent = '…';
 
-      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_BATCH', urls: albums });
+      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_BATCH', items: albums });
 
       closePanel();
       if (result && result.success) {
