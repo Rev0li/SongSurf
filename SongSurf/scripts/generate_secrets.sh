@@ -203,6 +203,26 @@ else
 fi
 ok "AUTH_JWT_SECRET défini"
 
+echo ""
+dim "Événements d'activité (optionnel) : le NAS pousse connexions/téléchargements"
+dim "vers le dashboard admin rev0auth. Laisse l'URL vide pour désactiver."
+if [[ -n "$AUTH_SERVICE_LOGIN_URL" ]]; then
+  _EVENTS_DEFAULT="$(echo "$AUTH_SERVICE_LOGIN_URL" | sed -E 's#^(https?://[^/]+).*#\1#')/japprends/api/songsurf-events"
+else
+  _EVENTS_DEFAULT=""
+fi
+AUTH_EVENTS_URL=$(prompt_optional "AUTH_EVENTS_URL (endpoint d'ingestion rev0auth)" "$_EVENTS_DEFAULT")
+
+printf "  SONGSURF_EVENTS_SECRET [auto-générer] : " >/dev/tty
+read -rs EVENTS_INPUT </dev/tty; echo >/dev/tty
+if [[ -z "$EVENTS_INPUT" ]]; then
+  SONGSURF_EVENTS_SECRET=$(gen_hex)
+  dim "  → auto-généré. Copie-le dans auth/.secrets côté VPS."
+else
+  SONGSURF_EVENTS_SECRET="$EVENTS_INPUT"
+fi
+ok "SONGSURF_EVENTS_SECRET défini"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 6 — Adresses donation (optionnel)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -265,6 +285,10 @@ DEV_MODE=${DEV_MODE}
 # Laisser vide désactive l'intégration JWT (authentification par mot de passe seule).
 AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL}
 
+# ── Événements d'activité poussés vers rev0auth ───────────────────────────
+# Vide = tracking désactivé. Secret associé : SONGSURF_EVENTS_SECRET (.secrets).
+AUTH_EVENTS_URL=${AUTH_EVENTS_URL}
+
 # ── Adresses donation (optionnel) ─────────────────────────────────────────
 DONATION_BTC=${DONATION_BTC}
 DONATION_ETH=${DONATION_ETH}
@@ -295,6 +319,10 @@ WATCHER_SECRET=${WATCHER_SECRET}
 
 # ── Secret JWT — doit correspondre à AUTH_JWT_SECRET dans rev0auth ────────
 AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+
+# ── Secret événements — doit correspondre à SONGSURF_EVENTS_SECRET ────────
+# dans auth/.secrets (VPS). Rotation = mise à jour des deux + restart des deux stacks.
+SONGSURF_EVENTS_SECRET=${SONGSURF_EVENTS_SECRET}
 
 EOF
   chmod 600 "$SECRETS_FILE"
@@ -328,6 +356,11 @@ echo -e "  Prochaine étape : ${BOLD}make up${NC}"
 if [[ "$DEV_MODE" == "false" ]] && [[ -n "$AUTH_SERVICE_LOGIN_URL" ]]; then
   echo ""
   warn "Phase 3 active : vérifie que AUTH_JWT_SECRET est identique dans .secrets et rev0auth avant de déployer."
+fi
+
+if [[ -n "$AUTH_EVENTS_URL" ]]; then
+  echo ""
+  warn "Événements actifs : SONGSURF_EVENTS_SECRET doit être identique dans auth/.secrets (VPS)."
 fi
 
 if [[ "$DEV_MODE" == "true" ]]; then

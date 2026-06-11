@@ -34,6 +34,8 @@ services:
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Spool des événements d'activité (events-pending-watcher.jsonl)
+      - ./logs:/app/logs
 
     environment:
       - PYTHONUNBUFFERED=1

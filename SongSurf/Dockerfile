@@ -41,6 +41,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
 COPY --chown=songsurf:songsurf server/ .
+COPY --chown=songsurf:songsurf shared/events_client.py .
 
 # SvelteKit build output
 COPY --from=frontend-builder --chown=songsurf:songsurf /frontend/build /app/frontend/build

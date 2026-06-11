@@ -27,6 +27,7 @@ from flask import (Flask, request, redirect,
 from datetime import datetime
 import hmac
 import re
+import sys
 import threading
 import time
 import os
@@ -36,6 +37,13 @@ import requests as req_lib
 import docker as docker_sdk
 import jwt as pyjwt
 from urllib.parse import urlparse
+
+# En Docker, events_client.py est copié à côté de watcher.py ;
+# en dev local (python watcher/watcher.py) il vit dans ../shared.
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared')
+if os.path.isdir(_SHARED_DIR):
+    sys.path.insert(0, _SHARED_DIR)
+import events_client
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -70,6 +78,16 @@ INACTIVITY_WARN_TIMEOUT  = int(os.getenv('INACTIVITY_WARN_TIMEOUT', os.getenv('I
 INACTIVITY_GRACE_TIMEOUT = int(os.getenv('INACTIVITY_GRACE_TIMEOUT', '900'))
 PROXY_CONNECT_TIMEOUT    = float(os.getenv('PROXY_CONNECT_TIMEOUT', '2.5'))
 PROXY_READ_TIMEOUT       = float(os.getenv('PROXY_READ_TIMEOUT', '30'))
+
+# Push d'événements d'activité vers rev0auth (no-op si AUTH_EVENTS_URL absent)
+events_client.init('watcher', os.getenv('EVENTS_PENDING_FILE', '/app/logs/events-pending-watcher.jsonl'))
+
+
+def _client_ip() -> str:
+    fwd = request.headers.get('X-Forwarded-For', '')
+    if fwd:
+        return fwd.split(',')[0].strip()
+    return request.remote_addr or ''
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -228,6 +246,7 @@ def _start_songsurf():
     if c.status != 'running':
         logger.info(f"🚀 Démarrage de '{TARGET_CONTAINER}'...")
         c.start()
+        events_client.emit('container_start')
 
 
 def _stop_songsurf():
@@ -239,6 +258,7 @@ def _stop_songsurf():
         total_idle = INACTIVITY_WARN_TIMEOUT + INACTIVITY_GRACE_TIMEOUT
         logger.info(f"⏹️  Arrêt de '{TARGET_CONTAINER}' (inactivité {total_idle}s)")
         c.stop(timeout=15)
+        events_client.emit('container_stop', detail={'idle_seconds': total_idle})
 
 
 def _songsurf_ready(timeout=2):
@@ -500,8 +520,19 @@ def proxy(path):
                 max_age=60 * 60 * 24,
             )
             logger.info(f"✅ Token handoff — user={user['sub']} role={user['role']}, cookie posé")
+            events_client.emit(
+                'login_success',
+                pseudo=events_client.derive_pseudo(user),
+                role=user['role'],
+                ip=_client_ip(),
+                detail={'sub': user['sub']},
+            )
             return resp
         logger.warning("⚠️  Token handoff échoué (JWT invalide dans ?token=)")
+        # Émis uniquement quand un token a été présenté et rejeté — jamais sur
+        # une simple requête anonyme (bruit des scans internet).
+        events_client.emit('login_rejected', ip=_client_ip(),
+                           detail={'reason': 'invalid_handoff_token'})
 
     user = _get_user_from_request()
     if not user:
@@ -530,4 +561,5 @@ if __name__ == '__main__':
     else:
         mode = "PRODUCTION (AUTH_JWT_SECRET absent → service verrouillé)"
     logger.info(f"🚀 Watcher démarré — mode={mode}, target={TARGET_URL}")
+    events_client.start_replay_thread()
     app.run(host='0.0.0.0', port=int(os.getenv('WATCHER_PORT', '8080')), debug=False)

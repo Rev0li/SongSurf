@@ -32,10 +32,18 @@ import logging
 import re
 import json
 import io
+import sys
 
 from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
 from genre_lookup import lookup_genres
+
+# En Docker, events_client.py est copié à côté de app.py ;
+# en dev local (make dev) il vit dans ../shared.
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared')
+if os.path.isdir(_SHARED_DIR):
+    sys.path.insert(0, _SHARED_DIR)
+import events_client
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -63,6 +71,9 @@ else:
 
 for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
+
+# Push d'événements d'activité vers rev0auth (no-op si AUTH_EVENTS_URL absent)
+events_client.init('songsurf', str(LOG_DIR / 'events-pending-songsurf.jsonl'))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -1076,6 +1087,9 @@ def download_zip():
 
     _sub      = user['sub']
     _is_admin = user.get('role') == 'admin'
+    _pseudo   = _user_pseudo(user)
+    _role     = user.get('role', '')
+    _zip_meta = {'count': state.get('count', 0), 'size_mb': state.get('size_mb', 0)}
     music_dir = _user_music_dir(user)
     file_size = zip_path.stat().st_size
 
@@ -1098,6 +1112,12 @@ def download_zip():
                 if not _is_admin and music_dir != BASE_MUSIC_DIR and music_dir.exists():
                     shutil.rmtree(music_dir, ignore_errors=True)
                     logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
+                events_client.emit(
+                    'zip_export',
+                    pseudo=_pseudo,
+                    role=_role,
+                    detail={**_zip_meta, 'library_purged': not _is_admin},
+                )
             except Exception as e:
                 logger.warning(f"⚠️ Post-download cleanup: {e}")
 
@@ -1898,6 +1918,13 @@ def queue_worker():
                 _label = user_pseudo or user_sub[:8]
                 activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
                 dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
+                events_client.emit(
+                    'download_success',
+                    pseudo=_label,
+                    artist=metadata.get('artist', ''),
+                    album=metadata.get('album', ''),
+                    title=metadata.get('title', ''),
+                )
                 _daily_increment()
 
             except Exception as e:
@@ -1913,6 +1940,14 @@ def queue_worker():
                     if (download_status['batch_done'] >= download_status.get('batch_total', 0)
                             and download_queue.qsize() == 0):
                         download_status['batch_active'] = False
+                events_client.emit(
+                    'download_failed',
+                    pseudo=user_pseudo or user_sub[:8],
+                    artist=(metadata or {}).get('artist', ''),
+                    album=(metadata or {}).get('album', ''),
+                    title=(metadata or {}).get('title', ''),
+                    detail={'error': str(e)[:300]},
+                )
 
             download_queue.task_done()
 
@@ -1933,5 +1968,6 @@ if __name__ == '__main__':
         mode = "LOCKED (set DEV_MODE=true or WATCHER_SECRET)"
 
     logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={BASE_MUSIC_DIR}")
+    events_client.start_replay_thread()
     threading.Thread(target=queue_worker, daemon=True).start()
     app.run(host='0.0.0.0', port=flask_port, debug=False, use_reloader=False)
