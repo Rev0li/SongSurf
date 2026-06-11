@@ -10,14 +10,16 @@ import pytest
 from unittest.mock import patch
 
 import genre_lookup
-from genre_lookup import lookup_genres
+from genre_lookup import lookup_genres, lookup_album_info
 
 
 @pytest.fixture(autouse=True)
 def clear_cache():
     genre_lookup._cache.clear()
+    genre_lookup._album_cache.clear()
     yield
     genre_lookup._cache.clear()
+    genre_lookup._album_cache.clear()
 
 
 def _fake_response(results):
@@ -112,6 +114,86 @@ class TestLookupGenres:
             lookup_genres('Artist', 'Song Two', 'Unknown Album')
         # Albums inconnus → clé par titre, pas de collision de cache
         assert len(genre_lookup._cache) == 2
+
+
+# ── lookup_album_info ─────────────────────────────────────────────────────────
+
+def _itunes_album(artist, album, genre='Rock', year='2016', tracks=12):
+    return {
+        'artistName':       artist,
+        'collectionName':   album,
+        'primaryGenreName': genre,
+        'releaseDate':      f'{year}-06-03T07:00:00Z',
+        'trackCount':       tracks,
+    }
+
+
+class TestLookupAlbumInfo:
+    def test_album_found(self):
+        responses = {
+            'FR': [_itunes_album('Nekfeu', 'Cyborg', 'Rap français', '2016', 14)],
+            'US': [_itunes_album('Nekfeu', 'Cyborg', 'Hip-Hop/Rap', '2016', 14)],
+        }
+
+        def fake_urlopen(req, timeout=None):
+            country = 'FR' if 'country=FR' in req.full_url else 'US'
+            return _fake_response(responses[country])
+
+        with patch('genre_lookup.urlopen', side_effect=fake_urlopen):
+            info = lookup_album_info('Nekfeu', 'Cyborg')
+        assert info['found'] is True
+        assert info['genres'] == ['Rap français', 'Hip-Hop/Rap']
+        assert info['year'] == '2016'
+        assert info['album_artist'] == 'Nekfeu'
+        assert info['track_count'] == 14
+
+    def test_deluxe_edition_matches(self):
+        # iTunes suffixe « (Deluxe) » → containment souple
+        result = _itunes_album('Daft Punk', 'Random Access Memories (Deluxe Edition)')
+        with patch('genre_lookup.urlopen',
+                   side_effect=lambda req, timeout=None: _fake_response([result])):
+            info = lookup_album_info('Daft Punk', 'Random Access Memories')
+        assert info['found'] is True
+
+    def test_wrong_artist_skipped(self):
+        result = _itunes_album('Tribute Band', 'Cyborg', 'Karaoké')
+        with patch('genre_lookup.urlopen',
+                   side_effect=lambda req, timeout=None: _fake_response([result])):
+            info = lookup_album_info('Nekfeu', 'Cyborg')
+        assert info['found'] is False
+        assert info['genres'] == []
+
+    def test_network_error_returns_not_found_and_not_cached(self):
+        with patch('genre_lookup.urlopen', side_effect=OSError('timeout')):
+            info = lookup_album_info('Artist', 'Album')
+        assert info['found'] is False
+        assert genre_lookup._album_cache == {}
+
+    def test_result_cached(self):
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            return _fake_response([_itunes_album('IAM', "L'École du micro d'argent")])
+
+        with patch('genre_lookup.urlopen', side_effect=fake_urlopen):
+            first = lookup_album_info('IAM', "L'École du micro d'argent")
+            second = lookup_album_info('IAM', "L'École du micro d'argent")
+        assert first == second
+        assert len(calls) == 2  # FR + US une seule fois
+
+    def test_cached_copy_is_isolated(self):
+        with patch('genre_lookup.urlopen',
+                   side_effect=lambda req, timeout=None: _fake_response(
+                       [_itunes_album('Queen', 'A Night at the Opera')])):
+            first = lookup_album_info('Queen', 'A Night at the Opera')
+            first['genres'].append('PARASITE')
+            second = lookup_album_info('Queen', 'A Night at the Opera')
+        assert 'PARASITE' not in second['genres']
+
+    def test_empty_inputs(self):
+        assert lookup_album_info('', 'Album')['found'] is False
+        assert lookup_album_info('Artist', '')['found'] is False
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

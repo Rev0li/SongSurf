@@ -26,6 +26,7 @@ COUNTRIES = ('FR', 'US')
 # Cache mémoire (artiste, album) → genres : un album de N pistes ne coûte
 # qu'un seul lookup (2 appels HTTP), et on reste loin du rate-limit iTunes.
 _cache = {}
+_album_cache = {}  # (artiste, album) → info album (audit / backfill)
 _cache_lock = threading.Lock()
 
 
@@ -37,6 +38,12 @@ def _normalize(text):
 
 def _artist_matches(expected, candidate):
     """Match souple : évite les faux positifs (reprises, karaoké, tributes)."""
+    e, c = _normalize(expected), _normalize(candidate)
+    return bool(e) and bool(c) and (e in c or c in e)
+
+
+def _album_matches(expected, candidate):
+    """iTunes suffixe souvent « (Deluxe Edition) » etc. → containment souple."""
     e, c = _normalize(expected), _normalize(candidate)
     return bool(e) and bool(c) and (e in c or c in e)
 
@@ -101,3 +108,78 @@ def lookup_genres(artist, title, album=''):
     if genres:
         logger.info(f"🎼 Genre iTunes: {artist} - {title} → {genres}")
     return genres
+
+
+def _search_album(artist, album, country):
+    """Un appel iTunes Search (entity=album) → premier résultat plausible ou None."""
+    params = urlencode({
+        'term':    f'{artist} {album}',
+        'media':   'music',
+        'entity':  'album',
+        'limit':   5,
+        'country': country,
+    })
+    req = Request(f'{ITUNES_SEARCH_URL}?{params}',
+                  headers={'User-Agent': 'SongSurf/1.0'})
+    with urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    for result in data.get('results', []):
+        if (_artist_matches(artist, result.get('artistName', ''))
+                and _album_matches(album, result.get('collectionName', ''))):
+            return result
+    return None
+
+
+def lookup_album_info(artist, album):
+    """
+    Recherche l'album sur iTunes (FR puis US) pour l'audit métadonnées :
+
+        {'found': bool, 'genres': [...], 'year': 'YYYY',
+         'album_artist': str, 'track_count': int}
+
+    Même contrat que lookup_genres : jamais d'exception, cache mémoire,
+    échec réseau non mémorisé.
+    """
+    artist = str(artist or '').strip()
+    album = str(album or '').strip()
+    info = {'found': False, 'genres': [], 'year': '', 'album_artist': '', 'track_count': 0}
+    if not artist or not album:
+        return info
+
+    cache_key = (_normalize(artist), _normalize(album))
+    with _cache_lock:
+        if cache_key in _album_cache:
+            cached = _album_cache[cache_key]
+            return {**cached, 'genres': list(cached['genres'])}
+
+    reachable = False
+    for country in COUNTRIES:
+        try:
+            result = _search_album(artist, album, country)
+            reachable = True
+        except Exception as e:
+            logger.warning(f"⚠️ iTunes album lookup ({country}) échoué pour {artist} - {album}: {e}")
+            continue
+        if not result:
+            continue
+        info['found'] = True
+        genre = (result.get('primaryGenreName') or '').strip()
+        if genre and _normalize(genre) not in [_normalize(g) for g in info['genres']]:
+            info['genres'].append(genre)
+        if not info['year']:
+            info['year'] = str(result.get('releaseDate') or '')[:4]
+        if not info['album_artist']:
+            info['album_artist'] = (result.get('artistName') or '').strip()
+        if not info['track_count']:
+            try:
+                info['track_count'] = int(result.get('trackCount') or 0)
+            except (TypeError, ValueError):
+                pass
+
+    if reachable:
+        with _cache_lock:
+            _album_cache[cache_key] = {**info, 'genres': list(info['genres'])}
+
+    if info['found']:
+        logger.info(f"🎼 Album iTunes: {artist} - {album} → {info['genres']}, {info['year']}")
+    return info

@@ -688,10 +688,8 @@ def library_artist_picture():
         return '', 204
 
 
-@app.route('/api/library/song-meta/save', methods=['POST'])
-@auth_required
-def save_song_meta():
-    """Writes editable ID3 tags back to an MP3 file."""
+def _write_song_tags(target: Path, tags_data: dict) -> None:
+    """Writes editable ID3 frames to an MP3 (shared: metadata editor + audit apply)."""
     from mutagen.mp3 import MP3 as _MP3
     from mutagen.id3 import (ID3 as _ID3, TIT2, TPE1, TPE2, TALB, TDRC,
                               TRCK, TPOS, TCON, TCOM, TCOP, TPUB, TBPM,
@@ -707,6 +705,47 @@ def save_song_meta():
     # Champs multi-valeurs : « A; B » → valeurs ID3v2.4 null-séparées.
     # album_artist (TPE2) reste single : c'est la clé de groupement Jellyfin.
     _MULTI_VALUE_FIELDS = {'artist', 'genre', 'composer'}
+
+    audio = _MP3(target, ID3=_ID3)
+    if audio.tags is None:
+        audio.add_tags()
+
+    for field, FrameClass in _FRAME_MAP.items():
+        if field not in tags_data:
+            continue
+        v = str(tags_data[field]).strip()
+        key = FrameClass.__name__
+        if v:
+            if field in _MULTI_VALUE_FIELDS:
+                values = [s.strip() for s in v.split(';') if s.strip()] or [v]
+            else:
+                values = [v]
+            audio.tags[key] = FrameClass(encoding=3, text=values)
+        else:
+            audio.tags.delall(key)
+
+    # Handle comment separately (needs lang)
+    if 'comment' in tags_data:
+        audio.tags.delall('COMM')
+        v = str(tags_data['comment']).strip()
+        if v:
+            audio.tags.add(COMM(encoding=3, lang='eng', desc='', text=[v]))
+
+    audio.save()
+
+
+# Champs acceptés par l'éditeur et l'audit (clés de _FRAME_MAP + comment)
+_EDITABLE_FIELDS = {
+    'title', 'artist', 'album_artist', 'album', 'year', 'track_number',
+    'disc_number', 'genre', 'composer', 'copyright', 'publisher', 'bpm',
+    'key', 'language', 'isrc', 'encoded_by', 'comment',
+}
+
+
+@app.route('/api/library/song-meta/save', methods=['POST'])
+@auth_required
+def save_song_meta():
+    """Writes editable ID3 tags back to an MP3 file."""
     try:
         user      = _get_current_user()
         music_dir = _user_music_dir(user)
@@ -720,32 +759,7 @@ def save_song_meta():
         if not target.exists() or target.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
 
-        audio = _MP3(target, ID3=_ID3)
-        if audio.tags is None:
-            audio.add_tags()
-
-        for field, FrameClass in _FRAME_MAP.items():
-            if field not in tags_data:
-                continue
-            v = str(tags_data[field]).strip()
-            key = FrameClass.__name__
-            if v:
-                if field in _MULTI_VALUE_FIELDS:
-                    values = [s.strip() for s in v.split(';') if s.strip()] or [v]
-                else:
-                    values = [v]
-                audio.tags[key] = FrameClass(encoding=3, text=values)
-            else:
-                audio.tags.delall(key)
-
-        # Handle comment separately (needs lang)
-        if 'comment' in tags_data:
-            audio.tags.delall('COMM')
-            v = str(tags_data['comment']).strip()
-            if v:
-                audio.tags.add(COMM(encoding=3, lang='eng', desc='', text=[v]))
-
-        audio.save()
+        _write_song_tags(target, tags_data)
         logger.info(f"💾 Tags sauvegardés : {path}")
         return jsonify({'success': True})
     except Exception as e:
@@ -1112,6 +1126,130 @@ def admin_extract_covers():
         return jsonify(result), 200 if result.get('success') else 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Audit métadonnées + backfill genre (admin) ────────────────────────────────
+
+_backfill_lock  = threading.Lock()
+_backfill_state = {'status': 'idle', 'total': 0, 'done': 0, 'updated': 0,
+                   'failed': 0, 'last_file': '', 'started_at': '', 'finished_at': ''}
+
+
+@app.route('/api/admin/audit/artist')
+@auth_required
+def admin_audit_artist():
+    """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste."""
+    try:
+        user = _get_current_user()
+        if user.get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'Admin requis'}), 403
+        music_dir = _user_music_dir(user)
+        path      = (request.args.get('path') or '').strip()
+        if not path:
+            return jsonify({'success': False, 'error': 'path requis'}), 400
+
+        artist_dir = (music_dir / path).resolve()
+        if not str(artist_dir).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not artist_dir.exists() or not artist_dir.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier artiste introuvable'}), 404
+
+        from library_audit import audit_artist
+        report = audit_artist(artist_dir, music_dir)
+        logger.info(f"🔎 Audit {report['artist']}: {report['total_recommendations']} recommandation(s)")
+        return jsonify({'success': True, **report})
+    except Exception as e:
+        logger.error(f"❌ /api/admin/audit/artist: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/audit/apply', methods=['POST'])
+@auth_required
+def admin_audit_apply():
+    """Applique les recommandations cochées : [{path, field, value}]."""
+    try:
+        user = _get_current_user()
+        if user.get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'Admin requis'}), 403
+        music_dir = _user_music_dir(user)
+        changes   = (request.get_json(silent=True) or {}).get('changes') or []
+
+        applied, errors = 0, []
+        for ch in changes:
+            path  = str(ch.get('path') or '').strip()
+            field = str(ch.get('field') or '').strip()
+            value = str(ch.get('value') or '')
+            if not path or field not in _EDITABLE_FIELDS:
+                errors.append(f'{path or "?"}: champ invalide')
+                continue
+            target = (music_dir / path).resolve()
+            if not str(target).startswith(str(music_dir.resolve())):
+                errors.append(f'{path}: chemin invalide')
+                continue
+            if not target.exists() or target.suffix.lower() != '.mp3':
+                errors.append(f'{path}: fichier introuvable')
+                continue
+            try:
+                _write_song_tags(target, {field: value})
+                applied += 1
+            except Exception as e:
+                errors.append(f'{path}: {e}')
+
+        logger.info(f"🔎 Audit apply: {applied} tag(s) écrits, {len(errors)} erreur(s)")
+        return jsonify({'success': True, 'applied': applied, 'errors': errors})
+    except Exception as e:
+        logger.error(f"❌ /api/admin/audit/apply: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/genre-backfill', methods=['POST'])
+@auth_required
+def admin_genre_backfill():
+    """Lance le backfill TCON de la bibliothèque admin (thread d'arrière-plan)."""
+    try:
+        user = _get_current_user()
+        if user.get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'Admin requis'}), 403
+
+        with _backfill_lock:
+            if _backfill_state['status'] == 'running':
+                return jsonify({'success': False, 'error': 'Backfill déjà en cours'}), 409
+            _backfill_state.update({
+                'status': 'running', 'total': 0, 'done': 0, 'updated': 0,
+                'failed': 0, 'last_file': '',
+                'started_at': datetime.now().isoformat(), 'finished_at': '',
+            })
+
+        music_dir = _user_music_dir(user)
+
+        def _job():
+            from library_audit import backfill_genres
+            try:
+                backfill_genres(music_dir, _backfill_state, _backfill_lock)
+            except Exception as e:
+                logger.error(f"❌ Backfill genres: {e}")
+                with _backfill_lock:
+                    _backfill_state['status'] = 'error'
+                    _backfill_state['error']  = str(e)
+            finally:
+                with _backfill_lock:
+                    _backfill_state['finished_at'] = datetime.now().isoformat()
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"❌ /api/admin/genre-backfill: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/genre-backfill/status')
+@auth_required
+def admin_genre_backfill_status():
+    user = _get_current_user()
+    if user.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Admin requis'}), 403
+    with _backfill_lock:
+        return jsonify({'success': True, **_backfill_state})
 
 
 # ── Prefetch routes ────────────────────────────────────────────────────────────
