@@ -319,6 +319,35 @@ def test_renumber_album_rejects_foreign_path(flask_setup):
     assert r.status_code == 400
 
 
+def test_me_returns_pseudo(flask_setup):
+    c, *_ = flask_setup
+    r = c.get('/api/me', headers=auth_headers(email='oliver.k@test.com'))
+    assert r.get_json()['pseudo'] == 'oliver.k'
+    r = c.get('/api/me', headers=admin_headers())
+    assert r.get_json()['pseudo'] == 'rev0admin'
+
+
+def test_album_status_counts_missing_tags(flask_setup):
+    from mutagen.id3 import ID3, TCON, TDRC
+    c, music, *_ = flask_setup
+    artist = music / 'user' / 'ArtistST'
+    _make_tagged_mp3(artist / 'Complet' / 'a.mp3', title='A', track='1/1')
+    f = artist / 'Complet' / 'a.mp3'
+    id3 = ID3(f)
+    id3['TCON'] = TCON(encoding=3, text=['Rap'])
+    id3['TDRC'] = TDRC(encoding=3, text='2016')
+    id3.save(f)
+    _make_tagged_mp3(artist / 'Trous' / 'b.mp3', title='B')  # ni genre, ni année, ni TRCK
+
+    r = c.get('/api/library/album-status?folder_path=ArtistST',
+              headers=auth_headers())
+    assert r.status_code == 200
+    albums = {a['name']: a for a in r.get_json()['albums']}
+    assert albums['Complet']['complete'] is True
+    assert albums['Trous']['complete'] is False
+    assert albums['Trous']['missing'] == {'genre': 1, 'year': 1, 'track_number': 1}
+
+
 def test_audit_routes_require_admin(flask_setup):
     c, *_ = flask_setup
     assert c.get('/api/admin/audit/artist?path=X',

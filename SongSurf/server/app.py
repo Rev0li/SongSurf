@@ -423,7 +423,8 @@ def svelte_assets(filename):
 @app.route('/api/me')
 @auth_required
 def api_me():
-    return jsonify(_get_current_user())
+    user = _get_current_user()
+    return jsonify({**user, 'pseudo': _user_pseudo(user)})
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -1684,6 +1685,57 @@ def library_album_tracks():
         return jsonify({'success': True, 'tracks': items})
     except Exception as e:
         logger.error(f"❌ /api/library/album-tracks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/album-status')
+@auth_required
+def library_album_status():
+    """Complétude des tags par album d'un artiste (badges de la vue artiste).
+
+    `?folder_path=<dossier artiste>` → par album : nombre de titres sans
+    genre / année / numéro de piste.
+    """
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        folder_path = (request.args.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        if not str(folder).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        from library_audit import _read_tags
+        albums = []
+        for album_dir in sorted([d for d in folder.iterdir() if d.is_dir()],
+                                key=lambda p: p.name.lower()):
+            mp3s = [f for f in album_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() == '.mp3']
+            if not mp3s:
+                continue
+            missing = {'genre': 0, 'year': 0, 'track_number': 0}
+            for f in mp3s:
+                tags = _read_tags(f)
+                if not tags['genres']:
+                    missing['genre'] += 1
+                if not tags['year']:
+                    missing['year'] += 1
+                if not tags['track_number']:
+                    missing['track_number'] += 1
+            albums.append({
+                'path':     str(album_dir.relative_to(music_dir)),
+                'name':     album_dir.name,
+                'tracks':   len(mp3s),
+                'missing':  missing,
+                'complete': not any(missing.values()),
+            })
+        return jsonify({'success': True, 'albums': albums})
+    except Exception as e:
+        logger.error(f"❌ /api/library/album-status: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
