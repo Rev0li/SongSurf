@@ -15,7 +15,7 @@ Browser ──JWT cookie──► [Watcher :8080*] ──headers──► [SongS
 
 - **Watcher** (`SongSurf/watcher/watcher.py`, always running): validates the `access_token` JWT cookie (HS256, secret shared with rev0auth), injects identity headers, starts/stops the SongSurf container on demand, monitors inactivity.
 - **SongSurf** (`SongSurf/server/`, started on demand): Flask app — extraction, download queue, MP3 conversion, ID3 tagging, library management, metadata editor API.
-- **Frontend** (`SongSurf/frontend/`): SvelteKit (adapter-static), built into the Docker image and served by Flask.
+- **Frontend** (`SongSurf/frontend/`): SvelteKit (adapter-static), built into the Docker image and served by Flask. Both pages share `Header.svelte` (fixed 93px chrome: "← Mon espace" left, centered logo, pseudo + theme right, Téléchargement/Métadonnées tabs). `/metadata` persists navigation state (expanded tree, sidebar collapsed, selection) in localStorage under `ssf.meta.*`.
 - **Browser extension** (`chrome-extension/`): MV3, queues songs/albums/playlists from music.youtube.com into SongSurf, scrapes artist discographies, syncs YouTube cookies for yt-dlp.
 
 Repo layout note: the actual app lives under `SongSurf/SongSurf/` (nested). Paths below are relative to `SongSurf/SongSurf/` unless stated otherwise.
@@ -36,7 +36,7 @@ make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
 make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without rev0auth)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 
-# Tests (169 pytest tests, no linter configured)
+# Tests (171 pytest tests, no linter configured)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -89,7 +89,7 @@ The metadata editor (`/metadata` page → `/api/library/song-meta/save`) accepts
 The folder name always uses only the **primary artist** (first of the list).
 
 Admin maintenance tools (`server/library_audit.py`, UI on `/metadata`):
-- **Genre backfill** (`/api/admin/genre-backfill` + `/status`, button on the `/metadata` home): background thread fills missing TCON across the whole admin library via iTunes lookups.
+- **Genre backfill** (`/api/admin/genre-backfill` + `/status`): background thread fills missing TCON across the whole admin library via iTunes lookups. **No UI button** (removed by design — genres are handled per artist via the audit); endpoint kept for curl/automation.
 - **Per-artist metadata audit** (`/api/admin/audit/artist` → report, `/api/admin/audit/apply` → write, section in the artist panel): compares every album against iTunes (`lookup_album_info`) plus local coherence checks (TPE2 = artist folder, TRCK `n/total`, year consistency, TPE1/TPE2 mismatch, duplicate tracks, missing covers). Missing TRCK values are proposed from the official iTunes tracklist (`lookup_album_tracks`, unambiguous title matches only). Produces checkable recommendations — **nothing is written without explicit admin validation**.
 - **Manual track renumbering** (all users, album panel → "🔢 Numéroter les pistes"): drag-and-drop reorder of the album tracklist (numbered tracks first, unnumbered appended), then `/api/library/renumber-album` rewrites TRCK `1/N…N/N` on the whole album.
 
