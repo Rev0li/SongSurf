@@ -69,6 +69,15 @@ export const api = {
 	consumeExtensionQueue() {
 		return request('/api/extension-queue/consume', { method: 'POST' });
 	},
+	albumTracks(folderPath) {
+		return request(`/api/library/album-tracks?folder_path=${encodeURIComponent(folderPath)}`);
+	},
+	renumberAlbum(folderPath, paths) {
+		return request('/api/library/renumber-album', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath, paths }),
+		});
+	},
 	auditArtist(path) {
 		return request(`/api/admin/audit/artist?path=${encodeURIComponent(path)}`);
 	},

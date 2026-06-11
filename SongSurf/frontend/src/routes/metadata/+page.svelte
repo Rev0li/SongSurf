@@ -45,6 +45,69 @@
 	let artistPicMissing = false;     // true when artist picture fails to load
 	let uploadingArtist = false;
 
+	// ── Renumérotation album (mode « Numéroter les pistes ») ─────────────────────
+	let reorderMode    = false;
+	let reorderTracks  = [];   // [{path, name, title, track_number}]
+	let reorderLoading = false;
+	let reorderSaving  = false;
+	let reorderDragIdx = -1;
+
+	function resetReorder() {
+		reorderMode = false; reorderTracks = []; reorderDragIdx = -1;
+	}
+
+	async function enterReorder() {
+		if (!selectedAlbum || reorderLoading) return;
+		reorderLoading = true;
+		try {
+			const data = await api.albumTracks(selectedAlbum.path);
+			const tracks = data.tracks ?? [];
+			// Pistes numérotées d'abord (par TRCK), puis les sans-numéro (alpha)
+			const num   = (t) => parseInt(String(t.track_number).split('/')[0], 10);
+			const numbered   = tracks.filter((t) => !isNaN(num(t))).sort((a, b) => num(a) - num(b));
+			const unnumbered = tracks.filter((t) => isNaN(num(t)));
+			reorderTracks = [...numbered, ...unnumbered];
+			reorderMode = true;
+		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
+		finally { reorderLoading = false; }
+	}
+
+	function moveTrack(i, delta) {
+		const j = i + delta;
+		if (j < 0 || j >= reorderTracks.length) return;
+		const arr = [...reorderTracks];
+		[arr[i], arr[j]] = [arr[j], arr[i]];
+		reorderTracks = arr;
+	}
+
+	function reorderDragStart(e, i) {
+		reorderDragIdx = i;
+		e.dataTransfer.effectAllowed = 'move';
+	}
+
+	function reorderDragOver(e, i) {
+		e.preventDefault();
+		if (reorderDragIdx === -1 || i === reorderDragIdx) return;
+		const arr = [...reorderTracks];
+		const [moved] = arr.splice(reorderDragIdx, 1);
+		arr.splice(i, 0, moved);
+		reorderTracks = arr;
+		reorderDragIdx = i;
+	}
+
+	function reorderDragEnd() { reorderDragIdx = -1; }
+
+	async function saveReorder() {
+		if (reorderSaving || reorderTracks.length === 0) return;
+		reorderSaving = true;
+		try {
+			const res = await api.renumberAlbum(selectedAlbum.path, reorderTracks.map((t) => t.path));
+			addToast(`Album numéroté 1 à ${res.total}.`, 'info');
+			resetReorder();
+		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
+		finally { reorderSaving = false; }
+	}
+
 	// ── Audit métadonnées (admin) ─────────────────────────────────────────────────
 	let audit         = null;       // rapport /api/admin/audit/artist
 	let auditLoading  = false;
@@ -234,6 +297,7 @@
 		dirty          = false;
 		detailsOpen    = false;
 		albumCoverTs   = Date.now();
+		resetReorder();
 	}
 
 	// keepAlbumCtx: true when navigating from album panel (back button works)
@@ -843,19 +907,74 @@
 				<!-- Tracklist -->
 				<div class="meta-sections">
 					<section class="meta-section">
-						<h3 class="section-title">🎵 Titres</h3>
-						<div class="tracklist">
-							{#each selectedAlbum.songs as song, i (song.path)}
+						<h3 class="section-title">
+							🎵 Titres
+							{#if !reorderMode}
 								<button
-									class="track-row {selectedPath === song.path ? 'track-selected' : ''}"
-									on:click={() => selectSong(song.path, true)}
+									class="section-action"
+									on:click={enterReorder}
+									disabled={reorderLoading}
+									title="Réordonner les titres puis écrire les numéros de piste 1..N (TRCK n/total)"
 								>
-									<span class="track-num">{i + 1}</span>
-									<span class="track-name">{songDisplayName(song.name)}</span>
-									<span class="track-chevron">›</span>
+									{reorderLoading ? '⏳…' : '🔢 Numéroter les pistes'}
 								</button>
-							{/each}
-						</div>
+							{/if}
+						</h3>
+
+						{#if reorderMode}
+							<div class="reorder-hint">
+								Glisse les titres dans l'ordre de l'album (ou utilise ▲▼).
+								Les titres <span class="reorder-badge-missing">sans n°</span> ont été placés à la fin.
+								« Enregistrer » écrit <code>1/{reorderTracks.length}…{reorderTracks.length}/{reorderTracks.length}</code> sur tous les titres.
+							</div>
+							<div class="tracklist">
+								{#each reorderTracks as track, i (track.path)}
+									<div
+										class="track-row reorder-row {reorderDragIdx === i ? 'reorder-dragging' : ''}"
+										draggable="true"
+										role="listitem"
+										on:dragstart={(e) => reorderDragStart(e, i)}
+										on:dragover={(e) => reorderDragOver(e, i)}
+										on:dragend={reorderDragEnd}
+										on:drop|preventDefault={reorderDragEnd}
+									>
+										<span class="reorder-grip">⠿</span>
+										<span class="track-num">{i + 1}</span>
+										<span class="track-name">{songDisplayName(track.name)}</span>
+										{#if track.track_number}
+											<span class="reorder-badge">{track.track_number}</span>
+										{:else}
+											<span class="reorder-badge reorder-badge-missing">sans n°</span>
+										{/if}
+										<span class="reorder-arrows">
+											<button class="reorder-arrow" disabled={i === 0} on:click={() => moveTrack(i, -1)}>▲</button>
+											<button class="reorder-arrow" disabled={i === reorderTracks.length - 1} on:click={() => moveTrack(i, 1)}>▼</button>
+										</span>
+									</div>
+								{/each}
+							</div>
+							<div class="save-bar">
+								<button class="btn btn-ghost btn-sm" on:click={resetReorder} disabled={reorderSaving}>
+									Annuler
+								</button>
+								<button class="btn btn-primary btn-sm" on:click={saveReorder} disabled={reorderSaving}>
+									{reorderSaving ? '⏳ Écriture…' : `💾 Enregistrer la numérotation (1..${reorderTracks.length})`}
+								</button>
+							</div>
+						{:else}
+							<div class="tracklist">
+								{#each selectedAlbum.songs as song, i (song.path)}
+									<button
+										class="track-row {selectedPath === song.path ? 'track-selected' : ''}"
+										on:click={() => selectSong(song.path, true)}
+									>
+										<span class="track-num">{i + 1}</span>
+										<span class="track-name">{songDisplayName(song.name)}</span>
+										<span class="track-chevron">›</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
 					</section>
 				</div>
 			</div>
@@ -1270,7 +1389,7 @@
 	}
 	.artist-album-cover img {
 		position: absolute; inset: 0;
-		width: 100%; height: 100%; object-fit: cover;
+		width: 100%; height: 100%; object-fit: cover; z-index: 1;
 	}
 	.artist-album-placeholder { font-size: 26px; color: var(--text-3); z-index: 0; }
 	.artist-album-name {
@@ -1347,6 +1466,49 @@
 	}
 	.track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.track-chevron { flex-shrink: 0; font-size: 14px; color: var(--text-3); }
+
+	/* ── Renumérotation (mode Numéroter les pistes) ───────────── */
+	.section-action {
+		margin-left: auto;
+		background: none; border: 1px solid var(--sep);
+		border-radius: var(--r-sm);
+		color: var(--blue); font-size: 11px; font-weight: 500;
+		text-transform: none; letter-spacing: 0;
+		padding: 3px 8px; cursor: pointer;
+		transition: background .1s;
+	}
+	.section-action:hover { background: rgba(10,132,255,.08); }
+	.section-action:disabled { opacity: .5; pointer-events: none; }
+
+	.reorder-hint {
+		padding: var(--s2) var(--s4);
+		font-size: 11px; color: var(--text-3); line-height: 1.5;
+		border-bottom: 1px solid rgba(84,84,88,.2);
+	}
+	.reorder-hint code { font-size: 10px; background: rgba(0,0,0,.25); padding: 1px 4px; border-radius: 3px; }
+
+	.reorder-row { cursor: grab; user-select: none; }
+	.reorder-row:active { cursor: grabbing; }
+	.reorder-row.reorder-dragging { background: rgba(10,132,255,.12); }
+	.reorder-grip { flex-shrink: 0; color: var(--text-3); font-size: 13px; }
+	.reorder-badge {
+		flex-shrink: 0;
+		font-size: 10px; color: var(--text-3);
+		font-family: 'SF Mono','Menlo',monospace;
+		background: rgba(0,0,0,.2);
+		border-radius: 3px; padding: 1px 5px;
+	}
+	.reorder-badge-missing { color: var(--orange); background: rgba(255,159,10,.1); }
+	.reorder-arrows { flex-shrink: 0; display: flex; gap: 2px; }
+	.reorder-arrow {
+		background: none; border: none;
+		color: var(--text-3); font-size: 10px;
+		cursor: pointer; padding: 2px 4px;
+		border-radius: 3px;
+		transition: color .1s, background .1s;
+	}
+	.reorder-arrow:hover { color: var(--text); background: rgba(255,255,255,.08); }
+	.reorder-arrow:disabled { opacity: .3; pointer-events: none; }
 
 	/* ── Back button (song → album) ───────────────────────────── */
 	.back-btn {
