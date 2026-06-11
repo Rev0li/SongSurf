@@ -65,6 +65,8 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/library/song-meta` | GET | `?path=` → full dump: file info, audio info (duration, bitrate…), all ID3 frames (multi-value frames joined with `"; "`), custom TXXX tags, cover presence |
 | `/api/library/song-meta/save` | POST | `{path, tags: {title, artist, album_artist, album, year, track_number, disc_number, genre, composer, copyright, publisher, bpm, key, language, isrc, encoded_by, comment}}` — empty value deletes the frame. **`artist`, `genre`, `composer` accept `;`-separated input → written as real ID3v2.4 multi-value frames. `album_artist` stays single-value (Jellyfin grouping key)** |
+| `/api/library/album-tracks` | GET | `?folder_path=` → lightweight tracklist `[{path, name, title, track_number}]` (powers the "Numéroter les pistes" reorder mode) |
+| `/api/library/renumber-album` | POST | `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
 | `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
@@ -75,7 +77,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
 | `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
-| `/api/admin/audit/artist` | GET | `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Nothing is written |
+| `/api/admin/audit/artist` | GET | `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
 | `/api/admin/audit/apply` | POST | `{changes: [{path, field, value}]}` → writes the admin-approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
 | `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running) |
 | `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
@@ -145,13 +147,14 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | Function | Description |
 |---|---|
 | `lookup_genres(artist, title, album)` | iTunes Search (FR + US storefronts) → deduped genre list for a song; per-album memory cache; silent failure (`[]`) |
-| `lookup_album_info(artist, album)` | iTunes album search (FR + US) → `{found, genres[], year, album_artist, track_count}` for the audit; same contract (cache, never raises) |
+| `lookup_album_info(artist, album)` | iTunes album search (FR + US) → `{found, genres[], year, album_artist, track_count, collection_id}` for the audit; same contract (cache, never raises) |
+| `lookup_album_tracks(collection_id)` | iTunes lookup by `collectionId` → official tracklist `[{title, track_number, track_count}]` sorted by track number; cached, never raises |
 
 ### `server/library_audit.py`
 
 | Function | Description |
 |---|---|
-| `audit_artist(artist_dir, music_dir, album_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Reads via `mutagen.id3.ID3` |
+| `audit_artist(artist_dir, music_dir, album_lookup=, track_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Missing TRCK → unambiguous title match against the iTunes tracklist (`_match_missing_tracks`, feat-suffixes stripped). Reads via `mutagen.id3.ID3` |
 | `backfill_genres(music_dir, state, lock, genre_lookup_fn=)` | Background worker: writes missing TCON across the library (tags first, folder names as fallback), updates the shared progress `state` under `lock` |
 
 ### `watcher/watcher.py`
@@ -179,6 +182,8 @@ api.moveSong(source, targetFolder)         // POST /api/library/move
 api.moveFolder(folderPath, newParent)      // POST /api/library/move-folder
 api.songMeta(path)                         // GET  /api/library/song-meta
 api.saveSongMeta(path, tags)               // POST /api/library/song-meta/save
+api.albumTracks(folderPath)                // GET  /api/library/album-tracks
+api.renumberAlbum(folderPath, paths)       // POST /api/library/renumber-album
 api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
 api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
