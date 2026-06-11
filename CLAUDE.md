@@ -114,7 +114,7 @@ Admin maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 - Port 8081 (SongSurf) must never be exposed to WAN; only Watcher faces traffic.
 - Frontend changes require a rebuild: Docker multi-stage builds it (`make up --build` / `make deploy-nas`); for local no-Docker dev use `make frontend-dev`.
 - `cancel_flag` in `app.py` is checked by the worker but **no route sets it** — download cancellation is currently not wired.
-- Path containment checks use `str.startswith()` (prefix-match edge case); prefer `Path.is_relative_to()` for new code.
+- Path containment checks use `Path.is_relative_to()` everywhere (migrated 2026-06); never reintroduce `str.startswith()` (prefix-match flaw: `/music/user` matches `/music/user2`).
 - Extension DOM scraping of music.youtube.com is fragile (virtual scrolling, selector drift) — see memory/project notes.
 - The zsh `chpwd` hook on this dev machine (eza tree) hangs non-interactive shells: use `git -C <path>` instead of `cd && git`.
 

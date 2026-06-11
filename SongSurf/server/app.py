@@ -311,7 +311,7 @@ def _user_music_dir(user: dict) -> Path:
         return BASE_MUSIC_DIR
     pseudo = _user_pseudo(user)
     d = (BASE_MUSIC_DIR / pseudo).resolve()
-    if not str(d).startswith(str(BASE_MUSIC_DIR.resolve())):
+    if not d.is_relative_to(BASE_MUSIC_DIR.resolve()):
         raise ValueError(f"Invalid pseudo — path escapes music dir: {pseudo!r}")
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -543,7 +543,7 @@ def library_move_song():
         dst_dir = (music_dir / target_folder).resolve()
         base    = music_dir.resolve()
 
-        if not str(src).startswith(str(base)) or not str(dst_dir).startswith(str(base)):
+        if not src.is_relative_to(base) or not dst_dir.is_relative_to(base):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not src.exists() or src.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier source invalide'}), 404
@@ -580,7 +580,7 @@ def library_move_folder():
         dst_parent = (music_dir / new_parent).resolve()
         base       = music_dir.resolve()
 
-        if not str(src).startswith(str(base)) or not str(dst_parent).startswith(str(base)):
+        if not src.is_relative_to(base) or not dst_parent.is_relative_to(base):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not src.exists() or not src.is_dir():
             return jsonify({'success': False, 'error': 'Dossier source introuvable'}), 404
@@ -630,7 +630,7 @@ def library_folder_cover():
             return jsonify({'success': False, 'error': 'folder_path requis'}), 400
 
         folder = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return '', 204
@@ -671,7 +671,7 @@ def library_artist_picture():
         music_dir   = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         folder      = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return '', 204
         if not folder.exists() or not folder.is_dir():
             return '', 204
@@ -755,7 +755,7 @@ def save_song_meta():
         tags_data = data.get('tags') or {}
 
         target = (music_dir / path).resolve()
-        if not str(target).startswith(str(music_dir.resolve())):
+        if not target.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not target.exists() or target.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
@@ -783,7 +783,7 @@ def upload_song_cover():
             return jsonify({'success': False, 'error': 'path et image requis'}), 400
 
         target = (music_dir / path).resolve()
-        if not str(target).startswith(str(music_dir.resolve())):
+        if not target.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not target.exists() or target.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
@@ -822,7 +822,7 @@ def upload_artist_cover():
             return jsonify({'success': False, 'error': 'folder_path et image requis'}), 400
 
         folder = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
@@ -851,7 +851,7 @@ def upload_album_cover():
             return jsonify({'success': False, 'error': 'folder_path et image requis'}), 400
 
         folder = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
@@ -1150,7 +1150,7 @@ def admin_audit_artist():
             return jsonify({'success': False, 'error': 'path requis'}), 400
 
         artist_dir = (music_dir / path).resolve()
-        if not str(artist_dir).startswith(str(music_dir.resolve())):
+        if not artist_dir.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not artist_dir.exists() or not artist_dir.is_dir():
             return jsonify({'success': False, 'error': 'Dossier artiste introuvable'}), 404
@@ -1184,7 +1184,7 @@ def admin_audit_apply():
                 errors.append(f'{path or "?"}: champ invalide')
                 continue
             target = (music_dir / path).resolve()
-            if not str(target).startswith(str(music_dir.resolve())):
+            if not target.is_relative_to(music_dir.resolve()):
                 errors.append(f'{path}: chemin invalide')
                 continue
             if not target.exists() or target.suffix.lower() != '.mp3':
@@ -1642,7 +1642,7 @@ def library_song_meta():
             return jsonify({'success': False, 'error': 'path requis'}), 400
 
         target = (music_dir / path).resolve()
-        if not str(target).startswith(str(music_dir.resolve())):
+        if not target.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not target.exists() or target.suffix.lower() != '.mp3':
             return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
@@ -1665,7 +1665,7 @@ def library_album_tracks():
             return jsonify({'success': False, 'error': 'folder_path requis'}), 400
 
         folder = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
@@ -1704,7 +1704,7 @@ def library_album_status():
             return jsonify({'success': False, 'error': 'folder_path requis'}), 400
 
         folder = (music_dir / folder_path).resolve()
-        if not str(folder).startswith(str(music_dir.resolve())):
+        if not folder.is_relative_to(music_dir.resolve()):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
@@ -1758,7 +1758,7 @@ def library_renumber_album():
 
         folder = (music_dir / folder_path).resolve()
         base   = music_dir.resolve()
-        if not str(folder).startswith(str(base)):
+        if not folder.is_relative_to(base):
             return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
@@ -1766,7 +1766,7 @@ def library_renumber_album():
         targets = []
         for p in paths:
             target = (music_dir / str(p)).resolve()
-            if not str(target).startswith(str(base)) or target.parent != folder:
+            if not target.is_relative_to(base) or target.parent != folder:
                 return jsonify({'success': False, 'error': f'Chemin invalide : {p}'}), 400
             if not target.exists() or target.suffix.lower() != '.mp3':
                 return jsonify({'success': False, 'error': f'Fichier introuvable : {p}'}), 404
