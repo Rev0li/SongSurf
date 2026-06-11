@@ -1,8 +1,8 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, user } from '$lib/stores.js';
 
 	// ── Library tree ──────────────────────────────────────────────────────────────
 	let tree = null;
@@ -44,6 +44,82 @@
 	let artistTs        = Date.now(); // cache buster for album grid covers
 	let artistPicMissing = false;     // true when artist picture fails to load
 	let uploadingArtist = false;
+
+	// ── Audit métadonnées (admin) ─────────────────────────────────────────────────
+	let audit         = null;       // rapport /api/admin/audit/artist
+	let auditLoading  = false;
+	let auditError    = '';
+	let auditSelected = new Set();  // ids des recommandations cochées
+	let auditApplying = false;
+
+	// ── Backfill genre (admin) ────────────────────────────────────────────────────
+	let backfill      = null;       // status /api/admin/genre-backfill/status
+	let backfillTimer = null;
+
+	$: isAdmin = $user?.role === 'admin';
+
+	function resetAudit() {
+		audit = null; auditError = ''; auditSelected = new Set();
+	}
+
+	async function runAudit() {
+		if (!selectedArtist || auditLoading) return;
+		auditLoading = true; auditError = ''; audit = null;
+		try {
+			const data = await api.auditArtist(selectedArtist.path);
+			audit = data;
+			auditSelected = new Set(
+				(data.albums ?? []).flatMap((al) => (al.recommendations ?? []).map((r) => r.id))
+			);
+		} catch (e) { auditError = e.message ?? 'Erreur'; }
+		finally { auditLoading = false; }
+	}
+
+	function toggleRec(id) {
+		if (auditSelected.has(id)) auditSelected.delete(id);
+		else auditSelected.add(id);
+		auditSelected = new Set(auditSelected);
+	}
+
+	$: auditChanges = !audit ? [] : (audit.albums ?? []).flatMap((al) =>
+		(al.recommendations ?? [])
+			.filter((r) => auditSelected.has(r.id))
+			.flatMap((r) => (r.changes ?? []).map((c) => ({ path: c.path, field: r.field, value: c.value })))
+	);
+
+	async function applyAudit() {
+		if (auditChanges.length === 0 || auditApplying) return;
+		auditApplying = true;
+		try {
+			const res = await api.auditApply(auditChanges);
+			if ((res.errors ?? []).length === 0) {
+				addToast(`${res.applied} tag${res.applied > 1 ? 's' : ''} appliqué${res.applied > 1 ? 's' : ''}.`, 'info');
+			} else {
+				addToast(`${res.applied} OK, ${res.errors.length} erreur${res.errors.length > 1 ? 's' : ''}.`, 'error');
+			}
+			await runAudit();
+		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
+		finally { auditApplying = false; }
+	}
+
+	async function startBackfill() {
+		try {
+			await api.genreBackfillStart();
+			addToast('Backfill genres lancé.', 'info');
+			pollBackfill();
+		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
+	}
+
+	async function pollBackfill() {
+		clearTimeout(backfillTimer);
+		try { backfill = await api.genreBackfillStatus(); }
+		catch { return; }
+		if (backfill?.status === 'running') {
+			backfillTimer = setTimeout(pollBackfill, 2000);
+		}
+	}
+
+	onDestroy(() => clearTimeout(backfillTimer));
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────────
 	let dndType      = ''; // 'song' | 'album'
@@ -125,6 +201,9 @@
 		catch { tree = { artists: [], playlists: [] }; }
 	});
 
+	// Reprend le suivi d'un backfill déjà en cours (ex. après navigation)
+	$: if (isAdmin && backfill === null) pollBackfill();
+
 	// ── Selection helpers ─────────────────────────────────────────────────────────
 	function toggleExpand(path) {
 		if (expanded.has(path)) expanded.delete(path);
@@ -142,6 +221,7 @@
 		uploadingArtist  = false;
 		artistTs         = Date.now();
 		artistPicMissing = false;
+		resetAudit();
 	}
 
 	function selectAlbum(album, artist) {
@@ -502,6 +582,29 @@
 		{#if selectedType === null}
 			{#if tree && (tree.artists?.length ?? 0) > 0}
 				<div class="home-gallery">
+					{#if isAdmin}
+						<div class="admin-tools">
+							<button
+								class="btn btn-ghost btn-sm"
+								on:click={startBackfill}
+								disabled={backfill?.status === 'running'}
+								title="Recherche le genre iTunes de tous les MP3 sans tag genre (TCON)"
+							>
+								{backfill?.status === 'running'
+									? `⏳ Genres… ${backfill.done}/${backfill.total}`
+									: '🎼 Compléter les genres manquants'}
+							</button>
+							{#if backfill?.status === 'running' && backfill.last_file}
+								<span class="admin-tools-note">{backfill.last_file}</span>
+							{:else if backfill?.status === 'done'}
+								<span class="admin-tools-note">
+									✅ {backfill.updated}/{backfill.total} fichier{backfill.total > 1 ? 's' : ''} mis à jour{backfill.failed ? ` · ${backfill.failed} erreur${backfill.failed > 1 ? 's' : ''}` : ''}
+								</span>
+							{:else if backfill?.status === 'error'}
+								<span class="admin-tools-note admin-tools-error">❌ {backfill.error ?? 'Erreur'}</span>
+							{/if}
+						</div>
+					{/if}
 					<div class="home-gallery-grid">
 						{#each (tree.artists ?? []) as artist (artist.path)}
 							<button class="home-artist-card" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
@@ -599,6 +702,87 @@
 								{/each}
 							</div>
 						</section>
+
+						<!-- Audit métadonnées (admin) -->
+						{#if isAdmin}
+							<section class="meta-section">
+								<h3 class="section-title">
+									🔎 Audit métadonnées
+									{#if audit}
+										<span class="details-sub">{audit.total_recommendations} recommandation{audit.total_recommendations > 1 ? 's' : ''}</span>
+									{/if}
+								</h3>
+
+								{#if !audit}
+									<div class="audit-intro">
+										<p class="cover-hint">
+											Compare les tags de tous les albums avec iTunes (genre, année, artiste album,
+											numéros de piste, cohérence TPE1/TPE2) et propose des corrections.
+											Rien n'est modifié sans validation.
+										</p>
+										{#if auditError}<p class="save-error">{auditError}</p>{/if}
+										<button class="btn btn-primary btn-sm" on:click={runAudit} disabled={auditLoading}>
+											{auditLoading ? '⏳ Audit en cours…' : "🔎 Lancer l'audit"}
+										</button>
+									</div>
+								{:else}
+									{#each audit.albums as al (al.path)}
+										<div class="audit-album">
+											<div class="audit-album-head">
+												<span class="audit-album-name">💿 {al.name}</span>
+												<span class="audit-itunes {al.itunes?.found ? '' : 'audit-itunes-miss'}">
+													{al.itunes?.found
+														? `iTunes ✓${al.itunes.year ? ` · ${al.itunes.year}` : ''}${al.itunes.track_count ? ` · ${al.itunes.track_count} titres` : ''}`
+														: 'introuvable sur iTunes'}
+												</span>
+											</div>
+											{#each al.recommendations as rec (rec.id)}
+												<label class="audit-rec">
+													<input
+														type="checkbox"
+														checked={auditSelected.has(rec.id)}
+														on:change={() => toggleRec(rec.id)}
+													/>
+													<div class="audit-rec-body">
+														<div class="audit-rec-line">
+															<strong>{ID3_LABELS[rec.field] ?? rec.field}</strong> :
+															<span class="audit-current">{rec.current}</span>
+															<span class="audit-arrow">→</span>
+															<span class="audit-proposed">{rec.proposed}</span>
+														</div>
+														<div class="audit-rec-reason">
+															{rec.reason} · {rec.changes.length} fichier{rec.changes.length > 1 ? 's' : ''}
+														</div>
+													</div>
+												</label>
+											{/each}
+											{#each al.warnings as w}
+												<div class="audit-warn">⚠️ {w}</div>
+											{/each}
+											{#if al.recommendations.length === 0 && al.warnings.length === 0}
+												<div class="audit-ok">✅ Aucun problème détecté</div>
+											{/if}
+										</div>
+									{/each}
+									{#each audit.artist_warnings ?? [] as w}
+										<div class="audit-warn">⚠️ {w}</div>
+									{/each}
+
+									<div class="save-bar">
+										<button class="btn btn-ghost btn-sm" on:click={runAudit} disabled={auditLoading || auditApplying}>
+											{auditLoading ? '⏳…' : '↻ Relancer'}
+										</button>
+										<button
+											class="btn btn-primary btn-sm"
+											on:click={applyAudit}
+											disabled={auditChanges.length === 0 || auditApplying}
+										>
+											{auditApplying ? '⏳ Application…' : `✓ Appliquer la sélection (${auditChanges.length})`}
+										</button>
+									</div>
+								{/if}
+							</section>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -1314,6 +1498,62 @@
 	}
 	.home-btn:hover { color: var(--blue); }
 
+	/* ── Admin tools (backfill genre) ─────────────────────────── */
+	.admin-tools {
+		display: flex; align-items: center; gap: var(--s3);
+		flex-wrap: wrap;
+		margin-bottom: var(--s4);
+		padding: var(--s2) var(--s3);
+		background: var(--bg-2); border: 1px solid var(--sep);
+		border-radius: var(--r-md);
+	}
+	.admin-tools-note {
+		font-size: 12px; color: var(--text-3);
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		max-width: 420px;
+	}
+	.admin-tools-error { color: var(--red); }
+
+	/* ── Audit métadonnées ────────────────────────────────────── */
+	.audit-intro { padding: var(--s4); }
+	.audit-intro .cover-hint { margin-bottom: var(--s3); line-height: 1.5; }
+
+	.audit-album { border-bottom: 1px solid rgba(84,84,88,.2); }
+	.audit-album:last-of-type { border-bottom: none; }
+	.audit-album-head {
+		display: flex; align-items: baseline; justify-content: space-between;
+		gap: var(--s3); padding: var(--s2) var(--s4);
+		background: rgba(0,0,0,.1);
+		border-bottom: 1px solid rgba(84,84,88,.2);
+	}
+	.audit-album-name { font-size: 13px; font-weight: 600; color: var(--text); }
+	.audit-itunes { font-size: 11px; color: var(--green); flex-shrink: 0; }
+	.audit-itunes-miss { color: var(--text-3); }
+
+	.audit-rec {
+		display: flex; align-items: flex-start; gap: var(--s3);
+		padding: var(--s2) var(--s4);
+		border-bottom: 1px solid rgba(84,84,88,.14);
+		cursor: pointer;
+		transition: background .1s;
+	}
+	.audit-rec:hover { background: rgba(255,255,255,.03); }
+	.audit-rec input[type='checkbox'] { margin-top: 3px; accent-color: var(--blue); cursor: pointer; }
+	.audit-rec-body { flex: 1; min-width: 0; }
+	.audit-rec-line { font-size: 13px; color: var(--text); line-height: 1.5; word-break: break-word; }
+	.audit-current  { color: var(--text-3); }
+	.audit-arrow    { color: var(--text-3); margin: 0 2px; }
+	.audit-proposed { color: var(--green); font-weight: 500; }
+	.audit-rec-reason { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+	.audit-warn {
+		font-size: 12px; color: var(--orange);
+		padding: var(--s2) var(--s4);
+		border-bottom: 1px solid rgba(84,84,88,.14);
+		line-height: 1.4;
+	}
+	.audit-ok { font-size: 12px; color: var(--green); padding: var(--s2) var(--s4); }
+
 	/* ── Home gallery (artist grid) ───────────────────────────── */
 	.home-gallery {
 		padding: var(--s6);
@@ -1342,7 +1582,7 @@
 	}
 	.home-artist-cover img {
 		position: absolute; inset: 0;
-		width: 100%; height: 100%; object-fit: cover;
+		width: 100%; height: 100%; object-fit: cover; z-index: 1;
 	}
 	.home-artist-placeholder { font-size: 32px; color: var(--text-3); z-index: 0; }
 	.home-artist-name {

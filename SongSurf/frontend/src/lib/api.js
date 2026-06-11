@@ -69,6 +69,18 @@ export const api = {
 	consumeExtensionQueue() {
 		return request('/api/extension-queue/consume', { method: 'POST' });
 	},
+	auditArtist(path) {
+		return request(`/api/admin/audit/artist?path=${encodeURIComponent(path)}`);
+	},
+	auditApply(changes) {
+		return request('/api/admin/audit/apply', { method: 'POST', body: JSON.stringify({ changes }) });
+	},
+	genreBackfillStart() {
+		return request('/api/admin/genre-backfill', { method: 'POST' });
+	},
+	genreBackfillStatus() {
+		return request('/api/admin/genre-backfill/status');
+	},
 	getArtistPictureUrl(folderPath, ts = Date.now()) {
 		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},
