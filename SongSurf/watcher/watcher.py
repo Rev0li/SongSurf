@@ -114,6 +114,13 @@ except Exception as e:
 _DEV_USER = {'sub': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
 
 
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _validate_jwt(token: str) -> dict | None:
     """Validates HS256 JWT from auth-selfhost-rust. Returns normalized claims or None."""
     if not AUTH_JWT_SECRET:
@@ -349,7 +356,7 @@ def _proxy(user: dict):
         if request.is_json or 'application/json' in request.headers.get('Accept', ''):
             return jsonify({'success': False, 'error': 'Service temporairement indisponible', 'retry': True}), 503
         # Pages → loading avec compteur de retry (_r) pour briser les boucles
-        current_r = int(request.args.get('_r', '0'))
+        current_r = _safe_int(request.args.get('_r'))
         return redirect(f'/watcher/loading?next={request.path}&_r={current_r + 1}')
 
     resp_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in _HOP_HEADERS]
@@ -366,7 +373,10 @@ def _proxy(user: dict):
 @app.route('/watcher/loading')
 def loading():
     next_url = request.args.get('next', '/')
-    retries  = min(int(request.args.get('_r', '0')), 10)
+    # Anti open-redirect : uniquement un chemin interne ('/...' mais pas '//host' ni backslash)
+    if not next_url.startswith('/') or next_url.startswith('//') or '\\' in next_url:
+        next_url = '/'
+    retries = min(_safe_int(request.args.get('_r')), 10)
     return render_template('pages/loading.html', next_url=next_url, retries=retries)
 
 

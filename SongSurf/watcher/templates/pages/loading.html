@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SongSurf — Démarrage…</title>
-  {% if retries < 10 %}
-  <meta http-equiv="refresh" content="3;url={{ next_url }}?_r={{ retries + 1 }}">
-  {% endif %}
   <style>
     body { margin: 0; background: #0a0a0f; color: #f5f7ff; font-family: sans-serif;
            display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -17,13 +14,59 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     h1 { font-size: 22px; margin: 0 0 8px; }
     p  { color: #a8acc4; font-size: 14px; margin: 0; }
+    #error { display: none; }
+    #error p { margin-bottom: 20px; }
+    button { background: #7c3aed; color: #fff; border: 0; border-radius: 8px;
+             padding: 10px 22px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #6d28d9; }
   </style>
 </head>
 <body>
   <div class="box">
-    <div class="spinner"></div>
-    <h1>🎵 SongSurf</h1>
-    <p>Démarrage en cours, une seconde…</p>
+    <div id="waiting">
+      <div class="spinner"></div>
+      <h1>🎵 SongSurf</h1>
+      <p>Démarrage en cours, une seconde…</p>
+    </div>
+    <div id="error">
+      <h1>🎵 SongSurf</h1>
+      <p>Le service met trop de temps à démarrer.<br>Réessaie dans un instant, ou contacte l'admin si ça persiste.</p>
+      <button onclick="restart()">Réessayer</button>
+    </div>
   </div>
+  <script>
+    const NEXT_URL     = {{ next_url|tojson }};
+    const MAX_ATTEMPTS = 40;   // ~60 s à 1 poll / 1,5 s
+    let attempts = 0;
+
+    function show(id) {
+      document.getElementById('waiting').style.display = id === 'waiting' ? '' : 'none';
+      document.getElementById('error').style.display   = id === 'error'   ? 'block' : 'none';
+    }
+
+    function restart() {
+      attempts = 0;
+      show('waiting');
+      poll();
+    }
+
+    async function poll() {
+      if (attempts++ >= MAX_ATTEMPTS) { show('error'); return; }
+      try {
+        const r    = await fetch('/watcher/ready', { cache: 'no-store' });
+        const data = await r.json();
+        if (data.ready) { window.location.replace(NEXT_URL); return; }
+      } catch (e) { /* watcher injoignable → on retentera */ }
+      setTimeout(poll, 1500);
+    }
+
+    // retries (_r) ne croît plus que via le fallback du proxy : SongSurf répond
+    // au /ping mais le proxy échoue quand même → on casse la boucle ici.
+    {% if retries >= 10 %}
+    show('error');
+    {% else %}
+    poll();
+    {% endif %}
+  </script>
 </body>
 </html>
