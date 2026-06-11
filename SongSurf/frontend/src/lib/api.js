@@ -72,6 +72,9 @@ export const api = {
 	albumTracks(folderPath) {
 		return request(`/api/library/album-tracks?folder_path=${encodeURIComponent(folderPath)}`);
 	},
+	albumStatus(folderPath) {
+		return request(`/api/library/album-status?folder_path=${encodeURIComponent(folderPath)}`);
+	},
 	renumberAlbum(folderPath, paths) {
 		return request('/api/library/renumber-album', {
 			method: 'POST',
@@ -83,12 +86,6 @@ export const api = {
 	},
 	auditApply(changes) {
 		return request('/api/admin/audit/apply', { method: 'POST', body: JSON.stringify({ changes }) });
-	},
-	genreBackfillStart() {
-		return request('/api/admin/genre-backfill', { method: 'POST' });
-	},
-	genreBackfillStatus() {
-		return request('/api/admin/genre-backfill/status');
 	},
 	getArtistPictureUrl(folderPath, ts = Date.now()) {
 		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;

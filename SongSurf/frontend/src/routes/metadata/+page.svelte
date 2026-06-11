@@ -1,13 +1,37 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
 	import { addToast, user } from '$lib/stores.js';
+	import Header from '$lib/components/Header.svelte';
 
 	// ── Library tree ──────────────────────────────────────────────────────────────
 	let tree = null;
 	let filter = '';
 	let expanded = new Set();
+
+	// ── Persistance navigation (sidebar, arborescence, sélection) ────────────────
+	const LS_EXPANDED = 'ssf.meta.expanded';
+	const LS_SIDEBAR  = 'ssf.meta.sidebar';
+	const LS_SEL      = 'ssf.meta.sel';
+
+	let sidebarCollapsed = false;
+
+	function toggleSidebar() {
+		sidebarCollapsed = !sidebarCollapsed;
+		try { localStorage.setItem(LS_SIDEBAR, sidebarCollapsed ? '1' : '0'); } catch { /* ignore */ }
+	}
+
+	function persistExpanded() {
+		try { localStorage.setItem(LS_EXPANDED, JSON.stringify([...expanded])); } catch { /* ignore */ }
+	}
+
+	function persistSelection(sel) {
+		try {
+			if (sel) localStorage.setItem(LS_SEL, JSON.stringify(sel));
+			else localStorage.removeItem(LS_SEL);
+		} catch { /* ignore */ }
+	}
 
 	// ── Selection ─────────────────────────────────────────────────────────────────
 	// selectedType: null | 'artist' | 'album' | 'song'
@@ -104,6 +128,7 @@
 			const res = await api.renumberAlbum(selectedAlbum.path, reorderTracks.map((t) => t.path));
 			addToast(`Album numéroté 1 à ${res.total}.`, 'info');
 			resetReorder();
+			loadAlbumPanelTracks(selectedAlbum.path);
 		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
 		finally { reorderSaving = false; }
 	}
@@ -114,10 +139,6 @@
 	let auditError    = '';
 	let auditSelected = new Set();  // ids des recommandations cochées
 	let auditApplying = false;
-
-	// ── Backfill genre (admin) ────────────────────────────────────────────────────
-	let backfill      = null;       // status /api/admin/genre-backfill/status
-	let backfillTimer = null;
 
 	$: isAdmin = $user?.role === 'admin';
 
@@ -164,25 +185,6 @@
 		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
 		finally { auditApplying = false; }
 	}
-
-	async function startBackfill() {
-		try {
-			await api.genreBackfillStart();
-			addToast('Backfill genres lancé.', 'info');
-			pollBackfill();
-		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
-	}
-
-	async function pollBackfill() {
-		clearTimeout(backfillTimer);
-		try { backfill = await api.genreBackfillStatus(); }
-		catch { return; }
-		if (backfill?.status === 'running') {
-			backfillTimer = setTimeout(pollBackfill, 2000);
-		}
-	}
-
-	onDestroy(() => clearTimeout(backfillTimer));
 
 	// ── Drag and drop ─────────────────────────────────────────────────────────────
 	let dndType      = ''; // 'song' | 'album'
@@ -260,18 +262,101 @@
 
 	// ── Lifecycle ─────────────────────────────────────────────────────────────────
 	onMount(async () => {
+		try { sidebarCollapsed = localStorage.getItem(LS_SIDEBAR) === '1'; } catch { /* ignore */ }
+		try { expanded = new Set(JSON.parse(localStorage.getItem(LS_EXPANDED) || '[]')); } catch { /* ignore */ }
+
 		try { tree = await api.getLibrary(); }
 		catch { tree = { artists: [], playlists: [] }; }
+
+		restoreSelection();
 	});
 
-	// Reprend le suivi d'un backfill déjà en cours (ex. après navigation)
-	$: if (isAdmin && backfill === null) pollBackfill();
+	function restoreSelection() {
+		let sel = null;
+		try { sel = JSON.parse(localStorage.getItem(LS_SEL) || 'null'); } catch { /* ignore */ }
+		if (!sel || !tree) return;
+		if (sel.type === 'artist') {
+			gotoArtistByPath(sel.path);
+		} else if (sel.type === 'album') {
+			gotoAlbumByPath(sel.artistPath, sel.path);
+		} else if (sel.type === 'song' && songExistsInTree(sel.path)) {
+			selectSong(sel.path);
+		}
+	}
+
+	function songExistsInTree(path) {
+		const all = [
+			...(tree?.artists ?? []).flatMap((a) => (a.albums ?? []).flatMap((al) => al.songs ?? [])),
+			...(tree?.playlists ?? []).flatMap((pl) => pl.songs ?? []),
+		];
+		return all.some((s) => s.path === path);
+	}
+
+	// ── Breadcrumb navigation ─────────────────────────────────────────────────────
+	function gotoArtistByPath(p) {
+		const a = (tree?.artists ?? []).find((x) => x.path === p);
+		if (a) selectArtist(a);
+	}
+
+	function gotoAlbumByPath(artistPath, albumPath) {
+		const a  = (tree?.artists ?? []).find((x) => x.path === artistPath);
+		const al = a?.albums?.find((x) => x.path === albumPath);
+		if (a && al) selectAlbum(al, a);
+	}
+
+	// Segments du fil d'Ariane pour la vue titre (déduits du chemin du fichier)
+	$: songCrumbParts = selectedType === 'song' && selectedPath ? selectedPath.split('/') : [];
 
 	// ── Selection helpers ─────────────────────────────────────────────────────────
 	function toggleExpand(path) {
 		if (expanded.has(path)) expanded.delete(path);
 		else expanded.add(path);
 		expanded = expanded;
+		persistExpanded();
+	}
+
+	// ── Statut de complétude des albums (badges vue artiste) ─────────────────────
+	let artistAlbumStatus = {};  // album path → {tracks, missing: {genre, year, track_number}, complete}
+
+	async function loadArtistAlbumStatus(artistPath) {
+		artistAlbumStatus = {};
+		try {
+			const data = await api.albumStatus(artistPath);
+			if (selectedArtist?.path !== artistPath) return; // sélection changée entre-temps
+			artistAlbumStatus = Object.fromEntries((data.albums ?? []).map((a) => [a.path, a]));
+		} catch { /* badges absents, pas bloquant */ }
+	}
+
+	function statusTooltip(st) {
+		const parts = [];
+		if (st.missing.genre)        parts.push(`genre (${st.missing.genre})`);
+		if (st.missing.year)         parts.push(`année (${st.missing.year})`);
+		if (st.missing.track_number) parts.push(`n° de piste (${st.missing.track_number})`);
+		return parts.length ? `Manque : ${parts.join(', ')}` : 'Tags complets';
+	}
+
+	// ── Vraie tracklist du panneau album (TRCK réels) ─────────────────────────────
+	let albumPanelTracks = null;  // [{path, name, title, track_number}] triés par TRCK
+
+	function sortByTrck(tracks) {
+		const num = (t) => parseInt(String(t.track_number).split('/')[0], 10);
+		const numbered   = tracks.filter((t) => !isNaN(num(t))).sort((a, b) => num(a) - num(b));
+		const unnumbered = tracks.filter((t) => isNaN(num(t)));
+		return [...numbered, ...unnumbered];
+	}
+
+	async function loadAlbumPanelTracks(albumPath) {
+		albumPanelTracks = null;
+		try {
+			const data = await api.albumTracks(albumPath);
+			if (selectedAlbum?.path !== albumPath) return;
+			albumPanelTracks = sortByTrck(data.tracks ?? []);
+		} catch { albumPanelTracks = null; /* fallback : liste alphabétique */ }
+	}
+
+	function trackDisplayNum(t) {
+		const n = parseInt(String(t.track_number).split('/')[0], 10);
+		return isNaN(n) ? '—' : String(n);
 	}
 
 	function selectArtist(artist) {
@@ -285,6 +370,8 @@
 		artistTs         = Date.now();
 		artistPicMissing = false;
 		resetAudit();
+		loadArtistAlbumStatus(artist.path);
+		persistSelection({ type: 'artist', path: artist.path });
 	}
 
 	function selectAlbum(album, artist) {
@@ -298,6 +385,8 @@
 		detailsOpen    = false;
 		albumCoverTs   = Date.now();
 		resetReorder();
+		loadAlbumPanelTracks(album.path);
+		persistSelection({ type: 'album', path: album.path, artistPath: artist.path });
 	}
 
 	// keepAlbumCtx: true when navigating from album panel (back button works)
@@ -310,6 +399,7 @@
 		lastEditedField = null;
 		meta = null; metaError = ''; metaLoading = true;
 		detailsOpen = false; dirty = false; saveError = ''; coverError = '';
+		persistSelection({ type: 'song', path });
 		try {
 			const data = await api.songMeta(path);
 			if (data.success) {
@@ -322,13 +412,6 @@
 		finally { metaLoading = false; }
 	}
 
-	function backToAlbum() {
-		selectedType = 'album';
-		selectedPath = '';
-		meta = null;
-		dirty = false;
-	}
-
 	function goHome() {
 		selectedType   = null;
 		selectedPath   = '';
@@ -336,6 +419,7 @@
 		selectedAlbum  = null;
 		selectedArtist = null;
 		dirty          = false;
+		persistSelection(null);
 	}
 
 	// ── Edit helpers ──────────────────────────────────────────────────────────────
@@ -521,22 +605,23 @@
 <svelte:window on:paste={onCoverPaste} />
 <svelte:head><title>Métadonnées — SongSurf</title></svelte:head>
 
-<header class="header">
-	<div class="header-brand">
-		<span class="header-logo">🎵</span>
-		<h1 class="header-title">SongSurf</h1>
-	</div>
-	<nav class="header-nav">
-		<a href="/" class="btn btn-ghost btn-sm">← Dashboard</a>
-	</nav>
-</header>
+<Header />
 
 <div class="meta-layout">
 
 	<!-- ── Left: tree ──────────────────────────────────────────── -->
+	{#if sidebarCollapsed}
+		<button class="sidebar-rail" on:click={toggleSidebar} title="Afficher la bibliothèque">
+			<span class="sidebar-rail-icon">»</span>
+			<span class="sidebar-rail-label">Bibliothèque</span>
+		</button>
+	{:else}
 	<aside class="meta-sidebar">
 		<div class="sidebar-top">
-			<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
+			<div class="sidebar-search-row">
+				<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
+				<button class="sidebar-collapse-btn" on:click={toggleSidebar} title="Masquer la bibliothèque">«</button>
+			</div>
 		</div>
 
 		<div class="sidebar-scroll">
@@ -557,7 +642,16 @@
 								{expanded.has(artist.path) || q ? '▾' : '▸'}
 							</button>
 							<button class="artist-label-btn" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
-								<span class="tree-icon">🎤</span>
+								<span class="tree-artist-pic">
+									{#if artist.has_picture}
+										<img
+											src={api.getArtistPictureUrl(artist.path, artistPicTs)}
+											alt="" loading="lazy"
+											on:error={(e) => e.currentTarget.style.display='none'}
+										/>
+									{/if}
+									<span class="tree-artist-pic-fallback">🎤</span>
+								</span>
 								<span class="tree-label">{artist.name}</span>
 								<span class="tree-count">{artist.albums.reduce((n,al)=>n+al.songs.length,0)}</span>
 							</button>
@@ -638,6 +732,7 @@
 			{/if}
 		</div>
 	</aside>
+	{/if}
 
 	<!-- ── Right: panel ─────────────────────────────────────────── -->
 	<main class="meta-main">
@@ -646,29 +741,6 @@
 		{#if selectedType === null}
 			{#if tree && (tree.artists?.length ?? 0) > 0}
 				<div class="home-gallery">
-					{#if isAdmin}
-						<div class="admin-tools">
-							<button
-								class="btn btn-ghost btn-sm"
-								on:click={startBackfill}
-								disabled={backfill?.status === 'running'}
-								title="Recherche le genre iTunes de tous les MP3 sans tag genre (TCON)"
-							>
-								{backfill?.status === 'running'
-									? `⏳ Genres… ${backfill.done}/${backfill.total}`
-									: '🎼 Compléter les genres manquants'}
-							</button>
-							{#if backfill?.status === 'running' && backfill.last_file}
-								<span class="admin-tools-note">{backfill.last_file}</span>
-							{:else if backfill?.status === 'done'}
-								<span class="admin-tools-note">
-									✅ {backfill.updated}/{backfill.total} fichier{backfill.total > 1 ? 's' : ''} mis à jour{backfill.failed ? ` · ${backfill.failed} erreur${backfill.failed > 1 ? 's' : ''}` : ''}
-								</span>
-							{:else if backfill?.status === 'error'}
-								<span class="admin-tools-note admin-tools-error">❌ {backfill.error ?? 'Erreur'}</span>
-							{/if}
-						</div>
-					{/if}
 					<div class="home-gallery-grid">
 						{#each (tree.artists ?? []) as artist (artist.path)}
 							<button class="home-artist-card" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
@@ -692,16 +764,19 @@
 			{:else}
 				<div class="meta-empty">
 					<span class="meta-empty-icon">🎵</span>
-					<p>Sélectionne un artiste, un album ou un fichier dans l'arborescence.</p>
+					<p>Ta bibliothèque est vide — télécharge tes premiers titres pour la remplir.</p>
+					<a href="/" class="btn btn-primary btn-sm">⬇️ Aller au Téléchargement</a>
 				</div>
 			{/if}
 
 		<!-- ── Artist panel ── -->
 		{:else if selectedType === 'artist'}
 			<div class="meta-content">
-				<div class="panel-nav">
-					<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
-				</div>
+				<nav class="crumbs">
+					<button class="crumb" on:click={goHome}>🏠 Bibliothèque</button>
+					<span class="crumb-sep">›</span>
+					<span class="crumb-current">🎤 {selectedArtist.name}</span>
+				</nav>
 				<!-- Artist header: photo + name + upload -->
 				<div class="artist-panel">
 					<div class="artist-pic-zone">
@@ -759,6 +834,13 @@
 												on:error={(e) => e.currentTarget.style.display='none'}
 											/>
 											<div class="artist-album-placeholder">💿</div>
+											{#if artistAlbumStatus[album.path]}
+												{#if artistAlbumStatus[album.path].complete}
+													<span class="album-badge album-badge-ok" title="Genre, année et n° de piste complets">✓</span>
+												{:else}
+													<span class="album-badge album-badge-warn" title={statusTooltip(artistAlbumStatus[album.path])}>!</span>
+												{/if}
+											{/if}
 										</div>
 										<div class="artist-album-name" title={album.name}>{album.name}</div>
 										<div class="artist-album-count">{album.songs.length} titre{album.songs.length > 1 ? 's' : ''}</div>
@@ -854,17 +936,13 @@
 		<!-- ── Album panel ── -->
 		{:else if selectedType === 'album'}
 			<div class="meta-content">
-				<!-- Breadcrumb + Home -->
-				<div class="panel-nav">
-					<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
-					<div class="meta-breadcrumb" style="margin:0">
-						<button class="breadcrumb-link" on:click={() => selectArtist(selectedAlbum.artist)}>
-							🎤 {selectedAlbum.artist.name}
-						</button>
-						<span class="breadcrumb-sep">›</span>
-						<span>💿 {selectedAlbum.name}</span>
-					</div>
-				</div>
+				<nav class="crumbs">
+					<button class="crumb" on:click={goHome}>🏠 Bibliothèque</button>
+					<span class="crumb-sep">›</span>
+					<button class="crumb" on:click={() => selectArtist(selectedAlbum.artist)}>🎤 {selectedAlbum.artist.name}</button>
+					<span class="crumb-sep">›</span>
+					<span class="crumb-current">💿 {selectedAlbum.name}</span>
+				</nav>
 
 				<!-- Album header: cover + info -->
 				<div class="album-header">
@@ -961,7 +1039,25 @@
 									{reorderSaving ? '⏳ Écriture…' : `💾 Enregistrer la numérotation (1..${reorderTracks.length})`}
 								</button>
 							</div>
+						{:else if albumPanelTracks}
+							<!-- TRCK réels (triés par numéro, sans-numéro à la fin) -->
+							<div class="tracklist">
+								{#each albumPanelTracks as track (track.path)}
+									<button
+										class="track-row {selectedPath === track.path ? 'track-selected' : ''}"
+										on:click={() => selectSong(track.path, true)}
+									>
+										<span class="track-num {trackDisplayNum(track) === '—' ? 'track-num-missing' : ''}">{trackDisplayNum(track)}</span>
+										<span class="track-name">{songDisplayName(track.name)}</span>
+										{#if trackDisplayNum(track) === '—'}
+											<span class="reorder-badge reorder-badge-missing">sans n°</span>
+										{/if}
+										<span class="track-chevron">›</span>
+									</button>
+								{/each}
+							</div>
 						{:else}
+							<!-- Repli : ordre alphabétique tant que les TRCK ne sont pas chargés -->
 							<div class="tracklist">
 								{#each selectedAlbum.songs as song, i (song.path)}
 									<button
@@ -987,16 +1083,20 @@
 				<div class="meta-empty"><span class="meta-empty-icon">❌</span><p>{metaError}</p></div>
 			{:else if meta}
 				<div class="meta-content">
-					<!-- Back to album or breadcrumb -->
-					<div class="panel-nav">
-						<button class="home-btn" on:click={goHome}>🏠 Accueil</button>
-						{#if selectedAlbum}
-							<button class="back-btn" on:click={backToAlbum}>
-								‹ {selectedAlbum.name}
-							</button>
+					<nav class="crumbs">
+						<button class="crumb" on:click={goHome}>🏠 Bibliothèque</button>
+						{#if songCrumbParts.length === 3}
+							<span class="crumb-sep">›</span>
+							<button class="crumb" on:click={() => gotoArtistByPath(songCrumbParts[0])}>🎤 {songCrumbParts[0]}</button>
+							<span class="crumb-sep">›</span>
+							<button class="crumb" on:click={() => gotoAlbumByPath(songCrumbParts[0], songCrumbParts.slice(0, 2).join('/'))}>💿 {songCrumbParts[1]}</button>
+						{:else if songCrumbParts.length === 2}
+							<span class="crumb-sep">›</span>
+							<span class="crumb-current">📁 {songCrumbParts[0]}</span>
 						{/if}
-					</div>
-					<div class="meta-breadcrumb">{meta.path}</div>
+						<span class="crumb-sep">›</span>
+						<span class="crumb-current">{songDisplayName(songCrumbParts[songCrumbParts.length - 1] ?? '')}</span>
+					</nav>
 
 					<div class="meta-sections">
 
@@ -1184,7 +1284,8 @@
 <style>
 	.meta-layout {
 		display: flex;
-		height: calc(100vh - 56px);
+		/* 93px = header (52) + onglets (40) + bordure (1) — voir Header.svelte */
+		height: calc(100dvh - 93px);
 		overflow: hidden;
 	}
 
@@ -1199,6 +1300,36 @@
 		padding: var(--s3) var(--s3) var(--s2);
 		display: flex; flex-direction: column; gap: var(--s2);
 		border-bottom: 1px solid var(--sep);
+	}
+	.sidebar-search-row { display: flex; align-items: center; gap: var(--s2); }
+	.sidebar-search-row .form-input { flex: 1; min-width: 0; }
+	.sidebar-collapse-btn {
+		flex-shrink: 0;
+		width: 28px; height: 28px;
+		background: none; border: 1px solid var(--sep);
+		border-radius: var(--r-sm);
+		color: var(--text-3); font-size: 13px;
+		cursor: pointer;
+		transition: color .1s, background .1s;
+	}
+	.sidebar-collapse-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+	/* Rail affiché quand la sidebar est repliée */
+	.sidebar-rail {
+		flex-shrink: 0;
+		width: 28px;
+		display: flex; flex-direction: column; align-items: center;
+		gap: var(--s3); padding-top: var(--s3);
+		background: var(--bg-2);
+		border: none; border-right: 1px solid var(--sep);
+		color: var(--text-3); cursor: pointer;
+		transition: color .1s, background .1s;
+	}
+	.sidebar-rail:hover { color: var(--text); background: rgba(255,255,255,.04); }
+	.sidebar-rail-icon { font-size: 13px; }
+	.sidebar-rail-label {
+		font-size: 11px; letter-spacing: .08em;
+		writing-mode: vertical-rl;
 	}
 	.sidebar-scroll { flex: 1; overflow-y: auto; padding: var(--s2) 0; }
 	.sidebar-empty { padding: var(--s6) var(--s4); text-align: center; color: var(--text-3); font-size: 13px; }
@@ -1288,6 +1419,20 @@
 
 	.tree-caret { font-size: 10px; color: var(--text-3); flex-shrink: 0; width: 10px; }
 	.tree-icon  { font-size: 13px; flex-shrink: 0; }
+
+	/* Vignette artiste dans l'arbre (photo ronde, 🎤 en repli) */
+	.tree-artist-pic {
+		position: relative; flex-shrink: 0;
+		width: 22px; height: 22px;
+		border-radius: 50%; overflow: hidden;
+		background: var(--bg-3); border: 1px solid var(--sep);
+		display: flex; align-items: center; justify-content: center;
+	}
+	.tree-artist-pic img {
+		position: absolute; inset: 0;
+		width: 100%; height: 100%; object-fit: cover; z-index: 1;
+	}
+	.tree-artist-pic-fallback { font-size: 11px; z-index: 0; }
 	.tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.tree-count { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
 	.row-warn   { font-size: 11px; flex-shrink: 0; }
@@ -1315,21 +1460,27 @@
 	.meta-empty-icon { font-size: 40px; }
 	.meta-empty p { font-size: 14px; max-width: 280px; line-height: 1.5; margin: 0; }
 
-	.meta-content { max-width: 720px; }
-	.meta-breadcrumb {
-		font-size: 12px; color: var(--text-3);
-		font-family: 'SF Mono','Menlo',monospace;
-		margin-bottom: var(--s5); word-break: break-all;
+	.meta-content { max-width: 720px; margin: 0 auto; }
+
+	/* ── Fil d'Ariane unifié ──────────────────────────────────── */
+	.crumbs {
 		display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+		margin-bottom: var(--s4);
+		font-size: 13px;
 	}
-	.breadcrumb-link {
+	.crumb {
 		background: none; border: none; padding: 0;
-		color: var(--blue); font-size: 12px; cursor: pointer;
-		font-family: 'SF Mono','Menlo',monospace;
-		text-decoration: underline; text-underline-offset: 2px;
+		color: var(--blue); font-size: 13px; cursor: pointer;
+		max-width: 220px;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	}
-	.breadcrumb-link:hover { opacity: .8; }
-	.breadcrumb-sep { color: var(--text-3); }
+	.crumb:hover { text-decoration: underline; text-underline-offset: 2px; }
+	.crumb-sep { color: var(--text-3); flex-shrink: 0; }
+	.crumb-current {
+		color: var(--text); font-weight: 500;
+		max-width: 280px;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
 
 	.meta-sections { display: flex; flex-direction: column; gap: var(--s4); }
 
@@ -1392,6 +1543,18 @@
 		width: 100%; height: 100%; object-fit: cover; z-index: 1;
 	}
 	.artist-album-placeholder { font-size: 26px; color: var(--text-3); z-index: 0; }
+
+	/* Badge de complétude des tags (genre/année/n° de piste) */
+	.album-badge {
+		position: absolute; top: 4px; right: 4px; z-index: 2;
+		width: 18px; height: 18px;
+		display: flex; align-items: center; justify-content: center;
+		border-radius: 50%;
+		font-size: 11px; font-weight: 700;
+		cursor: help;
+	}
+	.album-badge-ok   { background: rgba(48,209,88,.2);  color: var(--green);  border: 1px solid rgba(48,209,88,.4); }
+	.album-badge-warn { background: rgba(255,159,10,.25); color: var(--orange); border: 1px solid rgba(255,159,10,.5); }
 	.artist-album-name {
 		font-size: 12px; font-weight: 500; color: var(--text);
 		width: 100%;
@@ -1413,7 +1576,7 @@
 	}
 	.album-cover-img {
 		position: absolute; inset: 0;
-		width: 100%; height: 100%; object-fit: cover;
+		width: 100%; height: 100%; object-fit: cover; z-index: 1;
 	}
 	.album-cover-placeholder { font-size: 52px; color: var(--text-3); z-index: 0; }
 	.album-cover-overlay {
@@ -1464,6 +1627,7 @@
 		font-family: 'SF Mono','Menlo',monospace;
 		text-align: right;
 	}
+	.track-num-missing { color: var(--orange); }
 	.track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.track-chevron { flex-shrink: 0; font-size: 14px; color: var(--text-3); }
 
@@ -1509,14 +1673,6 @@
 	}
 	.reorder-arrow:hover { color: var(--text); background: rgba(255,255,255,.08); }
 	.reorder-arrow:disabled { opacity: .3; pointer-events: none; }
-
-	/* ── Back button (song → album) ───────────────────────────── */
-	.back-btn {
-		background: none; border: none; padding: 0;
-		color: var(--blue); font-size: 13px; font-weight: 500;
-		cursor: pointer;
-	}
-	.back-btn:hover { text-decoration: underline; }
 
 	/* ── Sections ─────────────────────────────────────────────── */
 	.meta-section {
@@ -1648,34 +1804,6 @@
 	:global(.btn-orange:hover) { background: rgba(255,159,10,.25); }
 	:global(.loading) { opacity: .6; pointer-events: none; }
 
-	/* ── Panel navigation bar (Home + back) ───────────────────── */
-	.panel-nav {
-		display: flex; align-items: center; gap: var(--s3);
-		margin-bottom: var(--s4);
-	}
-	.home-btn {
-		background: none; border: none; padding: 0;
-		color: var(--text-3); font-size: 12px; cursor: pointer;
-		transition: color .1s;
-	}
-	.home-btn:hover { color: var(--blue); }
-
-	/* ── Admin tools (backfill genre) ─────────────────────────── */
-	.admin-tools {
-		display: flex; align-items: center; gap: var(--s3);
-		flex-wrap: wrap;
-		margin-bottom: var(--s4);
-		padding: var(--s2) var(--s3);
-		background: var(--bg-2); border: 1px solid var(--sep);
-		border-radius: var(--r-md);
-	}
-	.admin-tools-note {
-		font-size: 12px; color: var(--text-3);
-		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-		max-width: 420px;
-	}
-	.admin-tools-error { color: var(--red); }
-
 	/* ── Audit métadonnées ────────────────────────────────────── */
 	.audit-intro { padding: var(--s4); }
 	.audit-intro .cover-hint { margin-bottom: var(--s3); line-height: 1.5; }
@@ -1758,6 +1886,14 @@
 		/* Two-panel → stacked */
 		.meta-layout { flex-direction: column; height: auto; overflow: visible; }
 		.meta-sidebar { width: 100%; height: 300px; border-right: none; border-bottom: 1px solid var(--sep); }
+
+		/* Rail replié : barre horizontale en haut */
+		.sidebar-rail {
+			width: 100%; flex-direction: row; justify-content: center;
+			padding: var(--s2); gap: var(--s2);
+			border-right: none; border-bottom: 1px solid var(--sep);
+		}
+		.sidebar-rail-label { writing-mode: horizontal-tb; }
 		.meta-main { overflow-y: visible; padding: var(--s3); }
 
 		/* Inputs need 16px to avoid iOS zoom */
