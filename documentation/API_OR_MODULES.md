@@ -75,6 +75,10 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
 | `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
+| `/api/admin/audit/artist` | GET | `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Nothing is written |
+| `/api/admin/audit/apply` | POST | `{changes: [{path, field, value}]}` → writes the admin-approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
+| `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running) |
+| `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
 
 ### Prefetch (album preview)
 
@@ -136,6 +140,20 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `_update_tags(path, tags, thumbnail)` | Mutagen: TIT2, **TPE1 multi-value**, **TPE2 (album_artist or primary artist, always set)**, TALB, TDRC, **TRCK `n/total`**, APIC (cropped/resized JPEG) |
 | `extract_album_covers(overwrite)` | Backfills `cover.jpg` per album (sidecar → APIC → FFmpeg frame fallbacks) |
 
+### `server/genre_lookup.py`
+
+| Function | Description |
+|---|---|
+| `lookup_genres(artist, title, album)` | iTunes Search (FR + US storefronts) → deduped genre list for a song; per-album memory cache; silent failure (`[]`) |
+| `lookup_album_info(artist, album)` | iTunes album search (FR + US) → `{found, genres[], year, album_artist, track_count}` for the audit; same contract (cache, never raises) |
+
+### `server/library_audit.py`
+
+| Function | Description |
+|---|---|
+| `audit_artist(artist_dir, music_dir, album_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Reads via `mutagen.id3.ID3` |
+| `backfill_genres(music_dir, state, lock, genre_lookup_fn=)` | Background worker: writes missing TCON across the library (tags first, folder names as fallback), updates the shared progress `state` under `lock` |
+
 ### `watcher/watcher.py`
 
 | Function | Description |
@@ -169,6 +187,10 @@ api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (
 api.cancelPrefetch(token)                  // POST /api/prefetch/cancel
 api.getPrefetchCoverUrl(token)             // GET  /api/prefetch/cover (URL builder)
 api.consumeExtensionQueue()                // POST /api/extension-queue/consume
+api.auditArtist(path)                      // GET  /api/admin/audit/artist
+api.auditApply(changes)                    // POST /api/admin/audit/apply
+api.genreBackfillStart()                   // POST /api/admin/genre-backfill
+api.genreBackfillStatus()                  // GET  /api/admin/genre-backfill/status
 ```
 
 ---

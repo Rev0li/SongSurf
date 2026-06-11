@@ -36,7 +36,7 @@ make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
 make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without rev0auth)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 
-# Tests (110 pytest tests, no linter configured)
+# Tests (153 pytest tests, no linter configured)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -87,6 +87,10 @@ Written by `organizer._update_tags` on every download:
 The metadata editor (`/metadata` page → `/api/library/song-meta/save`) accepts `;`-separated values for artist/genre/composer and writes real multi-value frames. `TPE2` deliberately stays single-value.
 
 The folder name always uses only the **primary artist** (first of the list).
+
+Admin maintenance tools (`server/library_audit.py`, UI on `/metadata`):
+- **Genre backfill** (`/api/admin/genre-backfill` + `/status`, button on the `/metadata` home): background thread fills missing TCON across the whole admin library via iTunes lookups.
+- **Per-artist metadata audit** (`/api/admin/audit/artist` → report, `/api/admin/audit/apply` → write, section in the artist panel): compares every album against iTunes (`lookup_album_info`) plus local coherence checks (TPE2 = artist folder, TRCK `n/total`, year consistency, TPE1/TPE2 mismatch, duplicate tracks, missing covers). Produces checkable recommendations — **nothing is written without explicit admin validation**.
 
 ## Threading model (SongSurf)
 
