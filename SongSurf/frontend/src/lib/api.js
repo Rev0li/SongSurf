@@ -51,6 +51,12 @@ export const api = {
 			body: JSON.stringify({ folder_path: folderPath, new_parent: newParent }),
 		});
 	},
+	deleteFolder(folderPath) {
+		return request('/api/library/delete-folder', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath }),
+		});
+	},
 	cancelPrefetch(token) {
 		return request('/api/prefetch/cancel', { method: 'POST', body: JSON.stringify({ token }) });
 	},

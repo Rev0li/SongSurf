@@ -56,6 +56,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}], playlists: [...]}` (flat folders = legacy) |
 | `/api/library/move` | POST | `{source, target_folder}` — move one MP3; re-syncs TPE1/TALB to the new folder position |
 | `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists) |
+| `/api/library/delete-folder` | POST | **Admin only** (403 otherwise). `{folder_path}` — permanently delete an artist or album folder (`shutil.rmtree`); an artist folder left empty after an album deletion is removed too. Returns `{deleted_songs}`. The library root itself is rejected |
 | `/api/library/folder-cover` | GET | `?folder_path=` → cover image (cover/folder/artist.*, falls back to embedded APIC) |
 | `/api/library/artist-picture` | GET | `?folder_path=` → artist picture (folder.* / artist.*) |
 
@@ -181,6 +182,7 @@ api.prepareZip()                           // POST /api/prepare-zip
 api.getLibrary()                           // GET  /api/library
 api.moveSong(source, targetFolder)         // POST /api/library/move
 api.moveFolder(folderPath, newParent)      // POST /api/library/move-folder
+api.deleteFolder(folderPath)               // POST /api/library/delete-folder (admin)
 api.songMeta(path)                         // GET  /api/library/song-meta
 api.saveSongMeta(path, tags)               // POST /api/library/song-meta/save
 api.albumTracks(folderPath)                // GET  /api/library/album-tracks

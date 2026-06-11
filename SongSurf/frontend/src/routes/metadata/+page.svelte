@@ -191,6 +191,43 @@
 		finally { auditApplying = false; }
 	}
 
+	// ── Suppression de dossier (admin — la bibliothèque admin est permanente) ────
+	let deletingFolder = false;
+
+	async function deleteArtistFolder() {
+		if (!selectedArtist || deletingFolder) return;
+		const nSongs = artistAlbums.reduce((n, al) => n + al.songs.length, 0);
+		const msg = `Supprimer définitivement le dossier « ${selectedArtist.name} » `
+			+ `(${artistAlbums.length} album${artistAlbums.length > 1 ? 's' : ''}, ${nSongs} titre${nSongs > 1 ? 's' : ''}) ?\n`
+			+ 'Cette action est irréversible.';
+		if (!confirm(msg)) return;
+		deletingFolder = true;
+		try {
+			const res = await api.deleteFolder(selectedArtist.path);
+			addToast(`Dossier supprimé (${res.deleted_songs} titre${res.deleted_songs > 1 ? 's' : ''}).`, 'info');
+			goHome();
+			await refreshTree();
+		} catch (e) { addToast(e.message ?? 'Suppression impossible.', 'error'); }
+		finally { deletingFolder = false; }
+	}
+
+	async function deleteAlbumFolder() {
+		if (!selectedAlbum || deletingFolder) return;
+		const artistPath = selectedAlbum.artist.path;
+		const nSongs = selectedAlbum.songs.length;
+		const msg = `Supprimer définitivement l'album « ${selectedAlbum.name} » `
+			+ `(${nSongs} titre${nSongs > 1 ? 's' : ''}) ?\nCette action est irréversible.`;
+		if (!confirm(msg)) return;
+		deletingFolder = true;
+		try {
+			const res = await api.deleteFolder(selectedAlbum.path);
+			addToast(`Album supprimé (${res.deleted_songs} titre${res.deleted_songs > 1 ? 's' : ''}).`, 'info');
+			await refreshTree();
+			gotoArtistByPath(artistPath); // retombe sur l'accueil si l'artiste a disparu (dernier album)
+		} catch (e) { addToast(e.message ?? 'Suppression impossible.', 'error'); }
+		finally { deletingFolder = false; }
+	}
+
 	// ── Drag and drop ─────────────────────────────────────────────────────────────
 	let dndType      = ''; // 'song' | 'album'
 	let dndSongPath  = '';
@@ -842,6 +879,17 @@
 								</label>
 							</div>
 						</div>
+
+						{#if isAdmin}
+							<button
+								class="btn btn-danger btn-sm folder-delete-btn"
+								on:click={deleteArtistFolder}
+								disabled={deletingFolder}
+								title="Supprime le dossier artiste et tout son contenu (irréversible)"
+							>
+								{deletingFolder ? '⏳…' : '🗑️ Supprimer le dossier'}
+							</button>
+						{/if}
 					</div>
 				</div>
 
@@ -1006,6 +1054,17 @@
 						<p class="cover-hint" style="margin-top:var(--s4)">
 							Pochette : glisse ou colle <kbd>Ctrl+V</kbd> pour remplacer
 						</p>
+
+						{#if isAdmin}
+							<button
+								class="btn btn-danger btn-sm folder-delete-btn"
+								on:click={deleteAlbumFolder}
+								disabled={deletingFolder}
+								title="Supprime le dossier album et tous ses titres (irréversible)"
+							>
+								{deletingFolder ? '⏳…' : "🗑️ Supprimer l'album"}
+							</button>
+						{/if}
 					</div>
 				</div>
 
@@ -1510,6 +1569,12 @@
 	}
 
 	.meta-sections { display: flex; flex-direction: column; gap: var(--s4); }
+
+	/* ── Suppression de dossier (admin) ───────────────────────── */
+	.folder-delete-btn {
+		margin-top: var(--s4);
+		align-self: flex-start;
+	}
 
 	/* ── Artist panel ─────────────────────────────────────────── */
 	.artist-panel {

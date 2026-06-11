@@ -619,6 +619,42 @@ def library_move_folder():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/library/delete-folder', methods=['POST'])
+@auth_required
+def library_delete_folder():
+    """Delete an artist or album folder — admin only (the admin library is permanent)."""
+    try:
+        user = _get_current_user()
+        if user.get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'Admin requis'}), 403
+        music_dir   = _user_music_dir(user)
+        data        = request.get_json() or {}
+        folder_path = (data.get('folder_path') or '').strip().strip('/')
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        base   = music_dir.resolve()
+        if folder == base or not folder.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        deleted_songs = len(list(folder.rglob('*.mp3')))
+        shutil.rmtree(folder)
+
+        # Album supprimé → retire le dossier artiste s'il est devenu vide
+        parent = folder.parent
+        if parent != base and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
+        logger.info(f"🗑️ Dossier supprimé: {folder_path} ({deleted_songs} titre(s)) par {user.get('email')}")
+        return jsonify({'success': True, 'deleted_songs': deleted_songs})
+    except Exception as e:
+        logger.error(f"❌ /api/library/delete-folder: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/library/folder-cover')
 @auth_required
 def library_folder_cover():

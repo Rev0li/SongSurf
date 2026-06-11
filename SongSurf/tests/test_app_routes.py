@@ -358,3 +358,77 @@ def test_audit_routes_require_admin(flask_setup):
     assert c.post('/api/admin/genre-backfill', json={},
                   headers=auth_headers(role='member'),
                   content_type='application/json').status_code == 403
+
+
+# ── Suppression de dossier (admin) ────────────────────────────────────────────
+
+def test_delete_folder_requires_admin(flask_setup):
+    c, *_ = flask_setup
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': 'Artist/Album'},
+               headers=auth_headers(role='member'),
+               content_type='application/json')
+    assert r.status_code == 403
+
+
+def test_delete_album_folder_and_empty_parent(flask_setup):
+    c, music, *_ = flask_setup
+    album = music / 'rev0admin' / 'ArtistDel' / 'AlbumDel'
+    album.mkdir(parents=True)
+    (album / 'a.mp3').write_bytes(b'mp3')
+    (album / 'b.mp3').write_bytes(b'mp3')
+    (album / 'cover.jpg').write_bytes(b'jpg')
+
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': 'ArtistDel/AlbumDel'},
+               headers=admin_headers(),
+               content_type='application/json')
+    assert r.status_code == 200
+    assert r.get_json()['deleted_songs'] == 2
+    assert not album.exists()
+    # Dernier album → le dossier artiste vide est retiré aussi
+    assert not (music / 'rev0admin' / 'ArtistDel').exists()
+
+
+def test_delete_artist_folder_keeps_siblings(flask_setup):
+    c, music, *_ = flask_setup
+    artist = music / 'rev0admin' / 'ArtistDel2'
+    (artist / 'Album1').mkdir(parents=True)
+    (artist / 'Album1' / 'a.mp3').write_bytes(b'mp3')
+    other = music / 'rev0admin' / 'ArtistKeep'
+    other.mkdir(parents=True)
+
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': 'ArtistDel2'},
+               headers=admin_headers(),
+               content_type='application/json')
+    assert r.status_code == 200
+    assert not artist.exists()
+    assert other.exists()
+
+
+def test_delete_folder_rejects_root_and_traversal(flask_setup):
+    c, music, *_ = flask_setup
+    (music / 'rev0admin').mkdir(exist_ok=True)
+    # Racine de la bibliothèque
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': ''},
+               headers=admin_headers(), content_type='application/json')
+    assert r.status_code == 400
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': '.'},
+               headers=admin_headers(), content_type='application/json')
+    assert r.status_code == 400
+    # Traversal hors bibliothèque
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': '../../etc'},
+               headers=admin_headers(), content_type='application/json')
+    assert r.status_code in (400, 404)
+
+
+def test_delete_folder_missing_dir_404(flask_setup):
+    c, *_ = flask_setup
+    r = c.post('/api/library/delete-folder',
+               json={'folder_path': 'NopeArtist/NopeAlbum'},
+               headers=admin_headers(), content_type='application/json')
+    assert r.status_code == 404
