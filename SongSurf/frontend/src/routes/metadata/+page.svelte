@@ -14,6 +14,11 @@
 	const LS_EXPANDED = 'ssf.meta.expanded';
 	const LS_SIDEBAR  = 'ssf.meta.sidebar';
 	const LS_SEL      = 'ssf.meta.sel';
+	const LS_TREE     = 'ssf.meta.tree';
+
+	function persistTree() {
+		try { localStorage.setItem(LS_TREE, JSON.stringify(tree)); } catch { /* ignore */ }
+	}
 
 	let sidebarCollapsed = false;
 
@@ -250,6 +255,7 @@
 		try {
 			const data = await api.getLibrary();
 			tree = data;
+			persistTree();
 			// Keep selectedAlbum songs in sync if the album still exists
 			if (selectedAlbum) {
 				const newArtist = (data.artists ?? []).find(a => a.path === selectedAlbum.artist.path);
@@ -265,10 +271,26 @@
 		try { sidebarCollapsed = localStorage.getItem(LS_SIDEBAR) === '1'; } catch { /* ignore */ }
 		try { expanded = new Set(JSON.parse(localStorage.getItem(LS_EXPANDED) || '[]')); } catch { /* ignore */ }
 
-		try { tree = await api.getLibrary(); }
-		catch { tree = { artists: [], playlists: [] }; }
+		// Stale-while-revalidate : affiche le dernier arbre connu pendant le fetch
+		let cached = null;
+		try { cached = JSON.parse(localStorage.getItem(LS_TREE) || 'null'); } catch { /* ignore */ }
+		if (cached?.artists) {
+			tree = cached;
+			restoreSelection();
+		}
 
-		restoreSelection();
+		try {
+			const fresh = await api.getLibrary();
+			// Si rien n'a changé depuis le cache, on garde l'affichage tel quel
+			if (!cached?.artists || JSON.stringify(fresh) !== JSON.stringify(cached)) {
+				tree = fresh;
+				persistTree();
+				// Re-résout la sélection contre l'arbre frais (les objets du cache sont périmés)
+				restoreSelection();
+			}
+		} catch {
+			if (!tree) tree = { artists: [], playlists: [] };
+		}
 	});
 
 	function restoreSelection() {
@@ -739,7 +761,12 @@
 
 		<!-- ── Home / Artist gallery ── -->
 		{#if selectedType === null}
-			{#if tree && (tree.artists?.length ?? 0) > 0}
+			{#if tree === null}
+				<div class="meta-empty">
+					<span class="meta-empty-icon">⏳</span>
+					<p>Chargement de la bibliothèque…</p>
+				</div>
+			{:else if (tree.artists?.length ?? 0) > 0}
 				<div class="home-gallery">
 					<div class="home-gallery-grid">
 						{#each (tree.artists ?? []) as artist (artist.path)}
