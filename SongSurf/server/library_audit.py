@@ -13,12 +13,14 @@ Lecture/écriture via mutagen.id3.ID3 directement (pas besoin de frames
 MPEG valides → testable avec des fichiers factices).
 """
 import logging
+import re
 from collections import Counter
 from pathlib import Path
 
 from mutagen.id3 import ID3, ID3NoHeaderError, TCON
 
-from genre_lookup import lookup_album_info, lookup_genres
+from genre_lookup import lookup_album_info, lookup_album_tracks, lookup_genres
+from genre_lookup import _normalize
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,42 @@ def _read_tags(path: Path) -> dict:
     }
 
 
-def _audit_album(artist_name: str, album_dir: Path, music_dir: Path, itunes: dict):
+# « (feat. X) », « [avec Y] »… diffèrent souvent entre YouTube et iTunes
+_FEAT_PAREN = re.compile(r'\s*[(\[][^)\]]*\b(feat|ft|featuring|avec|with)\b[^)\]]*[)\]]',
+                         re.IGNORECASE)
+
+
+def _normalize_title(title):
+    return _normalize(_FEAT_PAREN.sub('', str(title or '')))
+
+
+def _match_missing_tracks(missing_tracks, itunes_tracks):
+    """Associe les titres sans TRCK à la tracklist iTunes.
+
+    Match par titre normalisé (TIT2, sinon nom de fichier), uniquement
+    sans ambiguïté : un fichier ↔ une piste iTunes. Retourne {path: piste}.
+    """
+    by_title = {}
+    for it in itunes_tracks:
+        key = _normalize_title(it.get('title', ''))
+        if key:
+            by_title.setdefault(key, []).append(it)
+
+    matches = {}
+    claimed = Counter()
+    for t in missing_tracks:
+        local = _normalize_title(t['title'] or Path(t['name']).stem)
+        candidates = by_title.get(local, [])
+        if len(candidates) == 1:
+            matches[t['path']] = candidates[0]
+            claimed[id(candidates[0])] += 1
+
+    # Deux fichiers revendiquent la même piste iTunes → aucun des deux
+    return {p: it for p, it in matches.items() if claimed[id(it)] == 1}
+
+
+def _audit_album(artist_name: str, album_dir: Path, music_dir: Path, itunes: dict,
+                 track_lookup=None):
     """Audit d'un album : (tracks, recommendations, warnings).
 
     Recommandation = {'id', 'field', 'proposed', 'current', 'reason',
@@ -158,11 +195,29 @@ def _audit_album(artist_name: str, album_dir: Path, music_dir: Path, itunes: dic
             warns.append(f"{t['name']} : l'artiste album « {t['album_artist']} » "
                          f"n'apparaît pas dans TPE1 ({'; '.join(t['artists'])})")
 
-    # 6. Numéros de piste (TRCK)
+    # 6. Numéros de piste (TRCK) — TRCK absent : tentative de match contre
+    #    la tracklist officielle iTunes, le reste part en warning.
     no_trck = [t for t in tracks if not t['track_number']]
-    if no_trck:
-        warns.append(f"Numéro de piste manquant sur {len(no_trck)}/{n} titres "
-                     "(ordre inconnu — à corriger à la main)")
+    matched = {}
+    if no_trck and itunes.get('collection_id') and track_lookup:
+        itunes_tracks = track_lookup(itunes['collection_id']) or []
+        matched = _match_missing_tracks(no_trck, itunes_tracks)
+        if matched:
+            fallback_total = itunes.get('track_count') or len(itunes_tracks) or n
+            changes = sorted(
+                ({'path': p, 'value': f"{it['track_number']}/{it.get('track_count') or fallback_total}"}
+                 for p, it in matched.items()),
+                key=lambda c: int(c['value'].split('/')[0])
+            )
+            _rec('track_number', ', '.join(c['value'] for c in changes),
+                 f"manquant sur {len(no_trck)}/{n} titres",
+                 'Position trouvée dans la tracklist iTunes',
+                 changes)
+    still_missing = [t for t in no_trck if t['path'] not in matched]
+    if still_missing:
+        warns.append(f"Numéro de piste manquant sur {len(still_missing)}/{n} titres "
+                     "(pas de correspondance iTunes — utiliser « Numéroter les pistes » "
+                     "dans le panneau album)")
     total = itunes.get('track_count') or n
     bare = [t for t in tracks
             if t['track_number'] and '/' not in t['track_number'] and t['track_number'].isdigit()]
@@ -187,16 +242,20 @@ def _audit_album(artist_name: str, album_dir: Path, music_dir: Path, itunes: dic
     return tracks, recs, warns
 
 
-def audit_artist(artist_dir: Path, music_dir: Path, album_lookup=None) -> dict:
-    """Rapport complet pour un artiste : un lookup iTunes par album."""
+def audit_artist(artist_dir: Path, music_dir: Path, album_lookup=None,
+                 track_lookup=None) -> dict:
+    """Rapport complet pour un artiste : un lookup iTunes par album
+    (+ un lookup tracklist par album ayant des TRCK manquants)."""
     album_lookup = album_lookup or lookup_album_info
+    track_lookup = track_lookup or lookup_album_tracks
     artist_name = artist_dir.name
     albums = []
     total = 0
     for album_dir in sorted([d for d in artist_dir.iterdir() if d.is_dir()],
                             key=lambda p: p.name.lower()):
         itunes = album_lookup(artist_name, album_dir.name) or {}
-        tracks, recs, warns = _audit_album(artist_name, album_dir, music_dir, itunes)
+        tracks, recs, warns = _audit_album(artist_name, album_dir, music_dir, itunes,
+                                           track_lookup=track_lookup)
         if not tracks:
             continue
         total += len(recs)

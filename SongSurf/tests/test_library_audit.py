@@ -234,6 +234,110 @@ class TestAuditArtist:
         assert calls == [('Art', 'A1'), ('Art', 'A2')]
 
 
+# ── Numéros de piste via tracklist iTunes ─────────────────────────────────────
+
+ITUNES_WITH_ID = {**ITUNES_OK, 'collection_id': 987654}
+
+
+def _it_track(title, number, count=2):
+    return {'title': title, 'track_number': number, 'track_count': count}
+
+
+class TestTrackNumberFromItunes:
+    def _audit(self, music_dir, tracklist):
+        return audit_artist(music_dir / 'Nekfeu', music_dir,
+                            album_lookup=lambda a, b: dict(ITUNES_WITH_ID),
+                            track_lookup=lambda cid: list(tracklist))
+
+    def test_missing_trck_matched_by_title(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'Squa.mp3', title='Squa', artists=['Nekfeu'], album_artist='Nekfeu',
+                  year='2016', genres=['Rap'])
+        _make_mp3(d / 'Humanoide.mp3', title='Humanoïde', artists=['Nekfeu'],
+                  album_artist='Nekfeu', year='2016', genres=['Rap'])
+
+        report = self._audit(tmp_music_dir,
+                             [_it_track('Humanoïde', 1), _it_track('Squa', 2)])
+        recs = _recs_by_field(report, 'track_number')
+        assert len(recs) == 1
+        assert recs[0]['changes'] == [
+            {'path': 'Nekfeu/Cyborg/Humanoide.mp3', 'value': '1/2'},
+            {'path': 'Nekfeu/Cyborg/Squa.mp3',      'value': '2/2'},
+        ]
+        # Tout est matché → plus de warning TRCK
+        assert not any('Numéro de piste manquant' in w for w in _all_warnings(report))
+
+    def test_match_via_filename_when_no_tit2(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'Squa.mp3', artists=['Nekfeu'], album_artist='Nekfeu',
+                  year='2016', genres=['Rap'])
+
+        report = self._audit(tmp_music_dir, [_it_track('Squa', 2)])
+        recs = _recs_by_field(report, 'track_number')
+        assert recs and recs[0]['changes'][0]['value'] == '2/2'
+
+    def test_feat_suffix_stripped_for_match(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'S.mp3', title='Sans titre (feat. Doums)', artists=['Nekfeu'],
+                  album_artist='Nekfeu', year='2016', genres=['Rap'])
+
+        report = self._audit(tmp_music_dir, [_it_track('Sans titre', 1)])
+        recs = _recs_by_field(report, 'track_number')
+        assert recs and recs[0]['changes'][0]['value'] == '1/2'
+
+    def test_ambiguous_duplicate_titles_not_proposed(self, tmp_music_dir):
+        # Deux pistes iTunes au même nom → match ambigu → warning seulement
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'Intro.mp3', title='Intro', artists=['Nekfeu'],
+                  album_artist='Nekfeu', year='2016', genres=['Rap'])
+
+        report = self._audit(tmp_music_dir,
+                             [_it_track('Intro', 1), _it_track('Intro', 9)])
+        assert _recs_by_field(report, 'track_number') == []
+        assert any('Numéro de piste manquant' in w for w in _all_warnings(report))
+
+    def test_no_match_keeps_warning(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'Inedit.mp3', title='Inédit bonus', artists=['Nekfeu'],
+                  album_artist='Nekfeu', year='2016', genres=['Rap'])
+
+        report = self._audit(tmp_music_dir, [_it_track('Autre chose', 1)])
+        assert _recs_by_field(report, 'track_number') == []
+        assert any('Numéro de piste manquant' in w for w in _all_warnings(report))
+
+    def test_no_collection_id_no_tracklist_call(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'One.mp3', title='One', artists=['Nekfeu'], album_artist='Nekfeu',
+                  year='2016', genres=['Rap'])
+        calls = []
+
+        def track_lookup(cid):
+            calls.append(cid)
+            return []
+
+        audit_artist(tmp_music_dir / 'Nekfeu', tmp_music_dir,
+                     album_lookup=lambda a, b: dict(ITUNES_OK),  # pas de collection_id
+                     track_lookup=track_lookup)
+        assert calls == []
+
+    def test_tracklist_fetched_once_per_album(self, tmp_music_dir):
+        d = tmp_music_dir / 'Nekfeu' / 'Cyborg'
+        _make_mp3(d / 'A.mp3', title='A', artists=['Nekfeu'], album_artist='Nekfeu',
+                  year='2016', genres=['Rap'])
+        _make_mp3(d / 'B.mp3', title='B', artists=['Nekfeu'], album_artist='Nekfeu',
+                  year='2016', genres=['Rap'])
+        calls = []
+
+        def track_lookup(cid):
+            calls.append(cid)
+            return [_it_track('A', 1), _it_track('B', 2)]
+
+        audit_artist(tmp_music_dir / 'Nekfeu', tmp_music_dir,
+                     album_lookup=lambda a, b: dict(ITUNES_WITH_ID),
+                     track_lookup=track_lookup)
+        assert calls == [987654]
+
+
 # ── backfill_genres ───────────────────────────────────────────────────────────
 
 class TestBackfillGenres:

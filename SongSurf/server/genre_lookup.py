@@ -19,6 +19,7 @@ from urllib.request import urlopen, Request
 logger = logging.getLogger(__name__)
 
 ITUNES_SEARCH_URL = 'https://itunes.apple.com/search'
+ITUNES_LOOKUP_URL = 'https://itunes.apple.com/lookup'
 TIMEOUT_SECONDS = 4
 # FR d'abord → le genre en français arrive en tête du TCON.
 COUNTRIES = ('FR', 'US')
@@ -26,7 +27,8 @@ COUNTRIES = ('FR', 'US')
 # Cache mémoire (artiste, album) → genres : un album de N pistes ne coûte
 # qu'un seul lookup (2 appels HTTP), et on reste loin du rate-limit iTunes.
 _cache = {}
-_album_cache = {}  # (artiste, album) → info album (audit / backfill)
+_album_cache = {}   # (artiste, album) → info album (audit / backfill)
+_tracks_cache = {}  # collection_id → tracklist iTunes (audit TRCK)
 _cache_lock = threading.Lock()
 
 
@@ -142,7 +144,8 @@ def lookup_album_info(artist, album):
     """
     artist = str(artist or '').strip()
     album = str(album or '').strip()
-    info = {'found': False, 'genres': [], 'year': '', 'album_artist': '', 'track_count': 0}
+    info = {'found': False, 'genres': [], 'year': '', 'album_artist': '',
+            'track_count': 0, 'collection_id': 0}
     if not artist or not album:
         return info
 
@@ -175,6 +178,11 @@ def lookup_album_info(artist, album):
                 info['track_count'] = int(result.get('trackCount') or 0)
             except (TypeError, ValueError):
                 pass
+        if not info['collection_id']:
+            try:
+                info['collection_id'] = int(result.get('collectionId') or 0)
+            except (TypeError, ValueError):
+                pass
 
     if reachable:
         with _cache_lock:
@@ -183,3 +191,54 @@ def lookup_album_info(artist, album):
     if info['found']:
         logger.info(f"🎼 Album iTunes: {artist} - {album} → {info['genres']}, {info['year']}")
     return info
+
+
+def lookup_album_tracks(collection_id):
+    """
+    Tracklist officielle d'un album iTunes (lookup par collectionId) :
+
+        [{'title': 'Nom du titre', 'track_number': 3, 'track_count': 14}, ...]
+
+    Triée par numéro de piste. Même contrat : jamais d'exception, cache
+    mémoire, échec réseau → [] non mémorisé.
+    """
+    try:
+        collection_id = int(collection_id or 0)
+    except (TypeError, ValueError):
+        return []
+    if collection_id <= 0:
+        return []
+
+    with _cache_lock:
+        if collection_id in _tracks_cache:
+            return [dict(t) for t in _tracks_cache[collection_id]]
+
+    params = urlencode({'id': collection_id, 'entity': 'song', 'limit': 200})
+    req = Request(f'{ITUNES_LOOKUP_URL}?{params}',
+                  headers={'User-Agent': 'SongSurf/1.0'})
+    try:
+        with urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        logger.warning(f"⚠️ iTunes tracklist lookup échoué pour {collection_id}: {e}")
+        return []
+
+    tracks = []
+    for result in data.get('results', []):
+        if result.get('wrapperType') != 'track':
+            continue
+        title = (result.get('trackName') or '').strip()
+        try:
+            number = int(result.get('trackNumber') or 0)
+            count = int(result.get('trackCount') or 0)
+        except (TypeError, ValueError):
+            continue
+        if title and number > 0:
+            tracks.append({'title': title, 'track_number': number, 'track_count': count})
+    tracks.sort(key=lambda t: t['track_number'])
+
+    with _cache_lock:
+        _tracks_cache[collection_id] = [dict(t) for t in tracks]
+    if tracks:
+        logger.info(f"🎼 Tracklist iTunes {collection_id}: {len(tracks)} titres")
+    return tracks

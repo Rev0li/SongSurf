@@ -238,3 +238,94 @@ def test_user_music_dir_path_traversal_raises(flask_setup):
     _, _, _, app_mod = flask_setup
     with pytest.raises(ValueError, match='path escapes'):
         app_mod._user_music_dir({'sub': 'x', '_pseudo': '../../etc/passwd'})
+
+
+# ── Album tracks + renumber (mode « Numéroter les pistes ») ───────────────────
+
+def _make_tagged_mp3(path, title=None, track=None):
+    """Fichier factice avec un vrai tag ID3 (lisible par library_audit._read_tags)."""
+    from mutagen.id3 import ID3, TIT2, TRCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'\x00' * 64)
+    id3 = ID3()
+    if title: id3['TIT2'] = TIT2(encoding=3, text=title)
+    if track: id3['TRCK'] = TRCK(encoding=3, text=track)
+    id3.save(path)
+
+
+def test_album_tracks_returns_titles_and_trck(flask_setup):
+    c, music, *_ = flask_setup
+    # member user@test.com → pseudo 'user'
+    album = music / 'user' / 'Artist' / 'AlbumTL'
+    _make_tagged_mp3(album / 'b.mp3', title='Bee', track='2/2')
+    _make_tagged_mp3(album / 'a.mp3', title='Aye')
+
+    r = c.get('/api/library/album-tracks?folder_path=Artist/AlbumTL',
+              headers=auth_headers())
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data['tracks'] == [
+        {'path': 'Artist/AlbumTL/a.mp3', 'name': 'a.mp3', 'title': 'Aye', 'track_number': ''},
+        {'path': 'Artist/AlbumTL/b.mp3', 'name': 'b.mp3', 'title': 'Bee', 'track_number': '2/2'},
+    ]
+
+
+def test_renumber_album_writes_in_order(flask_setup):
+    c, music, _, app_mod = flask_setup
+    album = music / 'user' / 'Artist' / 'AlbumRN'
+    _make_tagged_mp3(album / 'a.mp3')
+    _make_tagged_mp3(album / 'b.mp3')
+
+    with patch.object(app_mod, '_write_song_tags') as mock_write:
+        r = c.post('/api/library/renumber-album',
+                   json={'folder_path': 'Artist/AlbumRN',
+                         'paths': ['Artist/AlbumRN/b.mp3', 'Artist/AlbumRN/a.mp3']},
+                   headers=auth_headers(),
+                   content_type='application/json')
+    assert r.status_code == 200
+    assert r.get_json() == {'success': True, 'total': 2}
+    written = [(call.args[0].name, call.args[1]) for call in mock_write.call_args_list]
+    assert written == [('b.mp3', {'track_number': '1/2'}),
+                       ('a.mp3', {'track_number': '2/2'})]
+
+
+def test_renumber_album_rejects_partial_paths(flask_setup):
+    c, music, _, app_mod = flask_setup
+    album = music / 'user' / 'Artist' / 'AlbumPart'
+    _make_tagged_mp3(album / 'a.mp3')
+    _make_tagged_mp3(album / 'b.mp3')
+
+    with patch.object(app_mod, '_write_song_tags') as mock_write:
+        r = c.post('/api/library/renumber-album',
+                   json={'folder_path': 'Artist/AlbumPart',
+                         'paths': ['Artist/AlbumPart/a.mp3']},  # b.mp3 manquant
+                   headers=auth_headers(),
+                   content_type='application/json')
+    assert r.status_code == 400
+    mock_write.assert_not_called()
+
+
+def test_renumber_album_rejects_foreign_path(flask_setup):
+    c, music, _, app_mod = flask_setup
+    album = music / 'user' / 'Artist' / 'AlbumFor'
+    _make_tagged_mp3(album / 'a.mp3')
+    _make_tagged_mp3(music / 'user' / 'Artist' / 'Autre' / 'x.mp3')
+
+    r = c.post('/api/library/renumber-album',
+               json={'folder_path': 'Artist/AlbumFor',
+                     'paths': ['Artist/AlbumFor/a.mp3', 'Artist/Autre/x.mp3']},
+               headers=auth_headers(),
+               content_type='application/json')
+    assert r.status_code == 400
+
+
+def test_audit_routes_require_admin(flask_setup):
+    c, *_ = flask_setup
+    assert c.get('/api/admin/audit/artist?path=X',
+                 headers=auth_headers(role='member')).status_code == 403
+    assert c.post('/api/admin/audit/apply', json={'changes': []},
+                  headers=auth_headers(role='member'),
+                  content_type='application/json').status_code == 403
+    assert c.post('/api/admin/genre-backfill', json={},
+                  headers=auth_headers(role='member'),
+                  content_type='application/json').status_code == 403

@@ -10,16 +10,16 @@ import pytest
 from unittest.mock import patch
 
 import genre_lookup
-from genre_lookup import lookup_genres, lookup_album_info
+from genre_lookup import lookup_genres, lookup_album_info, lookup_album_tracks
 
 
 @pytest.fixture(autouse=True)
 def clear_cache():
-    genre_lookup._cache.clear()
-    genre_lookup._album_cache.clear()
+    for c in (genre_lookup._cache, genre_lookup._album_cache, genre_lookup._tracks_cache):
+        c.clear()
     yield
-    genre_lookup._cache.clear()
-    genre_lookup._album_cache.clear()
+    for c in (genre_lookup._cache, genre_lookup._album_cache, genre_lookup._tracks_cache):
+        c.clear()
 
 
 def _fake_response(results):
@@ -118,13 +118,14 @@ class TestLookupGenres:
 
 # ── lookup_album_info ─────────────────────────────────────────────────────────
 
-def _itunes_album(artist, album, genre='Rock', year='2016', tracks=12):
+def _itunes_album(artist, album, genre='Rock', year='2016', tracks=12, cid=987654):
     return {
         'artistName':       artist,
         'collectionName':   album,
         'primaryGenreName': genre,
         'releaseDate':      f'{year}-06-03T07:00:00Z',
         'trackCount':       tracks,
+        'collectionId':     cid,
     }
 
 
@@ -146,6 +147,7 @@ class TestLookupAlbumInfo:
         assert info['year'] == '2016'
         assert info['album_artist'] == 'Nekfeu'
         assert info['track_count'] == 14
+        assert info['collection_id'] == 987654
 
     def test_deluxe_edition_matches(self):
         # iTunes suffixe « (Deluxe) » → containment souple
@@ -194,6 +196,52 @@ class TestLookupAlbumInfo:
     def test_empty_inputs(self):
         assert lookup_album_info('', 'Album')['found'] is False
         assert lookup_album_info('Artist', '')['found'] is False
+
+
+# ── lookup_album_tracks ───────────────────────────────────────────────────────
+
+def _itunes_track(title, number, count=14):
+    return {'wrapperType': 'track', 'trackName': title,
+            'trackNumber': number, 'trackCount': count}
+
+
+class TestLookupAlbumTracks:
+    def test_tracks_parsed_and_sorted(self):
+        results = [
+            {'wrapperType': 'collection', 'collectionName': 'Cyborg'},  # ignoré
+            _itunes_track('Squa', 3),
+            _itunes_track('Humanoïde', 1),
+        ]
+        with patch('genre_lookup.urlopen',
+                   side_effect=lambda req, timeout=None: _fake_response(results)):
+            tracks = lookup_album_tracks(987654)
+        assert tracks == [
+            {'title': 'Humanoïde', 'track_number': 1, 'track_count': 14},
+            {'title': 'Squa',      'track_number': 3, 'track_count': 14},
+        ]
+
+    def test_network_error_returns_empty_not_cached(self):
+        with patch('genre_lookup.urlopen', side_effect=OSError('timeout')):
+            assert lookup_album_tracks(987654) == []
+        assert genre_lookup._tracks_cache == {}
+
+    def test_result_cached(self):
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req.full_url)
+            return _fake_response([_itunes_track('One', 1)])
+
+        with patch('genre_lookup.urlopen', side_effect=fake_urlopen):
+            first = lookup_album_tracks(42)
+            second = lookup_album_tracks(42)
+        assert first == second
+        assert len(calls) == 1
+
+    def test_invalid_id(self):
+        assert lookup_album_tracks(0) == []
+        assert lookup_album_tracks(None) == []
+        assert lookup_album_tracks('abc') == []
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

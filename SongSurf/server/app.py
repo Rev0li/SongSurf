@@ -1652,6 +1652,91 @@ def library_song_meta():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/library/album-tracks')
+@auth_required
+def library_album_tracks():
+    """Tracklist légère d'un album (titre + TRCK) pour le mode « Numéroter »."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        folder_path = (request.args.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        if not str(folder).startswith(str(music_dir.resolve())):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        from library_audit import _read_tags
+        items = []
+        for f in sorted([p for p in folder.iterdir()
+                         if p.is_file() and p.suffix.lower() == '.mp3'],
+                        key=lambda p: p.name.lower()):
+            tags = _read_tags(f)
+            items.append({
+                'path':         str(f.relative_to(music_dir)),
+                'name':         f.name,
+                'title':        tags['title'],
+                'track_number': tags['track_number'],
+            })
+        return jsonify({'success': True, 'tracks': items})
+    except Exception as e:
+        logger.error(f"❌ /api/library/album-tracks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/renumber-album', methods=['POST'])
+@auth_required
+def library_renumber_album():
+    """Réécrit TRCK `i/total` sur tout un album, dans l'ordre fourni.
+
+    `paths` doit couvrir exactement les MP3 du dossier : garantit une
+    numérotation 1..N cohérente (pas de trous ni de doublons).
+    """
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        data        = request.get_json(silent=True) or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        paths       = data.get('paths') or []
+        if not folder_path or not paths or not isinstance(paths, list):
+            return jsonify({'success': False, 'error': 'folder_path et paths requis'}), 400
+
+        folder = (music_dir / folder_path).resolve()
+        base   = music_dir.resolve()
+        if not str(folder).startswith(str(base)):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        targets = []
+        for p in paths:
+            target = (music_dir / str(p)).resolve()
+            if not str(target).startswith(str(base)) or target.parent != folder:
+                return jsonify({'success': False, 'error': f'Chemin invalide : {p}'}), 400
+            if not target.exists() or target.suffix.lower() != '.mp3':
+                return jsonify({'success': False, 'error': f'Fichier introuvable : {p}'}), 404
+            targets.append(target)
+
+        folder_mp3s = {f for f in folder.iterdir()
+                       if f.is_file() and f.suffix.lower() == '.mp3'}
+        if len(targets) != len(set(targets)) or set(targets) != folder_mp3s:
+            return jsonify({'success': False,
+                            'error': "paths doit lister chaque titre de l'album exactement une fois"}), 400
+
+        total = len(targets)
+        for i, target in enumerate(targets, start=1):
+            _write_song_tags(target, {'track_number': f'{i}/{total}'})
+
+        logger.info(f"🔢 Album renuméroté 1..{total} : {folder_path}")
+        return jsonify({'success': True, 'total': total})
+    except Exception as e:
+        logger.error(f"❌ /api/library/renumber-album: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ── Queue worker ───────────────────────────────────────────────────────────────
 
 def queue_worker():
