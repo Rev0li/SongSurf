@@ -1724,7 +1724,7 @@
 	.track-num {
 		flex-shrink: 0; width: 24px;
 		font-size: 12px; color: var(--text-3);
-		font-family: 'SF Mono','Menlo',monospace;
+		font-family: var(--font-mono);
 		text-align: right;
 	}
 	.track-num-missing { color: var(--orange); }
@@ -1758,7 +1758,7 @@
 	.reorder-badge {
 		flex-shrink: 0;
 		font-size: 10px; color: var(--text-3);
-		font-family: 'SF Mono','Menlo',monospace;
+		font-family: var(--font-mono);
 		background: rgba(0,0,0,.2);
 		border-radius: 3px; padding: 1px 5px;
 	}
@@ -1837,7 +1837,7 @@
 	}
 	.tag-present { color: var(--green); }
 	.tag-absent  { color: var(--text-3); }
-	.mono  { font-family: 'SF Mono','Menlo',monospace; }
+	.mono  { font-family: var(--font-mono); }
 	.small { font-size: 11px; }
 
 	/* ── Editable inputs ──────────────────────────────────────── */

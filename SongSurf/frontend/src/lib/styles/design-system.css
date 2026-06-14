@@ -8,8 +8,11 @@
 }
 
 :root {
+  /* Tout le texte utilise JGS (police pixel embarquée). Les fallbacks ne servent
+     qu'en cas d'échec de chargement de la woff/woff2. */
   --font-display: 'JGS', -apple-system, "Helvetica Neue", sans-serif;
-  --font-body:    'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-body:    'JGS', -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    'JGS', 'SF Mono', 'Menlo', monospace;
 
   /* ── MyCss Design System — Light Mode ──────────────────────────────────── */
   --bg:      #F7F4EF;
@@ -93,6 +96,10 @@ html.dark {
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Les contrôles natifs n'héritent pas du font-family du document : on les force
+   à suivre la police courante (sinon ils retombent sur la police du navigateur). */
+button, input, textarea, select { font-family: inherit; }
 
 html, body {
   margin: 0; padding: 0;
