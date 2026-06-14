@@ -8,11 +8,11 @@
 }
 
 :root {
-  /* Tout le texte utilise JGS (police pixel embarquée). Les fallbacks ne servent
-     qu'en cas d'échec de chargement de la woff/woff2. */
+  /* JGS (police pixel embarquée) uniquement pour les titres décoratifs.
+     Le texte courant est en Geist (chargé via Bunny Fonts dans app.html). */
   --font-display: 'JGS', -apple-system, "Helvetica Neue", sans-serif;
-  --font-body:    'JGS', -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-  --font-mono:    'JGS', 'SF Mono', 'Menlo', monospace;
+  --font-body:    'Geist', -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    'Geist Mono', 'SF Mono', 'Menlo', monospace;
 
   /* ── MyCss Design System — Light Mode ──────────────────────────────────── */
   --bg:      #F7F4EF;
