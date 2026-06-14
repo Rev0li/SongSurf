@@ -13,7 +13,7 @@
 					title: 'Coller une URL & télécharger',
 					img: '/help/download-1.png',
 					body:
-						"Copie le lien d'un titre, d'un album ou d'une playlist depuis music.youtube.com, " +
+						"Copie le lien d'un titre, d'un album depuis music.youtube.com, " +
 						"colle-le dans le champ puis valide. SongSurf extrait les métadonnées et lance le téléchargement en MP3.",
 				},
 				{
@@ -106,7 +106,7 @@
 		role="presentation"
 		on:click|self={close}
 	>
-		<div class="help-card" role="dialog" aria-modal="true" aria-label="Aide SongSurf">
+		<div class="help-card" class:is-step={view !== 'home'} role="dialog" aria-modal="true" aria-label="Aide SongSurf">
 			<button class="help-close btn btn-ghost btn-sm" on:click={close} aria-label="Fermer l'aide" title="Fermer (Échap)">✕</button>
 
 			{#if view === 'home'}
@@ -128,7 +128,6 @@
 					<div class="help-step-head">
 						<button class="btn btn-ghost btn-sm" on:click={home}>← Catégories</button>
 						<span class="help-crumb">{cat.icon} {cat.label}</span>
-						<span class="help-progress">{stepIndex + 1} / {cat.steps.length}</span>
 					</div>
 
 					<div class="help-media">
@@ -147,10 +146,13 @@
 
 					<div class="help-nav">
 						<button class="btn btn-ghost btn-sm" on:click={prev} disabled={stepIndex === 0}>← Précédent</button>
-						<div class="help-dots">
-							{#each cat.steps as _, i}
-								<span class="help-dot" class:active={i === stepIndex}></span>
-							{/each}
+						<div class="help-progress-group">
+							<div class="help-dots">
+								{#each cat.steps as _, i}
+									<span class="help-dot" class:active={i === stepIndex}></span>
+								{/each}
+							</div>
+							<span class="help-progress">{stepIndex + 1} / {cat.steps.length}</span>
 						</div>
 						{#if stepIndex < cat.steps.length - 1}
 							<button class="btn btn-primary btn-sm" on:click={next}>Suivant →</button>
@@ -183,8 +185,18 @@
 		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
 		padding: var(--s6) var(--s6) var(--s5);
 	}
+	/* Mode étape : carte quasi plein écran pour laisser un maximum de place à l'image. */
+	.help-card.is-step {
+		max-width: min(1280px, 96vw);
+		width: 96vw;
+		height: calc(100dvh - 2 * var(--s4));
+		max-height: none;
+		overflow: hidden;
+		display: flex; flex-direction: column;
+	}
 	.help-close {
 		position: absolute; top: var(--s3); right: var(--s3);
+		z-index: 2;
 	}
 
 	/* ── Accueil : choix de catégorie ── */
@@ -213,21 +225,33 @@
 	.help-choice-tag { font-size: 13px; color: var(--text-2); }
 
 	/* ── Étape : carrousel ── */
+	.help-step {
+		display: flex; flex-direction: column;
+		flex: 1; min-height: 0;
+	}
 	.help-step-head {
 		display: flex; align-items: center; justify-content: space-between;
-		gap: var(--s2); margin-bottom: var(--s4);
+		gap: var(--s2); margin-bottom: var(--s3);
+		padding-right: 40px; /* laisse la place à la croix de fermeture */
+		flex-shrink: 0;
 	}
 	.help-crumb { font-weight: 600; color: var(--text); }
 	.help-progress { font-size: 13px; color: var(--text-3, var(--text-2)); }
+	.help-progress-group { display: flex; align-items: center; gap: var(--s3); }
 
 	.help-media {
-		width: 100%; aspect-ratio: 16 / 9;
+		width: 100%;
+		flex: 1; min-height: 0;
+		aspect-ratio: 16 / 9;
 		border-radius: var(--r-lg, 12px);
-		overflow: hidden; margin-bottom: var(--s4);
+		overflow: hidden; margin-bottom: var(--s3);
 		background: var(--bg-3);
 		border: 1px solid var(--sep);
 	}
-	.help-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+	/* En mode plein écran l'image occupe tout l'espace dispo, sans aspect-ratio
+	   imposé ni recadrage (contain → aucune partie du screenshot n'est coupée). */
+	.is-step .help-media { aspect-ratio: auto; }
+	.help-media img { width: 100%; height: 100%; object-fit: contain; display: block; }
 	.help-img-ph {
 		width: 100%; height: 100%;
 		display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s2);
@@ -236,11 +260,12 @@
 	.help-img-ph-icon { font-size: 40px; opacity: .6; }
 	.help-img-ph-path { font-size: 12px; font-family: var(--font-body); opacity: .7; }
 
-	.help-step-title { margin: 0 0 var(--s2); font-size: 18px; color: var(--text); }
-	.help-step-body { margin: 0 0 var(--s5); color: var(--text-2); line-height: 1.55; }
+	.help-step-title { margin: 0 0 var(--s2); font-size: 18px; color: var(--text); flex-shrink: 0; }
+	.help-step-body { margin: 0 0 var(--s4); color: var(--text-2); line-height: 1.5; flex-shrink: 0; }
 
 	.help-nav {
 		display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+		flex-shrink: 0;
 	}
 	.help-dots { display: flex; gap: 6px; }
 	.help-dot {
