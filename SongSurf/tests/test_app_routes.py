@@ -215,9 +215,11 @@ def test_a1_admin_can_call_extract_covers(flask_setup):
     assert r.get_json()['success']
 
 
-# ── D-9: 429 when download already in progress ───────────────────────────────
+# ── D-9: la file serveur empile même si un download est en cours ──────────────
+# (correction du bug « ça bloque si on n'est pas sur la page Téléchargement » :
+#  le worker draine séquentiellement, donc on accepte d'empiler.)
 
-def test_d9_reject_download_while_in_progress(flask_setup):
+def test_d9_accepts_download_while_in_progress(flask_setup):
     c, _, _, app_mod = flask_setup
     original = app_mod.download_status['in_progress']
     try:
@@ -227,9 +229,61 @@ def test_d9_reject_download_while_in_progress(flask_setup):
                          'title': 'T', 'artist': 'A', 'album': 'B'},
                    headers=auth_headers(),
                    content_type='application/json')
-        assert r.status_code == 429
+        assert r.status_code == 200
+        assert r.get_json()['success'] is True
     finally:
         app_mod.download_status['in_progress'] = original
+        # purge l'item ajouté pour ne pas polluer les autres tests
+        try:
+            while True:
+                app_mod.download_queue.get_nowait()
+        except Exception:
+            pass
+
+
+def test_d9_rejects_when_queue_full(flask_setup):
+    c, _, _, app_mod = flask_setup
+    import queue as _q
+    sentinels = []
+    try:
+        # Sature la file jusqu'à maxsize
+        while True:
+            try:
+                app_mod.download_queue.put_nowait({'sentinel': True})
+                sentinels.append(1)
+            except _q.Full:
+                break
+        r = c.post('/api/download',
+                   json={'url': 'https://www.youtube.com/watch?v=abc',
+                         'title': 'T', 'artist': 'A', 'album': 'B'},
+                   headers=auth_headers(),
+                   content_type='application/json')
+        assert r.status_code == 429
+    finally:
+        try:
+            while True:
+                app_mod.download_queue.get_nowait()
+        except Exception:
+            pass
+
+
+# ── Cookies / vidéos restreintes par âge (bug 5) ──────────────────────────────
+
+def test_cookie_error_detection_and_friendly_message(flask_setup):
+    _, _, _, app_mod = flask_setup
+    yt_err = ("ERROR: [youtube] HocWhDnvyhA: Sign in to confirm your age. "
+              "This video may be inappropriate for some users. Use --cookies-from-browser")
+    assert app_mod._is_cookie_error(yt_err) is True
+    friendly = app_mod._friendly_download_error(yt_err)
+    assert 'cookies' in friendly.lower()
+    assert friendly != yt_err  # message reformulé, pas l'erreur brute
+
+
+def test_non_cookie_error_passes_through(flask_setup):
+    _, _, _, app_mod = flask_setup
+    other = 'HTTP Error 404: Not Found'
+    assert app_mod._is_cookie_error(other) is False
+    assert app_mod._friendly_download_error(other) == other
 
 
 # ── _user_music_dir path traversal guard ─────────────────────────────────────

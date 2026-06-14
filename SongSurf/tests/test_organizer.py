@@ -190,7 +190,7 @@ class TestOrganizeFilePlacement:
         tags = mock_tags.call_args[0][1]
         assert tags['track_number'] == ''
 
-    def test_duplicate_gets_counter_suffix(self, organizer, tmp_path):
+    def test_duplicate_is_skipped(self, organizer, tmp_path):
         def make_and_organize(i):
             src = tmp_path / f'source_{i}.mp3'
             self._make_mp3(src)
@@ -204,8 +204,35 @@ class TestOrganizeFilePlacement:
         r1 = make_and_organize(1)
         r2 = make_and_organize(2)
         assert r1['success'] and r2['success']
-        assert r1['final_path'] != r2['final_path']
-        assert '(1)' in r2['final_path']
+        # Le doublon est ignoré : même chemin, flag skipped, pas de suffixe « (1) ».
+        assert r1['final_path'] == r2['final_path']
+        assert r2.get('skipped') is True
+        assert not r1.get('skipped')
+        album_dir = organizer.music_dir / 'Dup' / 'Album'
+        assert sorted(p.name for p in album_dir.glob('*.mp3')) == ['Song.mp3']
+
+    def test_target_exists_detects_existing_title(self, organizer, tmp_path):
+        meta = {'artist': 'TE', 'album': 'Alb', 'title': 'Trk', 'year': ''}
+        assert organizer.target_exists(meta) is False
+        src = tmp_path / 'source.mp3'
+        self._make_mp3(src)
+        with patch.object(organizer, '_update_tags'), \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            organizer.organize(str(src), meta)
+        # Une fois organisé, le doublon est détecté en amont (court-circuit worker).
+        assert organizer.target_exists(meta) is True
+
+    def test_target_exists_accounts_for_featuring(self, organizer, tmp_path):
+        # compute_target doit refléter le suffixe « (feat. …) » comme organize().
+        meta = {'artist': 'Main', 'album': 'Alb', 'title': 'Song (feat. Guest)', 'year': ''}
+        src = tmp_path / 'source.mp3'
+        self._make_mp3(src)
+        with patch.object(organizer, '_update_tags'), \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            organizer.organize(str(src), meta)
+        assert organizer.target_exists(meta) is True
 
     def test_missing_file_returns_failure(self, organizer):
         result = organizer.organize('/nonexistent/path/song.mp3', {

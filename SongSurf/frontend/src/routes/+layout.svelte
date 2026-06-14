@@ -6,12 +6,14 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, lastCompleted, extensionQueue, theme } from '$lib/stores.js';
+	import { user, downloadStatus, lastCompleted, extensionQueue, theme, addToast } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 
 	let lastCompletedTimestamp = '';
+	let lastErrorTimestamp = '';
+	let errorBaselineSet = false;
 	let pollInterval;
 	let unsubTheme;
 
@@ -42,6 +44,23 @@
 					title: asText(meta.title, 'Unknown Title'),
 					timestamp: st.last_completed.timestamp,
 				});
+			}
+
+			// Échec de téléchargement (ex. cookies/âge) → toast actionnable.
+			// Au 1er poll on ne fait qu'établir la ligne de base (pas de toast
+			// pour une erreur résiduelle d'une session précédente).
+			if (!errorBaselineSet) {
+				lastErrorTimestamp = st.last_error?.timestamp ?? '';
+				errorBaselineSet = true;
+			} else if (
+				st.last_error?.timestamp &&
+				st.last_error.timestamp !== lastErrorTimestamp
+			) {
+				lastErrorTimestamp = st.last_error.timestamp;
+				const meta = st.last_error.metadata ?? {};
+				const who = asText(meta.title, '') || asText(meta.album, '');
+				const prefix = who ? `« ${who} » : ` : '';
+				addToast(`${prefix}${asText(st.last_error.error, 'Téléchargement échoué.')}`, 'error', 8000);
 			}
 		} catch {
 			// ignore transient errors

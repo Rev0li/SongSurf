@@ -76,6 +76,36 @@ class MusicOrganizer:
             'has_feat': len(feat_artists) > 0
         }
 
+    def compute_target(self, metadata):
+        """Calcule (album_dir, final_path, feat_info) attendus pour ce metadata,
+        sans rien écrire. Reproduit exactement le nommage de organize() (featuring
+        inclus) afin de détecter les doublons avant ET après téléchargement."""
+        raw_artist = metadata.get('artist', 'Unknown Artist')
+        album      = metadata.get('album',  'Unknown Album')
+        raw_title  = metadata.get('title',  'Unknown Title')
+
+        feat_info = self.detect_featuring(raw_title, raw_artist)
+        artist = feat_info['main_artist']
+        title  = feat_info['clean_title']
+        if feat_info['has_feat']:
+            title = f"{title} (feat. {', '.join(feat_info['feat_artists'])})"
+
+        artist = self._clean_filename(artist)
+        album  = self._clean_filename(album)
+        title  = self._clean_filename(title)
+
+        album_dir = self.music_dir / artist / album
+        return album_dir, album_dir / f"{title}.mp3", feat_info
+
+    def target_exists(self, metadata):
+        """True si le titre est déjà présent en bibliothèque (mêmes Artist/Album/
+        Title). Sert à court-circuiter le téléchargement d'un doublon."""
+        try:
+            _, final_path, _ = self.compute_target(metadata)
+            return final_path.exists()
+        except Exception:
+            return False
+
     def organize(self, file_path, metadata):
         """
         Organise un fichier MP3 téléchargé en structure Artist/Album/Title.mp3.
@@ -96,19 +126,15 @@ class MusicOrganizer:
 
             logger.info(f"📁 Organisation: {file_path.name}")
 
-            raw_artist = metadata.get('artist', 'Unknown Artist')
-            album      = metadata.get('album',  'Unknown Album')
-            raw_title  = metadata.get('title',  'Unknown Title')
-            year       = metadata.get('year',   '')
+            year = metadata.get('year', '')
 
-            feat_info = self.detect_featuring(raw_title, raw_artist)
-            artist = feat_info['main_artist']
-            title  = feat_info['clean_title']
+            album_dir, final_path, feat_info = self.compute_target(metadata)
+            artist = self._clean_filename(feat_info['main_artist'])
+            album  = self._clean_filename(metadata.get('album', 'Unknown Album'))
+            title  = final_path.stem
 
             if feat_info['has_feat']:
-                feat_str = ', '.join(feat_info['feat_artists'])
-                title = f"{title} (feat. {feat_str})"
-                logger.info(f"   🎭 Featuring détecté: {feat_str} → artiste principal: {artist}")
+                logger.info(f"   🎭 Featuring détecté: {', '.join(feat_info['feat_artists'])} → artiste principal: {artist}")
 
             # TPE1 multi-valeurs : artistes extraits + featurings du titre.
             # L'artiste principal reste en première position (dossier + TPE2 fallback).
@@ -119,25 +145,28 @@ class MusicOrganizer:
                 if fa not in tag_artists:
                     tag_artists.append(fa)
 
-            artist = self._clean_filename(artist)
-            album  = self._clean_filename(album)
-            title  = self._clean_filename(title)
-
             logger.info(f"   🎤 {artist} / 💿 {album} / 🎵 {title} ({year})")
 
-            album_dir = self.music_dir / artist / album
-            album_dir.mkdir(parents=True, exist_ok=True)
-            final_path = album_dir / f"{title}.mp3"
-
-            if final_path.exists():
-                logger.debug(f"   ⚠️ Doublon détecté, ajout d'un suffixe")
-                counter = 1
-                while final_path.exists():
-                    final_path = album_dir / f"{title} ({counter}).mp3"
-                    counter += 1
-
-            shutil.copy2(file_path, final_path)
             thumbnail_path = self._find_thumbnail(file_path)
+
+            # Doublon : le titre existe déjà → on ignore (pas de suffixe « (1) »).
+            if final_path.exists():
+                logger.info(f"   ⏭️ Doublon ignoré (déjà en bibliothèque): {final_path.relative_to(self.music_dir)}")
+                try:
+                    file_path.unlink()
+                except Exception:
+                    pass
+                if thumbnail_path and thumbnail_path.exists():
+                    thumbnail_path.unlink()
+                return {
+                    'success':    True,
+                    'skipped':    True,
+                    'final_path': str(final_path.relative_to(self.music_dir)),
+                    'timestamp':  datetime.now().isoformat()
+                }
+
+            album_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(file_path, final_path)
 
             self._update_tags(final_path, {
                 'artist':       artist,

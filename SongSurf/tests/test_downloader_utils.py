@@ -70,6 +70,26 @@ class TestArtistList:
         assert downloader._artist_list(['A', 'A & B'], '') == ['A', 'B']
 
 
+# ── _strip_artist_prefix (bug : « artiste - » collé au titre) ──────────────────
+
+class TestStripArtistPrefix:
+    def test_strips_matching_artist_prefix(self, downloader):
+        assert downloader._strip_artist_prefix('Queen - Bohemian Rhapsody', ['Queen']) == 'Bohemian Rhapsody'
+
+    def test_case_insensitive(self, downloader):
+        assert downloader._strip_artist_prefix('queen - Somebody', ['Queen']) == 'Somebody'
+
+    def test_keeps_title_when_prefix_not_an_artist(self, downloader):
+        # « 24 » n'est pas l'artiste connu → on ne coupe pas un titre légitime.
+        assert downloader._strip_artist_prefix('24 - 7', ['Kehlani']) == '24 - 7'
+
+    def test_no_dash_unchanged(self, downloader):
+        assert downloader._strip_artist_prefix('Just A Title', ['Queen']) == 'Just A Title'
+
+    def test_empty_remainder_unchanged(self, downloader):
+        assert downloader._strip_artist_prefix('Queen - ', ['Queen']) == 'Queen - '
+
+
 # ── _detect_type ──────────────────────────────────────────────────────────────
 
 class TestDetectType:

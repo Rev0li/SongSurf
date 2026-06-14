@@ -15,6 +15,7 @@ from pathlib import Path
 import os
 import re
 import shutil
+import threading
 from datetime import datetime
 import logging
 
@@ -80,6 +81,10 @@ class YouTubeDownloader:
         self.temp_dir.mkdir(exist_ok=True, parents=True)
         self.music_dir.mkdir(exist_ok=True, parents=True)
         self.ffmpeg_location = self._find_ffmpeg()
+        # Sérialise tous les téléchargements temp : le prefetch (1er titre) et le
+        # worker visent le même fichier temp via le même outtmpl. Sans verrou, deux
+        # yt-dlp concurrents écrivent au même endroit → corruption / échec du 1er titre.
+        self._temp_lock = threading.Lock()
 
     # ──────────────────────────────────────────────────────────────
     # Téléchargement
@@ -131,7 +136,11 @@ class YouTubeDownloader:
                 return {'success': True, 'cached': True, 'file_path': str(downloaded_file)}
 
             logger.info(f"⚡ Prefetch: {metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}")
-            self._download_to_temp(url, temp_filename, progress_hook=None)
+            # Sous verrou : si le worker démarre le même titre entre-temps, il
+            # attendra ce prefetch puis réutilisera le fichier en cache.
+            with self._temp_lock:
+                if not downloaded_file.exists():
+                    self._download_to_temp(url, temp_filename, progress_hook=None)
 
             if downloaded_file.exists():
                 logger.info(f"   ✅ Prefetch prêt: {downloaded_file.name}")
@@ -178,7 +187,14 @@ class YouTubeDownloader:
             self.progress.status = 'downloading'
             self.progress.phase  = 'downloading'
 
-            self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+            # Sous verrou : un prefetch du même titre peut être en cours. On attend
+            # qu'il se termine puis on réutilise son fichier au lieu de lancer un
+            # second yt-dlp sur le même outtmpl (collision = échec du 1er titre).
+            with self._temp_lock:
+                if not downloaded_file.exists():
+                    self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+                else:
+                    logger.info(f"   ♻️ Prefetch réutilisé: {downloaded_file.name}")
 
             if not downloaded_file.exists():
                 raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")
@@ -259,6 +275,7 @@ class YouTubeDownloader:
 
             artists = self._artist_list(info.get('artists'), artist)
             artist  = artists[0] if artists else 'Unknown Artist'
+            title   = self._strip_artist_prefix(title, artists + [artist, uploader])
 
             metadata = {
                 'title':         title,
@@ -395,6 +412,12 @@ class YouTubeDownloader:
                         song_artists = [maybe_artist]
                         entry_title = title_parts[1].strip() or entry_title
 
+                # Retire le préfixe « Artiste - » redondant même quand l'artiste
+                # est déjà connu (cas du bug : 1 titre gardait « artiste - » collé).
+                entry_title = self._strip_artist_prefix(
+                    entry_title, song_artists + [song_artist, raw_artist, playlist_artist]
+                )
+
                 entry_id = (entry.get('id') or '').strip()
                 entry_url = (entry.get('url') or '').strip()
                 if entry_url and not re.match(r'^https?://', entry_url, flags=re.IGNORECASE):
@@ -502,6 +525,26 @@ class YouTubeDownloader:
         if parts:
             return parts[0]
         return (str(artist).strip() if artist else '') or 'Unknown Artist'
+
+    def _strip_artist_prefix(self, title, artists):
+        """Retire un préfixe « Artiste - » redondant en tête de titre.
+
+        YT Music laisse parfois « Artiste - Titre » dans le champ titre même
+        quand l'artiste est par ailleurs correctement identifié. On ne coupe que
+        si le préfixe correspond exactement à un artiste connu (sinon on
+        risquerait d'abîmer un titre contenant légitimement « - »).
+        """
+        if not title or ' - ' not in title:
+            return title
+        prefix, rest = title.split(' - ', 1)
+        rest = rest.strip()
+        if not rest:
+            return title
+        prefix_norm = prefix.strip().casefold()
+        for a in artists:
+            if a and str(a).strip().casefold() == prefix_norm:
+                return rest
+        return title
 
     def _clean_filename(self, name):
         """Nettoie un nom de fichier (supprime les caractères interdits)."""

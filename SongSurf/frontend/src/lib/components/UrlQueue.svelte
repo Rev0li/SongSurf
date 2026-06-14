@@ -60,39 +60,44 @@
 		for (const item of queue) {
 			if (item.status === 'submitting') item.status = 'pending';
 		}
-		// 'waiting' = already submitted; worker may have finished while away
-		const waiting = queue.find(q => q.status === 'waiting');
-		if (waiting) {
-			if (get(workerBusy)) {
-				processing = true; // still running, onWorkerFree will handle it
-			} else {
-				waiting.status = 'done';
+		// 'waiting' = remis au serveur ; si le worker est libre, le batch est fini.
+		if (!get(workerBusy)) {
+			for (const item of queue) {
+				if (item.status === 'waiting') item.status = 'done';
 			}
 		}
 		queue = queue;
-		if (!processing) processNext();
+		processNext();
 	});
 
 	function onWorkerFree() {
-		// The item that was 'waiting' is now complete
-		const waiting = queue.find(q => q.status === 'waiting');
-		if (waiting) { waiting.status = 'done'; queue = queue; }
-		processing = false;
-		processNext();
+		// Le worker serveur a fini de drainer : tout ce qui était remis (waiting)
+		// est terminé. On ne marque que si plus rien n'est en cours de soumission.
+		if (queue.some(q => q.status === 'pending' || q.status === 'submitting')) return;
+		let changed = false;
+		for (const item of queue) {
+			if (item.status === 'waiting') { item.status = 'done'; changed = true; }
+		}
+		if (changed) queue = queue;
 	}
 
-	// ── Sequential processing ─────────────────────────────────────────────────
-	function processNext() {
-		// Guards: one item at a time, don't send while server is busy
-		if (processing || $workerBusy) return;
-		const next = queue.find(q => q.status === 'pending');
-		if (!next) return;
-
-		processing = true;      // MUST be first — prevents any re-entrant call
-		next.status = 'submitting';
-		queue = queue;
-
-		_submit(next);           // fire-and-forget async
+	// ── Submit everything to the server, which drains on its own ───────────────
+	// On n'attend PLUS la fin de chaque titre côté client : tout est empilé dans
+	// la file serveur, qui continue même si on quitte la page (bug « ça bloque »).
+	async function processNext() {
+		if (processing) return;     // évite deux boucles de drain concurrentes
+		processing = true;
+		try {
+			while (true) {
+				const next = queue.find(q => q.status === 'pending');
+				if (!next) break;
+				next.status = 'submitting';
+				queue = queue;
+				await _submit(next);   // empile côté serveur (waiting) ou error
+			}
+		} finally {
+			processing = false;
+		}
 	}
 
 	async function _submit(item) {
@@ -127,18 +132,15 @@
 
 			if (!res.success) throw new Error(res.error || 'Erreur téléchargement');
 
-			// Submitted — now wait for workerBusy → false (handled by onWorkerFree)
+			// Remis au serveur. Le worker draine seul ; onWorkerFree passera
+			// l'item à 'done' quand le batch sera terminé.
 			item.status = 'waiting';
 			queue = queue;
-			// processing stays true until onWorkerFree releases it
 
 		} catch (err) {
 			item.status = 'error';
 			item.error = err.message;
-			processing = false;
 			queue = queue;
-			// Try next item after a short pause
-			setTimeout(processNext, 400);
 		}
 	}
 
