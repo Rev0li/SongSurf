@@ -57,3 +57,26 @@ export function addToast(message, type = 'info', duration = 4000) {
 export function removeToast(id) {
 	toasts.update((list) => list.filter((t) => t.id !== id));
 }
+
+// ── Confirmation modal ──────────────────────────────────────────────────────────
+// Remplace le confirm() natif par une modal SongSurf. Drop-in : await confirmAction(...).
+
+export const confirmState = writable(null); // { title, message, confirmLabel, cancelLabel, danger, resolve } | null
+
+/**
+ * Affiche une modal de confirmation et résout à true (confirmé) / false (annulé).
+ * @param {{ title?: string, message: string, confirmLabel?: string, cancelLabel?: string, danger?: boolean }} opts
+ * @returns {Promise<boolean>}
+ */
+export function confirmAction(opts) {
+	return new Promise((resolve) => {
+		confirmState.set({
+			title: opts.title ?? 'Confirmer',
+			message: opts.message ?? '',
+			confirmLabel: opts.confirmLabel ?? 'OK',
+			cancelLabel: opts.cancelLabel ?? 'Annuler',
+			danger: opts.danger ?? false,
+			resolve,
+		});
+	});
+}

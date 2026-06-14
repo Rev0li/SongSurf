@@ -11,6 +11,7 @@
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 	import HelpModal from '$lib/components/HelpModal.svelte';
+	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 
 	let lastCompletedTimestamp = '';
 	let lastErrorTimestamp = '';
@@ -108,5 +109,6 @@
 <Toast />
 <WatcherInactivity />
 <HelpModal />
+<ConfirmModal />
 
 <slot />

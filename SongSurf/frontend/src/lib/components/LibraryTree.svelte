@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { addToast, user } from '$lib/stores.js';
+	import { addToast, user, confirmAction } from '$lib/stores.js';
 	import { matchesFilter, nrm } from '$lib/utils.js';
 
 	let tree = null;
@@ -99,10 +99,13 @@
 	let zipping = false;
 
 	async function downloadZip() {
-		const ok = confirm(
-			'Télécharger la bibliothèque en ZIP ?\n\n' +
-			'⚠️ Votre musique sera supprimée du serveur dès que le téléchargement est terminé.'
-		);
+		const ok = await confirmAction({
+			title: 'Télécharger la bibliothèque en ZIP ?',
+			message:
+				'⚠️ Votre musique sera supprimée du serveur dès que le téléchargement est terminé.',
+			confirmLabel: 'Télécharger',
+			danger: true,
+		});
 		if (!ok) return;
 
 		zipping = true;

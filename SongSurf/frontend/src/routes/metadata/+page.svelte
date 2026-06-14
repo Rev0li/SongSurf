@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
-	import { addToast, user } from '$lib/stores.js';
+	import { addToast, user, confirmAction } from '$lib/stores.js';
 	import Header from '$lib/components/Header.svelte';
 
 	// ── Library tree ──────────────────────────────────────────────────────────────
@@ -197,10 +197,14 @@
 	async function deleteArtistFolder() {
 		if (!selectedArtist || deletingFolder) return;
 		const nSongs = artistAlbums.reduce((n, al) => n + al.songs.length, 0);
-		const msg = `Supprimer définitivement le dossier « ${selectedArtist.name} » `
-			+ `(${artistAlbums.length} album${artistAlbums.length > 1 ? 's' : ''}, ${nSongs} titre${nSongs > 1 ? 's' : ''}) ?\n`
-			+ 'Cette action est irréversible.';
-		if (!confirm(msg)) return;
+		const ok = await confirmAction({
+			title: `Supprimer « ${selectedArtist.name} » ?`,
+			message: `${artistAlbums.length} album${artistAlbums.length > 1 ? 's' : ''}, ${nSongs} titre${nSongs > 1 ? 's' : ''} seront supprimés.\n`
+				+ 'Cette action est irréversible.',
+			confirmLabel: 'Supprimer',
+			danger: true,
+		});
+		if (!ok) return;
 		deletingFolder = true;
 		try {
 			const res = await api.deleteFolder(selectedArtist.path);
@@ -215,9 +219,13 @@
 		if (!selectedAlbum || deletingFolder) return;
 		const artistPath = selectedAlbum.artist.path;
 		const nSongs = selectedAlbum.songs.length;
-		const msg = `Supprimer définitivement l'album « ${selectedAlbum.name} » `
-			+ `(${nSongs} titre${nSongs > 1 ? 's' : ''}) ?\nCette action est irréversible.`;
-		if (!confirm(msg)) return;
+		const ok = await confirmAction({
+			title: `Supprimer l'album « ${selectedAlbum.name} » ?`,
+			message: `${nSongs} titre${nSongs > 1 ? 's' : ''} seront supprimés.\nCette action est irréversible.`,
+			confirmLabel: 'Supprimer',
+			danger: true,
+		});
+		if (!ok) return;
 		deletingFolder = true;
 		try {
 			const res = await api.deleteFolder(selectedAlbum.path);
