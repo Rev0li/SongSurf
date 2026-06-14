@@ -1,6 +1,6 @@
 <script>
 	import { page } from '$app/stores';
-	import { user, theme } from '$lib/stores.js';
+	import { user, theme, helpOpen } from '$lib/stores.js';
 
 	function toggleTheme() {
 		theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
@@ -24,8 +24,23 @@
 			{#if $user}
 				<span class="badge" title={$user.email || $user.sub}>{$user.pseudo ?? $user.email}</span>
 			{/if}
-			<button class="btn btn-ghost btn-sm" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
-				{$theme === 'dark' ? '☀️' : '🌙'}
+			<button class="btn btn-ghost btn-sm" on:click={() => helpOpen.set(true)} title="Aide / tutoriel" aria-label="Aide">?</button>
+			<button class="btn btn-ghost btn-sm theme-toggle" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
+				{#if $theme === 'dark'}
+					<!-- lucide: sun -->
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="12" cy="12" r="4" />
+						<path d="M12 2v2" /><path d="M12 20v2" />
+						<path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />
+						<path d="M2 12h2" /><path d="M20 12h2" />
+						<path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />
+					</svg>
+				{:else}
+					<!-- lucide: moon -->
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+					</svg>
+				{/if}
 			</button>
 		</div>
 	</header>
@@ -52,6 +67,11 @@
 		display: flex; align-items: center; gap: var(--s3);
 	}
 	.header-side-right { justify-content: flex-end; }
+
+	.theme-toggle {
+		display: inline-flex; align-items: center; justify-content: center;
+	}
+	.theme-toggle svg { width: 16px; height: 16px; }
 
 	.app-tabs {
 		height: 40px;

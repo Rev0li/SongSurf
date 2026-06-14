@@ -37,6 +37,10 @@ export const theme = writable('light');
 // Persists the UrlQueue across navigation
 export const urlQueue = writable([]);
 
+// Help/tutorial modal open state (toggled by the "?" button in the header).
+// Auto-opened once on first visit — see +layout.svelte (localStorage 'ssf.help.seen').
+export const helpOpen = writable(false);
+
 // ── Toasts ────────────────────────────────────────────────────────────────────
 
 export const toasts = writable([]); // [{ id, message, type }]

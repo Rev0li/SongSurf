@@ -6,10 +6,11 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, lastCompleted, extensionQueue, theme, addToast } from '$lib/stores.js';
+	import { user, downloadStatus, lastCompleted, extensionQueue, theme, helpOpen, addToast } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
+	import HelpModal from '$lib/components/HelpModal.svelte';
 
 	let lastCompletedTimestamp = '';
 	let lastErrorTimestamp = '';
@@ -84,6 +85,12 @@
 			// DEV_MODE or unauthenticated — user stays null
 		}
 
+		// Auto-ouverture du tutoriel au tout premier passage
+		if (!localStorage.getItem('ssf.help.seen')) {
+			helpOpen.set(true);
+			localStorage.setItem('ssf.help.seen', '1');
+		}
+
 		pollStatus();
 		pollInterval = setInterval(pollStatus, 1500);
 	});
@@ -100,5 +107,6 @@
 
 <Toast />
 <WatcherInactivity />
+<HelpModal />
 
 <slot />
