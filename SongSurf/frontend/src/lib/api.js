@@ -88,10 +88,10 @@ export const api = {
 		});
 	},
 	auditArtist(path) {
-		return request(`/api/admin/audit/artist?path=${encodeURIComponent(path)}`);
+		return request(`/api/library/audit/artist?path=${encodeURIComponent(path)}`);
 	},
 	auditApply(changes) {
-		return request('/api/admin/audit/apply', { method: 'POST', body: JSON.stringify({ changes }) });
+		return request('/api/library/audit/apply', { method: 'POST', body: JSON.stringify({ changes }) });
 	},
 	getArtistPictureUrl(folderPath, ts = Date.now()) {
 		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;

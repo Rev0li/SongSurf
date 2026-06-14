@@ -428,13 +428,22 @@ def test_album_status_counts_missing_tags(flask_setup):
     assert albums['Trous']['missing'] == {'genre': 1, 'year': 1, 'track_number': 1}
 
 
-def test_audit_routes_require_admin(flask_setup):
+def test_audit_routes_open_to_members(flask_setup):
+    """Le scan iTunes (audit) est accessible à tous les membres, sur leur
+    propre bibliothèque — pas seulement à l'admin."""
     c, *_ = flask_setup
-    assert c.get('/api/admin/audit/artist?path=X',
-                 headers=auth_headers(role='member')).status_code == 403
-    assert c.post('/api/admin/audit/apply', json={'changes': []},
-                  headers=auth_headers(role='member'),
-                  content_type='application/json').status_code == 403
+    # Pas de 403 : la route accepte le membre (404 car l'artiste n'existe pas).
+    assert c.get('/api/library/audit/artist?path=Nope',
+                 headers=auth_headers(role='member')).status_code != 403
+    # Apply avec une liste vide : pas de 403, traité normalement (200).
+    r = c.post('/api/library/audit/apply', json={'changes': []},
+               headers=auth_headers(role='member'),
+               content_type='application/json')
+    assert r.status_code == 200
+
+
+def test_genre_backfill_still_admin_only(flask_setup):
+    c, *_ = flask_setup
     assert c.post('/api/admin/genre-backfill', json={},
                   headers=auth_headers(role='member'),
                   content_type='application/json').status_code == 403

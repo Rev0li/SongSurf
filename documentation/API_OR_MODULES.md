@@ -72,6 +72,8 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
+| `/api/library/audit/artist` | GET | **All members** (operates on the caller's own library). `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
+| `/api/library/audit/apply` | POST | **All members.** `{changes: [{path, field, value}]}` → writes the approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
 
 ### Admin-only
 
@@ -79,8 +81,6 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
 | `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
-| `/api/admin/audit/artist` | GET | `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
-| `/api/admin/audit/apply` | POST | `{changes: [{path, field, value}]}` → writes the admin-approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
 | `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
 | `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
 
@@ -196,8 +196,8 @@ api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (
 api.cancelPrefetch(token)                  // POST /api/prefetch/cancel
 api.getPrefetchCoverUrl(token)             // GET  /api/prefetch/cover (URL builder)
 api.consumeExtensionQueue()                // POST /api/extension-queue/consume
-api.auditArtist(path)                      // GET  /api/admin/audit/artist
-api.auditApply(changes)                    // POST /api/admin/audit/apply
+api.auditArtist(path)                      // GET  /api/library/audit/artist
+api.auditApply(changes)                    // POST /api/library/audit/apply
 api.genreBackfillStart()                   // POST /api/admin/genre-backfill
 api.genreBackfillStatus()                  // GET  /api/admin/genre-backfill/status
 ```

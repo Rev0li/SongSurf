@@ -1221,14 +1221,13 @@ _backfill_state = {'status': 'idle', 'total': 0, 'done': 0, 'updated': 0,
                    'failed': 0, 'last_file': '', 'started_at': '', 'finished_at': ''}
 
 
-@app.route('/api/admin/audit/artist')
+@app.route('/api/library/audit/artist')
 @auth_required
-def admin_audit_artist():
-    """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste."""
+def library_audit_artist():
+    """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste.
+    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
     try:
         user = _get_current_user()
-        if user.get('role') != 'admin':
-            return jsonify({'success': False, 'error': 'Admin requis'}), 403
         music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
@@ -1245,18 +1244,17 @@ def admin_audit_artist():
         logger.info(f"🔎 Audit {report['artist']}: {report['total_recommendations']} recommandation(s)")
         return jsonify({'success': True, **report})
     except Exception as e:
-        logger.error(f"❌ /api/admin/audit/artist: {e}")
+        logger.error(f"❌ /api/library/audit/artist: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/admin/audit/apply', methods=['POST'])
+@app.route('/api/library/audit/apply', methods=['POST'])
 @auth_required
-def admin_audit_apply():
-    """Applique les recommandations cochées : [{path, field, value}]."""
+def library_audit_apply():
+    """Applique les recommandations cochées : [{path, field, value}].
+    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
     try:
         user = _get_current_user()
-        if user.get('role') != 'admin':
-            return jsonify({'success': False, 'error': 'Admin requis'}), 403
         music_dir = _user_music_dir(user)
         changes   = (request.get_json(silent=True) or {}).get('changes') or []
 
@@ -1284,7 +1282,7 @@ def admin_audit_apply():
         logger.info(f"🔎 Audit apply: {applied} tag(s) écrits, {len(errors)} erreur(s)")
         return jsonify({'success': True, 'applied': applied, 'errors': errors})
     except Exception as e:
-        logger.error(f"❌ /api/admin/audit/apply: {e}")
+        logger.error(f"❌ /api/library/audit/apply: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

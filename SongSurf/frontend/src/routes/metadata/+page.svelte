@@ -932,9 +932,8 @@
 							</div>
 						</section>
 
-						<!-- Audit métadonnées (admin) -->
-						{#if isAdmin}
-							<section class="meta-section">
+						<!-- Audit métadonnées (tous les membres : scan iTunes de leur bibliothèque) -->
+						<section class="meta-section">
 								<h3 class="section-title">
 									🔎 Audit métadonnées
 									{#if audit}
@@ -1011,7 +1010,6 @@
 									</div>
 								{/if}
 							</section>
-						{/if}
 					</div>
 				{/if}
 			</div>

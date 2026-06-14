@@ -1,10 +1,11 @@
 """
-Audit métadonnées par artiste + backfill genre de la bibliothèque (admin).
+Audit métadonnées par artiste (tous les membres) + backfill genre (admin).
 
 Audit : compare les tags ID3 de tous les albums d'un artiste avec iTunes
 (genre, année, artiste album, numéros de piste, cohérence TPE1/TPE2) et
 produit des *recommandations* — rien n'est écrit sans validation explicite
-de l'admin via /api/admin/audit/apply.
+via /api/library/audit/apply. Accessible à tous les membres sur leur propre
+bibliothèque.
 
 Backfill : complète le TCON des MP3 déjà téléchargés qui n'en ont pas
 (la bibliothèque d'avant la Phase 1 genre n'a aucun TCON).
