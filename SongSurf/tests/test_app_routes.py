@@ -104,6 +104,32 @@ def test_ping_no_auth(flask_setup):
     assert r.status_code == 200
 
 
+# ── Static assets from build root (fonts, help images) served without auth ────
+
+def test_static_root_assets_served_no_auth(flask_setup, tmp_path):
+    c, _m, _t, app_mod = flask_setup
+    build = tmp_path / 'build'
+    (build / 'help').mkdir(parents=True)
+    (build / 'help' / 'download-1.png').write_bytes(b'\x89PNG\r\n\x1a\n fake')
+    with patch.object(app_mod, '_FRONTEND_BUILD', build.resolve()):
+        # Real file → served, no auth needed
+        r = c.get('/help/download-1.png')
+        assert r.status_code == 200
+        assert r.data.startswith(b'\x89PNG')
+        # Unknown path → 404 (not the SPA, not a 500)
+        assert c.get('/help/nope.png').status_code == 404
+
+
+def test_static_root_assets_no_traversal(flask_setup, tmp_path):
+    c, _m, _t, app_mod = flask_setup
+    build = tmp_path / 'build2'
+    build.mkdir()
+    (tmp_path / 'secret.txt').write_text('nope')
+    with patch.object(app_mod, '_FRONTEND_BUILD', build.resolve()):
+        r = c.get('/%2e%2e/secret.txt')
+        assert r.status_code in (400, 404)
+
+
 # ── /api/status shape ─────────────────────────────────────────────────────────
 
 def test_status_returns_expected_shape(flask_setup):

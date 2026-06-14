@@ -14,7 +14,7 @@ Storage: /data/music/Artist/Album/  (flat, no user-sub prefix)
 Phase 3: see documentation/CONNECTOR.md
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, Response
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response, abort
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -427,6 +427,20 @@ def dashboard():
 def svelte_assets(filename):
     """Serve SvelteKit's generated JS/CSS bundles (no auth needed)."""
     return send_from_directory(_FRONTEND_BUILD / '_app', filename)
+
+
+@app.route('/<path:filename>')
+def static_assets(filename):
+    """Serve top-level static files copied from SvelteKit's static/ dir
+    (fonts, help/ tutorial images, favicon…). Public assets — no auth.
+    Only real files are served; unknown paths 404 (SPA page routes are
+    handled client-side, so a direct hit on e.g. /metadata still 404s as
+    before). This catch-all is the least specific rule, so explicit API /
+    asset routes always win."""
+    target = (_FRONTEND_BUILD / filename).resolve()
+    if not target.is_relative_to(_FRONTEND_BUILD) or not target.is_file():
+        abort(404)
+    return send_from_directory(_FRONTEND_BUILD, filename)
 
 
 # ── User identity ──────────────────────────────────────────────────────────────
