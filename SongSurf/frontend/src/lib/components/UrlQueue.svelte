@@ -81,9 +81,25 @@
 		if (changed) queue = queue;
 	}
 
-	// ── Submit everything to the server, which drains on its own ───────────────
-	// On n'attend PLUS la fin de chaque titre côté client : tout est empilé dans
-	// la file serveur, qui continue même si on quitte la page (bug « ça bloque »).
+	// ── Submit one item at a time, waiting for the server to drain ─────────────
+	// On soumet un album, puis on attend que la file serveur se vide avant
+	// d'empiler le suivant : sinon plusieurs albums saturent la file serveur
+	// (MAX_QUEUE_SIZE = 50) et les pistes en trop sont rejetées (429 « File pleine »).
+	// Ce qui est déjà soumis continue côté serveur même si on quitte la page :
+	// on ne bloque que la soumission du PROCHAIN item, pas le drain en cours.
+	const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+	async function waitForServerToDrain() {
+		while (true) {
+			let st;
+			try { st = await api.getStatus(); }
+			catch { return; }   // si le statut est injoignable, on arrête d'attendre
+			const busy = !!st.in_progress || (st.queue_size ?? 0) > 0;
+			if (!busy) return;
+			await sleep(1500);
+		}
+	}
+
 	async function processNext() {
 		if (processing) return;     // évite deux boucles de drain concurrentes
 		processing = true;
@@ -91,6 +107,14 @@
 			while (true) {
 				const next = queue.find(q => q.status === 'pending');
 				if (!next) break;
+				// Attend que l'item précédent soit terminé côté serveur (no-op si libre).
+				await waitForServerToDrain();
+				// Tout ce qui était soumis (waiting) est maintenant terminé → done.
+				let changed = false;
+				for (const item of queue) {
+					if (item.status === 'waiting') { item.status = 'done'; changed = true; }
+				}
+				if (changed) queue = queue;
 				next.status = 'submitting';
 				queue = queue;
 				await _submit(next);   // empile côté serveur (waiting) ou error
