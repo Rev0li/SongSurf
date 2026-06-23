@@ -24,7 +24,6 @@ Reference generated from the current code (`server/app.py`, `server/downloader.p
   "progress": { "percent": 67, "phase": "downloading", "speed": "812 KB/s", "eta": "8s" },
   "queue_size": 2,
   "batch_active": true, "batch_total": 12, "batch_done": 4, "batch_percent": 38.5,
-  "extension_pending_count": 0,
   "daily_count": 7, "daily_limit": 0,
   "is_mine": true,
   "last_completed": {…}, "last_error": null
@@ -36,9 +35,9 @@ Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/extract` | POST | `{url}` → metadata. Single song: flattened fields + `is_playlist: false`. Album/playlist: `{type, title, artist, year, thumbnail_url, thumbnail_candidates, songs[], total_songs, total_duration, prefetch_token, is_playlist: true}` |
-| `/api/download` | POST | Queue one song. Body: `{url, title, artist, album, year, track_number, album_artist, artists[]}`. 429 if a download is already queued/running or the daily limit is reached |
-| `/api/download-playlist` | POST | Queue all songs. Body: `{playlist_metadata: {title, artist, year, songs[]}}` — each song keeps its own `artists` and `track_number`; album-level artist becomes `TPE2`. Returns `{added, total, queue_size}` |
+| `/api/extract` | POST | `{url}` → metadata. Single song: flattened fields + `is_playlist: false`. Album/playlist: `{type, title, artist, year, thumbnail_url, thumbnail_candidates, songs[], total_songs, total_duration, is_playlist: true}` |
+| `/api/download` | POST | Queue one song (= a one-song job). Body: `{url, title, artist, album, year, track_number, album_artist, artists[]}`. 429 only if the job queue is full (`MAX_PENDING_JOBS`) or the daily limit is reached — several downloads can be queued at once |
+| `/api/download-playlist` | POST | Queue a whole album as one job. Body: `{playlist_metadata: {title, artist, year, songs[]}}` — each song keeps its own `artists` and `track_number`; album-level artist becomes `TPE2`. Returns `{added, total, queue_size}` (`queue_size` = songs queued but not yet started) |
 
 Songs in playlist extraction carry: `{title, artist, artists[], url, id, duration, track_number}`.
 
@@ -84,20 +83,12 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
 | `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
 
-### Prefetch (album preview)
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/prefetch/cover` | GET | `?token=` → real cover extracted from the prefetched first track (204 while pending) |
-| `/api/prefetch/cancel` | POST | `{token}` → cancel + cleanup the prefetched file |
-
 ### Browser extension
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → stored in a pending list (`extension_pending`), not downloaded directly |
-| `/api/extension-queue/consume` | POST | Frontend drains the pending list into its visual queue |
-| `/api/preview` | POST | `{url}` → lightweight metadata (no prefetch side-effect) for the extension's confirmation UI |
+| `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → fire-and-forget: spawns a thread that extracts metadata then enqueues server-side (`_queue_direct_async`). Returns immediately; downloads even with no SongSurf tab open |
+| `/api/preview` | POST | `{url}` → lightweight metadata (no side-effect) for the extension's confirmation UI |
 | `/api/cookies/update` | POST | `{cookies}` (Netscape format) → written to `/data/cookies.txt` for yt-dlp |
 
 ---
@@ -125,8 +116,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|
 | `extract_metadata(url)` | Info-only yt-dlp run → `{title, artist, artists[], album_artist, album, year, track_number, thumbnail_url, thumbnail_candidates[], duration, view_count}`. Raises on duration > `MAX_DURATION_SECONDS` |
 | `extract_playlist_metadata(url)` | `extract_flat` run → playlist metadata + per-song list (see API above). Artist fallbacks: album_artist → artist → first song → title pattern |
-| `download(url, metadata)` | bestaudio → MP3 (FFmpeg `preferredquality 0`), staged in temp, cache-aware (reuses prefetched files) |
-| `prefetch_first_track(url, metadata)` | Background MP3 prefetch for cover preview |
+| `download(url, metadata)` | bestaudio → MP3 (FFmpeg `preferredquality 0`), staged in temp, cache-aware (reuses an existing temp file) |
 | `get_progress()` | Serialized `DownloadProgress` state |
 | `_artist_list(info_artists, fallback)` / `_split_artists(s)` | Artist list normalization (yt-dlp list preferred; split on `&`/`,`/`et`/`and`/`/`; strips ` - Topic`; deduped) |
 | `_primary_artist(s)` | First artist of the list (names the folder) |
@@ -193,9 +183,6 @@ api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/uplo
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
 api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder)
 api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder)
-api.cancelPrefetch(token)                  // POST /api/prefetch/cancel
-api.getPrefetchCoverUrl(token)             // GET  /api/prefetch/cover (URL builder)
-api.consumeExtensionQueue()                // POST /api/extension-queue/consume
 api.auditArtist(path)                      // GET  /api/library/audit/artist
 api.auditApply(changes)                    // POST /api/library/audit/apply
 api.genreBackfillStart()                   // POST /api/admin/genre-backfill

@@ -57,12 +57,6 @@ export const api = {
 			body: JSON.stringify({ folder_path: folderPath }),
 		});
 	},
-	cancelPrefetch(token) {
-		return request('/api/prefetch/cancel', { method: 'POST', body: JSON.stringify({ token }) });
-	},
-	getPrefetchCoverUrl(token) {
-		return `/api/prefetch/cover?token=${encodeURIComponent(token)}&t=${Date.now()}`;
-	},
 	getFolderCoverUrl(folderPath, ts = Date.now()) {
 		return `/api/library/folder-cover?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},

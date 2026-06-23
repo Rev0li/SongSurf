@@ -81,9 +81,8 @@ class YouTubeDownloader:
         self.temp_dir.mkdir(exist_ok=True, parents=True)
         self.music_dir.mkdir(exist_ok=True, parents=True)
         self.ffmpeg_location = self._find_ffmpeg()
-        # Sérialise tous les téléchargements temp : le prefetch (1er titre) et le
-        # worker visent le même fichier temp via le même outtmpl. Sans verrou, deux
-        # yt-dlp concurrents écrivent au même endroit → corruption / échec du 1er titre.
+        # Sérialise les téléchargements temp visant le même outtmpl : sans verrou,
+        # deux yt-dlp concurrents écriraient au même endroit → corruption.
         self._temp_lock = threading.Lock()
 
     # ──────────────────────────────────────────────────────────────
@@ -126,31 +125,6 @@ class YouTubeDownloader:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
 
-    def prefetch_first_track(self, url, metadata):
-        """Précharge une piste en MP3 dans temp pour accélérer le futur download."""
-        try:
-            url = self._normalize_url(url)
-            temp_filename = self._temp_filename_from_metadata(metadata)
-            downloaded_file = self.temp_dir / f"{temp_filename}.mp3"
-            if downloaded_file.exists():
-                return {'success': True, 'cached': True, 'file_path': str(downloaded_file)}
-
-            logger.info(f"⚡ Prefetch: {metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}")
-            # Sous verrou : si le worker démarre le même titre entre-temps, il
-            # attendra ce prefetch puis réutilisera le fichier en cache.
-            with self._temp_lock:
-                if not downloaded_file.exists():
-                    self._download_to_temp(url, temp_filename, progress_hook=None)
-
-            if downloaded_file.exists():
-                logger.info(f"   ✅ Prefetch prêt: {downloaded_file.name}")
-                return {'success': True, 'cached': False, 'file_path': str(downloaded_file)}
-
-            return {'success': False, 'error': 'Prefetch incomplet'}
-        except Exception as e:
-            logger.warning(f"⚠️ Prefetch échoué: {e}")
-            return {'success': False, 'error': str(e)}
-
     def download(self, url, metadata):
         """
         Télécharge une vidéo YouTube en MP3.
@@ -187,14 +161,10 @@ class YouTubeDownloader:
             self.progress.status = 'downloading'
             self.progress.phase  = 'downloading'
 
-            # Sous verrou : un prefetch du même titre peut être en cours. On attend
-            # qu'il se termine puis on réutilise son fichier au lieu de lancer un
-            # second yt-dlp sur le même outtmpl (collision = échec du 1er titre).
+            # Sous verrou : évite deux yt-dlp concurrents sur le même outtmpl.
             with self._temp_lock:
                 if not downloaded_file.exists():
                     self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
-                else:
-                    logger.info(f"   ♻️ Prefetch réutilisé: {downloaded_file.name}")
 
             if not downloaded_file.exists():
                 raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")

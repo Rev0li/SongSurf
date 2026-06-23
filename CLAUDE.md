@@ -67,7 +67,7 @@ There are no login forms, password auth, or guest sessions anymore (removed in P
 | File | Responsibility |
 |---|---|
 | `server/app.py` | Flask routes, auth guard, download queue + worker thread, per-user dirs, ZIP export, metadata editor API, extension endpoints |
-| `server/downloader.py` | yt-dlp wrapper: metadata extraction (single + playlist/album), MP3 download to temp, prefetch, progress tracking, artist list normalization |
+| `server/downloader.py` | yt-dlp wrapper: metadata extraction (single + playlist/album), MP3 download to temp, progress tracking, artist list normalization |
 | `server/organizer.py` | File placement `Artist/Album/Title.mp3`, ID3 tags via Mutagen, featuring detection, album covers (`cover.jpg` + embedded APIC) |
 | `watcher/watcher.py` | JWT validation, header injection, reverse proxy, SongSurf container lifecycle (Docker SDK), inactivity shutdown, CORS for the extension |
 | `shared/events_client.py` | Activity-event push to rev0auth (stdlib-only, copied into both images): `emit()` fire-and-forget thread, JSONL spool in `logs/events-pending-<source>.jsonl` on failure, replay thread every 5 min |
@@ -103,7 +103,6 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 - Main Flask thread: HTTP, validation, enqueue. The queue is **job-level** (`job_queue`, `queue.Queue` of jobs, max `MAX_PENDING_JOBS=100`): one album = one job, a single track = a one-song job (`_enqueue_job`). Daily limit `DAILY_DOWNLOAD_LIMIT`. `_pending_songs` (under `queue_lock`) = songs queued but not yet started, exposed as `queue_size` in `/api/status`. The frontend submits everything at once; the server owns ordering, so queuing several albums no longer overflows a flat queue and the batch keeps draining even if the page is closed.
 - One download worker thread: pulls a job, processes its songs sequentially via `_process_song`, then takes the next job; updates `download_status` under `queue_lock`.
 - Extension queueing is server-side fire-and-forget: `/api/queue-direct` spawns a daemon thread (`_queue_direct_async`) that extracts metadata then `_enqueue_job`, and returns immediately. No `extension_pending`/visual-queue round-trip anymore — the NAS downloads even with no SongSurf tab open.
-- Prefetch daemon thread: pre-downloads the first playlist track for instant cover preview.
 - Watcher side: inactivity thread (warn after `INACTIVITY_WARN_TIMEOUT`, stop container after `+ INACTIVITY_GRACE_TIMEOUT`).
 
 ## Environment variables

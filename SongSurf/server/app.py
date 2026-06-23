@@ -210,95 +210,6 @@ def _enqueue_job(songs):
     return len(songs)
 
 
-# ── Prefetch ───────────────────────────────────────────────────────────────────
-
-admin_prefetch_lock  = threading.Lock()
-admin_prefetch_state = {'token': '', 'status': 'idle', 'file_path': '', 'updated_at': ''}
-
-
-def _prefetch_cleanup_file(file_path: str):
-    if not file_path:
-        return
-    try:
-        p = Path(file_path)
-        if p.exists() and p.is_file():
-            p.unlink()
-        stem = p.with_suffix('')
-        for ext in ('.jpg', '.jpeg', '.png', '.webp'):
-            side = Path(str(stem) + ext)
-            if side.exists():
-                side.unlink()
-    except Exception as e:
-        logger.warning(f"⚠️ Prefetch cleanup: {e}")
-
-
-def _prefetch_first_playlist_song_async(dl, playlist_meta, on_done=None):
-    songs = (playlist_meta or {}).get('songs') or []
-    if not songs:
-        return
-    first = songs[0] or {}
-    first_url = (first.get('url') or '').strip()
-    if not first_url:
-        return
-    metadata = {
-        'artist': first.get('artist', (playlist_meta or {}).get('artist', 'Unknown Artist')),
-        'album':  (playlist_meta or {}).get('title', 'Unknown Album'),
-        'title':  first.get('title', 'Unknown Title'),
-        'year':   (playlist_meta or {}).get('year', ''),
-    }
-
-    def _job():
-        result = dl.prefetch_first_track(first_url, metadata)
-        if callable(on_done):
-            try:
-                on_done(result)
-            except Exception as e:
-                logger.warning(f"⚠️ Prefetch callback: {e}")
-
-    threading.Thread(target=_job, daemon=True).start()
-
-
-def _start_admin_prefetch(dl, playlist_meta) -> str:
-    token = secrets.token_urlsafe(16)
-    with admin_prefetch_lock:
-        old_file = admin_prefetch_state.get('file_path', '')
-        admin_prefetch_state.update({
-            'token': token, 'status': 'pending',
-            'file_path': '', 'updated_at': datetime.now().isoformat()
-        })
-    if old_file:
-        _prefetch_cleanup_file(old_file)
-
-    def _done(result):
-        file_path = (result or {}).get('file_path', '') if (result or {}).get('success') else ''
-        with admin_prefetch_lock:
-            if admin_prefetch_state.get('token') != token:
-                if file_path:
-                    _prefetch_cleanup_file(file_path)
-                return
-            admin_prefetch_state['status'] = 'ready' if file_path else 'failed'
-            admin_prefetch_state['file_path'] = file_path
-            admin_prefetch_state['updated_at'] = datetime.now().isoformat()
-
-    _prefetch_first_playlist_song_async(dl, playlist_meta, on_done=_done)
-    return token
-
-
-def _cancel_admin_prefetch(token='') -> bool:
-    with admin_prefetch_lock:
-        current = admin_prefetch_state.get('token', '')
-        if token and current and token != current:
-            return False
-        file_path = admin_prefetch_state.get('file_path', '')
-        admin_prefetch_state.update({
-            'token': '', 'status': 'idle',
-            'file_path': '', 'updated_at': datetime.now().isoformat()
-        })
-    if file_path:
-        _prefetch_cleanup_file(file_path)
-    return True
-
-
 # ── Per-user storage ───────────────────────────────────────────────────────────
 
 user_zip_state = {}  # {sub: {'zip_path': str, 'count': int, 'size_mb': float}}
@@ -971,9 +882,7 @@ def extract_metadata():
             result = downloader.extract_playlist_metadata(url)
             if result.get('success'):
                 result['is_playlist'] = True
-                result['prefetch_token'] = _start_admin_prefetch(downloader, result)
         else:
-            _cancel_admin_prefetch('')
             result = downloader.extract_metadata(url)
             if result.get('success') and 'metadata' in result:
                 meta = result.pop('metadata')
@@ -1345,52 +1254,6 @@ def admin_genre_backfill_status():
         return jsonify({'success': True, **_backfill_state})
 
 
-# ── Prefetch routes ────────────────────────────────────────────────────────────
-
-@app.route('/api/prefetch/cover')
-@auth_required
-def admin_prefetch_cover():
-    token = (request.args.get('token') or '').strip()
-    if not token:
-        return '', 204
-    with admin_prefetch_lock:
-        if token != admin_prefetch_state.get('token') or admin_prefetch_state.get('status') != 'ready':
-            return '', 204
-        file_path = admin_prefetch_state.get('file_path', '')
-    if not file_path:
-        return '', 204
-    p = Path(file_path)
-    if not p.exists():
-        return '', 204
-    try:
-        audio = MP3(p)
-        tags  = getattr(audio, 'tags', None)
-        if tags:
-            for frame in tags.values():
-                if isinstance(frame, APIC) and getattr(frame, 'data', None):
-                    return send_file(io.BytesIO(frame.data), mimetype=frame.mime or 'image/jpeg')
-    except Exception as e:
-        logger.warning(f"⚠️ Prefetch cover: {e}")
-    stem = p.with_suffix('')
-    for ext, mime in (('.jpg', 'image/jpeg'), ('.jpeg', 'image/jpeg'), ('.png', 'image/png'), ('.webp', 'image/webp')):
-        side = Path(str(stem) + ext)
-        if side.exists():
-            return send_file(side, mimetype=mime)
-    return '', 204
-
-
-@app.route('/api/prefetch/cancel', methods=['POST'])
-@auth_required
-def admin_prefetch_cancel():
-    try:
-        data  = request.get_json(silent=True) or {}
-        token = (data.get('token') or '').strip()
-        ok    = _cancel_admin_prefetch(token)
-        return jsonify({'success': ok}), 200 if ok else 409
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 # ── Extension Chrome — cookies sync ───────────────────────────────────────────
 
 _COOKIES_FILE = Path(os.environ.get('YTDLP_COOKIES', '/data/cookies.txt'))
@@ -1439,7 +1302,7 @@ def _detect_url_mode(url: str) -> str:
 @auth_required
 def preview_metadata():
     """
-    Extension Chrome — extrait les métadonnées sans effet de bord (pas de prefetch).
+    Extension Chrome — extrait les métadonnées sans effet de bord.
     Utilisé pour la mini-analyse avant confirmation.
     """
     try:

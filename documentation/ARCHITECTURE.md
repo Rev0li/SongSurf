@@ -48,8 +48,7 @@ Wraps yt-dlp:
 
 - `extract_metadata(url)` — single video: title, artist (primary), **artists list**, album, album_artist, year, **track_number**, thumbnail candidates, duration. Rejects videos over `MAX_DURATION_SECONDS`.
 - `extract_playlist_metadata(url)` — album/playlist via `extract_flat`: playlist title/artist/year/thumbnail + per-song `{title, artist, artists, url, id, duration, track_number}` (track number = `playlist_index` or position).
-- `download(url, metadata)` — bestaudio → MP3 (FFmpeg, best VBR quality), staged in `/data/temp`, cached by filename for prefetch reuse.
-- `prefetch_first_track` — used to show the real album cover during preview before the user confirms.
+- `download(url, metadata)` — bestaudio → MP3 (FFmpeg, best VBR quality), staged in `/data/temp`, cached by filename (reuses an existing temp file).
 - Artist normalization: yt-dlp `artists` list preferred; string fallback split on `&`, `,`, `et`, `and`, `/`; ` - Topic` suffix stripped. The primary artist (first) names the folder.
 - Cookies: if `/data/cookies.txt` exists (synced by the extension), yt-dlp uses it.
 
@@ -101,12 +100,12 @@ sequenceDiagram
 
 | Thread | Where | Purpose |
 |---|---|---|
-| Main Flask | SongSurf | HTTP handling, validation, enqueue |
-| Download worker | SongSurf | Processes the queue one job at a time; updates `download_status` under `queue_lock` |
-| Prefetch daemon | SongSurf | Pre-downloads the first playlist track for instant cover preview |
+| Main Flask | SongSurf | HTTP handling, validation, enqueue (album = one job) |
+| Download worker | SongSurf | Pulls a job, processes its songs sequentially, then the next job; updates `download_status` under `queue_lock` |
+| queue-direct daemon | SongSurf | Per extension request: extracts metadata then enqueues server-side (fire-and-forget) |
 | Inactivity watcher | Watcher | Idle tracking → warn → stop container |
 
-Shared state (`download_status`, `extension_pending`, daily counter, prefetch state) is lock-protected. Note: `cancel_flag` is checked by the worker but no route currently sets it (cancellation not wired).
+Shared state (`download_status`, `_pending_songs`, daily counter) is lock-protected. Note: `cancel_flag` is checked by the worker but no route currently sets it (cancellation not wired).
 
 ---
 
@@ -150,8 +149,8 @@ frontend/src/
 
 Key flows:
 
-- **UrlQueue** processes one item at a time, waits for the worker (`workerBusy` store fed by `/api/status` polling) before sending the next; persists across navigation.
-- **Extension intake**: the frontend polls `/api/extension-queue/consume` and feeds items into the same visual queue.
+- **UrlQueue** submits every item to the server at once (the server owns ordering and drains album by album), then reflects progress via the `workerBusy` store (`/api/status` polling); persists across navigation.
+- **Extension intake**: server-side fire-and-forget — the extension posts straight to `/api/queue-direct`, which extracts and enqueues without involving the page.
 - Design tokens come from the MyCss design system (CSS custom properties, light/dark via `html.dark`).
 
 ---

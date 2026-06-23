@@ -30,10 +30,6 @@
 	let coverSrc = '';
 	let coverLoading = false;
 
-	// prefetch
-	let prefetchToken = '';
-	let prefetchTimer = null;
-
 	// ── Cover handling ────────────────────────────────────────────────────────
 	function setCoverCandidates(candidates) {
 		coverCandidates = candidates ?? [];
@@ -45,11 +41,9 @@
 
 	async function tryNextCover() {
 		if (coverIdx >= coverCandidates.length) {
-			// All candidates exhausted — keep spinner if prefetch is still in flight
-			if (!prefetchTimer) {
-				coverSrc = '';
-				coverLoading = false;
-			}
+			// All CDN candidates exhausted — no cover preview available
+			coverSrc = '';
+			coverLoading = false;
 			return;
 		}
 		if (!coverLoading) {
@@ -66,54 +60,6 @@
 		img.src = url;
 	}
 
-	function stopPrefetchPolling() {
-		if (prefetchTimer) { clearInterval(prefetchTimer); prefetchTimer = null; }
-	}
-
-	function startPrefetchPolling(token, fallbackCandidates) {
-		stopPrefetchPolling();
-		if (!token) return;
-		let tries = 0;
-		const maxTries = 25;
-
-		function probe() {
-			tries++;
-			const probeUrl = api.getPrefetchCoverUrl(token) + `&probe=${Date.now()}`;
-			const img = new Image();
-			img.onload = () => {
-				stopPrefetchPolling();
-				const newUrl = api.getPrefetchCoverUrl(token);
-				if (coverSrc) {
-					// Cover already visible — update silently, no spinner flash
-					coverSrc = newUrl;
-				} else {
-					// Spinner still running (all CDN candidates failed) — set cover directly
-					coverLoading = false;
-					coverSrc = newUrl;
-				}
-			};
-			img.onerror = () => {
-				if (tries >= maxTries) {
-					stopPrefetchPolling();
-					// Prefetch gave up — fall back to CDN candidates as last resort
-					if (!coverSrc) tryNextCover();
-				}
-			};
-			img.src = probeUrl;
-		}
-
-		probe();
-		prefetchTimer = setInterval(probe, 1200);
-	}
-
-	async function cancelPrefetch() {
-		if (!prefetchToken) return;
-		const token = prefetchToken;
-		prefetchToken = '';
-		stopPrefetchPolling();
-		try { await api.cancelPrefetch(token); } catch { /* stale token, ignore */ }
-	}
-
 	// ── Extract ───────────────────────────────────────────────────────────────
 	let extracting = false;
 
@@ -122,7 +68,6 @@
 		if (!raw) { addToast('Colle un lien YouTube Music.', 'error'); return; }
 
 		extracting = true;
-		await cancelPrefetch();
 
 		try {
 			const data = await api.extract(raw);
@@ -136,20 +81,9 @@
 				playlistAlbum = asText(data.title, 'Unknown Album');
 				playlistYear = asText(data.year, '');
 				const candidates = resolveCoverCandidates(data, raw);
-				prefetchToken = asText(data.prefetch_token);
 				panelActive = true;
 				await tick();
-				if (prefetchToken) {
-					// Skip grey CDN probes — spinner until prefetch delivers the real cover
-					coverCandidates = candidates; // kept as fallback if prefetch times out
-					coverIdx = 0;
-					coverSrc = '';
-					coverLoading = true;
-					await new Promise(r => requestAnimationFrame(r));
-					startPrefetchPolling(prefetchToken, candidates);
-				} else {
-					setCoverCandidates(candidates);
-				}
+				setCoverCandidates(candidates);
 			} else {
 				title = asText(data.title, 'Unknown Title');
 				artist = asText(data.artist, 'Unknown Artist');
@@ -195,15 +129,12 @@
 			artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
 		};
 
-		stopPrefetchPolling();
-		prefetchToken = '';
 		onAddToQueue(item);
 		reset();
 	}
 
 	// ── Reset ─────────────────────────────────────────────────────────────────
-	async function reset() {
-		await cancelPrefetch();
+	function reset() {
 		extract = null;
 		panelActive = false;
 		title = artist = album = playlistArtist = playlistAlbum = playlistYear = '';
