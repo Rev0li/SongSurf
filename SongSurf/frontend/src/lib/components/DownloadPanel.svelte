@@ -1,11 +1,7 @@
 <script>
-	import { tick } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
-	import {
-		asText, inferPlaylistArtist,
-		resolveCoverCandidates, bustUrl,
-	} from '$lib/utils.js';
+	import { asText, inferPlaylistArtist } from '$lib/utils.js';
 
 	export let onAddToQueue = () => {};
 
@@ -23,42 +19,6 @@
 	let playlistArtist = '';
 	let playlistAlbum = '';
 	let playlistYear = '';
-
-	// cover
-	let coverCandidates = [];
-	let coverIdx = 0;
-	let coverSrc = '';
-	let coverLoading = false;
-
-	// ── Cover handling ────────────────────────────────────────────────────────
-	function setCoverCandidates(candidates) {
-		coverCandidates = candidates ?? [];
-		coverIdx = 0;
-		coverSrc = '';
-		coverLoading = false;
-		tryNextCover();
-	}
-
-	async function tryNextCover() {
-		if (coverIdx >= coverCandidates.length) {
-			// All CDN candidates exhausted — no cover preview available
-			coverSrc = '';
-			coverLoading = false;
-			return;
-		}
-		if (!coverLoading) {
-			// First probe in this series: ensure spinner renders before starting
-			coverLoading = true;
-			await tick();
-			await new Promise(r => requestAnimationFrame(r));
-		}
-		const url = bustUrl(coverCandidates[coverIdx]);
-		coverIdx++;
-		const img = new Image();
-		img.onload = () => { coverSrc = url; coverLoading = false; };
-		img.onerror = tryNextCover;
-		img.src = url;
-	}
 
 	// ── Extract ───────────────────────────────────────────────────────────────
 	let extracting = false;
@@ -80,19 +40,12 @@
 				playlistArtist = inferPlaylistArtist(data);
 				playlistAlbum = asText(data.title, 'Unknown Album');
 				playlistYear = asText(data.year, '');
-				const candidates = resolveCoverCandidates(data, raw);
-				panelActive = true;
-				await tick();
-				setCoverCandidates(candidates);
 			} else {
 				title = asText(data.title, 'Unknown Title');
 				artist = asText(data.artist, 'Unknown Artist');
 				album = asText(data.album, 'Unknown Album');
-				const candidates = resolveCoverCandidates(data, raw);
-				panelActive = true;
-				await tick();
-				setCoverCandidates(candidates);
 			}
+			panelActive = true;
 
 			addToast('Métadonnées chargées. Ajuste puis télécharge.', 'info');
 		} catch (err) {
@@ -138,8 +91,6 @@
 		extract = null;
 		panelActive = false;
 		title = artist = album = playlistArtist = playlistAlbum = playlistYear = '';
-		coverSrc = '';
-		coverLoading = false;
 	}
 
 	// ── Keyboard shortcut: Enter on URL input ────────────────────────────────
@@ -174,20 +125,6 @@
 <div class="page-body" style="padding-bottom:0">
 	<div class="card metadata-panel">
 		<div class="metadata-layout">
-			<!-- Cover -->
-			<aside class="metadata-options-column">
-				<div class="cover-preview-box">
-					{#if coverLoading}
-						<div class="cover-spinner"></div>
-					{:else if coverSrc}
-						<img class="metadata-thumb" src={coverSrc} alt="Pochette" />
-					{:else}
-						<div class="cover-placeholder">Pochette</div>
-					{/if}
-				</div>
-
-			</aside>
-
 			<!-- Fields -->
 			<div class="metadata-main">
 				{#if !extract?.is_playlist}
@@ -255,11 +192,8 @@
 }
 .metadata-layout {
 	display: grid;
-	grid-template-columns: 200px 1fr;
+	grid-template-columns: 1fr;
 	gap: 20px;
 	align-items: start;
-}
-@media (max-width: 900px) {
-	.metadata-layout { grid-template-columns: 1fr; }
 }
 </style>

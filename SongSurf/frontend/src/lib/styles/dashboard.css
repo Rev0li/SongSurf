@@ -39,44 +39,6 @@
   gap: var(--s3);
 }
 
-/* Cover preview ───────────────────────────────── */
-.metadata-options-column {
-  display: grid;
-  gap: var(--s3);
-}
-.cover-preview-box {
-  background: var(--bg-3);
-  border: 1px solid var(--sep);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  aspect-ratio: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.metadata-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  animation: cover-fadein .4s ease;
-}
-@keyframes cover-fadein { from { opacity: 0; } to { opacity: 1; } }
-.cover-placeholder {
-  font-size: 12px;
-  color: var(--text-3);
-  text-align: center;
-  padding: var(--s4);
-}
-.cover-spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--sep);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin .7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
 /* Options card ────────────────────────────────── */
 .option-card {
   background: var(--bg-3);
@@ -236,13 +198,6 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
   border-radius: var(--r-full);
   white-space: nowrap;
   flex-shrink: 0;
-}
-
-/* ── Library cover upload ────────────────────────────────────────────────── */
-.cover-preview-box.small {
-  width: 80px; height: 80px;
-  flex-shrink: 0;
-  aspect-ratio: 1;
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
