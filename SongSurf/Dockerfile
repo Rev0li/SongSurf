@@ -28,6 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# deno = runtime JS pour yt-dlp (résolution des challenges signature/n YouTube).
+# Sans lui, certains clients ne renvoient aucun format → "Requested format is not available".
+# Voir downloader.py (remote_components: ['ejs:github']).
+COPY --from=denoland/deno:bin-2.8.3 /deno /usr/local/bin/deno
+
 # Non-root user + data directories in one layer
 RUN useradd -m -u 1000 songsurf && \
     mkdir -p /app/logs /app/frontend/build /data/temp /data/music && \

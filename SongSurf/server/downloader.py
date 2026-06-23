@@ -115,6 +115,10 @@ class YouTubeDownloader:
             'noplaylist': True,
             'writethumbnail': True,
             'nocheckcertificate': True,
+            # YouTube exige la résolution de challenges JS (signature/n) : sans runtime JS
+            # certains clients ne renvoient aucun format → "Requested format is not available".
+            # deno (image Docker) + composants EJS distants restaurent les formats audio.
+            'remote_components': ['ejs:github'],
         }
         ydl_opts.update(self._cookies_opts())
         if progress_hook is not None:
@@ -216,6 +220,8 @@ class YouTubeDownloader:
                 'noplaylist':    True,
                 # format requis sinon yt-dlp tente une sélection qui peut échouer
                 'format':        'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+                # challenges JS (signature/n) : cf. _download_to_temp
+                'remote_components': ['ejs:github'],
             }
             ydl_opts.update(self._cookies_opts())
 
