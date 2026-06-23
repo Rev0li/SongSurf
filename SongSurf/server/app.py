@@ -133,7 +133,6 @@ downloader = YouTubeDownloader(TEMP_DIR, BASE_MUSIC_DIR)
 # chaque job attend son tour. Le serveur est propriétaire de la file : elle continue
 # à se vider même si le navigateur quitte la page Téléchargement.
 MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente
-MAX_QUEUE_SIZE   = 50           # plafond de extension_pending (file visuelle extension)
 job_queue   = queue.Queue(maxsize=MAX_PENDING_JOBS)
 queue_lock  = threading.Lock()
 cancel_flag = threading.Event()
@@ -152,10 +151,6 @@ download_status = {
     'batch_done': 0,
     'batch_percent': 0,
 }
-
-# Items submitted via Chrome extension — held here until the frontend UrlQueue picks them up
-extension_pending    = []
-extension_pending_lk = threading.Lock()
 
 # ── Daily download counter ─────────────────────────────────────────────────────
 _daily_lock  = threading.Lock()
@@ -510,8 +505,6 @@ def get_status():
             status['batch_percent'] = round(max(0.0, min(100.0, composed)), 1)
         else:
             status['batch_percent'] = float(current_pct)
-    with extension_pending_lk:
-        status['extension_pending_count'] = len(extension_pending)
     with _daily_lock:
         _daily_reset_if_needed()
         status['daily_count'] = _daily_count
@@ -1568,10 +1561,12 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
 @auth_required
 def queue_direct():
     """
-    Extension Chrome — stocke l'URL dans extension_pending ; le frontend UrlQueue
-    la récupère via /api/extension-queue/consume et la traite dans sa file visuelle.
+    Extension Chrome — extrait les métadonnées et empile côté serveur (fire-and-forget).
+    Aucune dépendance à la page SongSurf : le NAS télécharge même si aucun onglet n'est
+    ouvert. La réponse est immédiate ; l'extraction yt-dlp tourne dans un thread.
     """
     try:
+        user = _get_current_user()
         data = request.get_json(silent=True) or {}
         url  = (data.get('url') or '').strip()
 
@@ -1579,36 +1574,27 @@ def queue_direct():
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide'}), 400
+        if job_queue.full():
+            return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
 
         url_mode = _detect_url_mode(url)
-        item = {
-            'url':      url,
-            'url_mode': url_mode,
-            'artist':   (data.get('artist') or '').strip(),
-            'album':    (data.get('album')  or '').strip(),
-            'title':    (data.get('title')  or '').strip(),
-            'year':     (data.get('year')   or '').strip(),
+        override = {
+            'artist': (data.get('artist') or '').strip(),
+            'album':  (data.get('album')  or '').strip(),
+            'title':  (data.get('title')  or '').strip(),
+            'year':   (data.get('year')   or '').strip(),
         }
-        with extension_pending_lk:
-            if len(extension_pending) >= MAX_QUEUE_SIZE:
-                return jsonify({'success': False, 'error': 'Queue pleine'}), 429
-            extension_pending.append(item)
+        threading.Thread(
+            target=_queue_direct_async,
+            args=(url, url_mode, user, override),
+            daemon=True,
+        ).start()
 
         labels = {'song': 'chanson', 'album': 'album', 'playlist': 'playlist'}
         return jsonify({'success': True, 'type': url_mode, 'label': labels.get(url_mode, url_mode)})
     except Exception as e:
         logger.error(f"❌ /api/queue-direct: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/extension-queue/consume', methods=['POST'])
-@auth_required
-def extension_queue_consume():
-    """Frontend UrlQueue — récupère et vide les items en attente de l'extension."""
-    with extension_pending_lk:
-        items = list(extension_pending)
-        extension_pending.clear()
-    return jsonify({'success': True, 'items': items})
 
 
 # ── Metadata inspector ─────────────────────────────────────────────────────────

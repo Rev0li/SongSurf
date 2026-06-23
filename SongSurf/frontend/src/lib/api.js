@@ -72,9 +72,6 @@ export const api = {
 	saveSongMeta(path, tags) {
 		return request('/api/library/song-meta/save', { method: 'POST', body: JSON.stringify({ path, tags }) });
 	},
-	consumeExtensionQueue() {
-		return request('/api/extension-queue/consume', { method: 'POST' });
-	},
 	albumTracks(folderPath) {
 		return request(`/api/library/album-tracks?folder_path=${encodeURIComponent(folderPath)}`);
 	},

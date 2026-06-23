@@ -28,9 +28,6 @@ export const workerBusyByOther = derived(
 
 export const lastCompleted = writable(null); // { artist, title, timestamp } | null
 
-// Items submitted by the Chrome extension, waiting for UrlQueue to pick up
-export const extensionQueue = writable([]);
-
 // Theme: 'light' | 'dark' — initialized in +layout.svelte onMount from localStorage
 export const theme = writable('light');
 

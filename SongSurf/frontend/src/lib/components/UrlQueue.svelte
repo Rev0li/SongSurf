@@ -1,7 +1,7 @@
 <script>
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { workerBusy, extensionQueue, urlQueue } from '$lib/stores.js';
+	import { workerBusy, urlQueue } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 
 	// queue items: { id, label, status, error, isPlaylist, ...download params }
@@ -18,31 +18,6 @@
 		queue = [...queue, { ...item, id: ++idCounter, status: 'pending', error: '' }];
 		processNext();
 	}
-
-	// ── Extension queue intake ─────────────────────────────────────────────────
-	const _unsubExt = extensionQueue.subscribe((items) => {
-		if (items.length === 0) return;
-		for (const item of items) {
-			const isPlaylist = item.url_mode === 'album' || item.url_mode === 'playlist';
-			const label = isPlaylist
-				? `${item.artist || '?'} — ${item.album || item.url_mode}`
-				: `${item.artist || '?'} — ${item.title || item.url}`;
-			enqueue({
-				label,
-				url:          item.url,
-				url_mode:     item.url_mode,
-				title:        item.title,
-				artist:       item.artist,
-				album:        item.album,
-				year:         item.year ?? '',
-				isPlaylist,
-				needsExtract: isPlaylist,
-				fromExtension: true,
-			});
-		}
-		extensionQueue.set([]);
-	});
-	onDestroy(_unsubExt);
 
 	// ── Worker-free transition detector ──────────────────────────────────────
 	// Subscribe manually to detect busy→free transition without $: loop risk
@@ -104,17 +79,7 @@
 	async function _submit(item) {
 		try {
 			let res;
-			if (item.needsExtract) {
-				const extracted = await api.extract(item.url);
-				if (!extracted.success) throw new Error(extracted.error || 'Extraction échouée');
-				res = await api.downloadPlaylist({
-					playlist_metadata: {
-						...extracted,
-						artist: item.artist || extracted.artist,
-						title:  item.album  || extracted.title,
-					},
-				});
-			} else if (item.isPlaylist) {
+			if (item.isPlaylist) {
 				res = await api.downloadPlaylist({
 					playlist_metadata: item.playlistMetadata,
 				});
@@ -203,9 +168,6 @@
 					<span class="queue-icon">{STATUS_ICON[item.status]}</span>
 					<span class="queue-label" title={item.label}>
 						{item.label}
-						{#if item.fromExtension}
-							<span class="queue-source">ext</span>
-						{/if}
 						{#if item.status === 'error'}
 							<span class="queue-error">{item.error}</span>
 						{/if}
@@ -289,18 +251,4 @@
 		border-radius: 4px; line-height: 1;
 	}
 	.queue-remove:hover { color: var(--text); background: var(--bg-4); }
-
-	.queue-source {
-		display: inline-block;
-		font-size: 9px;
-		font-weight: 700;
-		letter-spacing: .04em;
-		text-transform: uppercase;
-		background: rgba(191, 90, 242, .18);
-		color: var(--purple);
-		border-radius: 3px;
-		padding: 1px 4px;
-		margin-left: 5px;
-		vertical-align: middle;
-	}
 </style>
