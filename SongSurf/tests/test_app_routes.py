@@ -259,24 +259,23 @@ def test_d9_accepts_download_while_in_progress(flask_setup):
         assert r.get_json()['success'] is True
     finally:
         app_mod.download_status['in_progress'] = original
-        # purge l'item ajouté pour ne pas polluer les autres tests
+        # purge le job ajouté pour ne pas polluer les autres tests
         try:
             while True:
-                app_mod.download_queue.get_nowait()
+                app_mod.job_queue.get_nowait()
         except Exception:
             pass
+        app_mod._pending_songs = 0
 
 
 def test_d9_rejects_when_queue_full(flask_setup):
     c, _, _, app_mod = flask_setup
     import queue as _q
-    sentinels = []
     try:
-        # Sature la file jusqu'à maxsize
+        # Sature la file de jobs jusqu'à maxsize
         while True:
             try:
-                app_mod.download_queue.put_nowait({'sentinel': True})
-                sentinels.append(1)
+                app_mod.job_queue.put_nowait({'songs': []})
             except _q.Full:
                 break
         r = c.post('/api/download',
@@ -288,9 +287,10 @@ def test_d9_rejects_when_queue_full(flask_setup):
     finally:
         try:
             while True:
-                app_mod.download_queue.get_nowait()
+                app_mod.job_queue.get_nowait()
         except Exception:
             pass
+        app_mod._pending_songs = 0
 
 
 # ── Cookies / vidéos restreintes par âge (bug 5) ──────────────────────────────

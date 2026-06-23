@@ -127,12 +127,18 @@ def _is_valid_youtube_url(url: str) -> bool:
 
 downloader = YouTubeDownloader(TEMP_DIR, BASE_MUSIC_DIR)
 
-# ── Download queue ─────────────────────────────────────────────────────────────
+# ── Download queue (jobs album-level) ────────────────────────────────────────────
+# Le worker draine des "jobs" séquentiellement : un album = un job, un titre seul =
+# un job d'une piste. Empiler plusieurs albums ne sature donc plus une file plate —
+# chaque job attend son tour. Le serveur est propriétaire de la file : elle continue
+# à se vider même si le navigateur quitte la page Téléchargement.
+MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente
+MAX_QUEUE_SIZE   = 50           # plafond de extension_pending (file visuelle extension)
+job_queue   = queue.Queue(maxsize=MAX_PENDING_JOBS)
+queue_lock  = threading.Lock()
+cancel_flag = threading.Event()
 
-MAX_QUEUE_SIZE = 50
-download_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-queue_lock     = threading.Lock()
-cancel_flag    = threading.Event()
+_pending_songs = 0   # titres empilés mais pas encore démarrés (accès sous queue_lock)
 
 download_status = {
     'in_progress': False,
@@ -191,6 +197,22 @@ def _start_or_extend_batch(added_count: int):
             download_status['batch_done'] = 0
             download_status['batch_percent'] = 0
         download_status['batch_total'] += added_count
+
+
+def _enqueue_job(songs):
+    """Empile un job (liste de titres) dans la file serveur.
+
+    Un album entier = un seul job → plusieurs albums s'enchaînent sans saturer la
+    file. Lève queue.Full si trop de jobs sont déjà en attente (l'appelant → 429).
+    """
+    global _pending_songs
+    if not songs:
+        return 0
+    job_queue.put_nowait({'songs': list(songs), 'added_at': datetime.now().isoformat()})
+    with queue_lock:
+        _pending_songs += len(songs)
+    _start_or_extend_batch(len(songs))
+    return len(songs)
 
 
 # ── Prefetch ───────────────────────────────────────────────────────────────────
@@ -466,7 +488,7 @@ def ping():
 def get_status():
     with queue_lock:
         status = download_status.copy()
-        status['queue_size'] = download_queue.qsize()
+        status['queue_size'] = _pending_songs
         current_pct = 0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
@@ -981,10 +1003,10 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide.'}), 400
-        # La file serveur draine séquentiellement, indépendamment de la page : on
-        # accepte d'empiler tant que la file n'est pas pleine (bug « ça bloque si
-        # on quitte la page Téléchargement »).
-        if download_queue.full():
+        # Le serveur draine la file séquentiellement, indépendamment de la page :
+        # le titre est empilé comme un job d'une piste. 429 seulement si trop de
+        # jobs sont déjà en attente.
+        if job_queue.full():
             return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
         if _daily_limit_reached():
             return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
@@ -998,17 +1020,16 @@ def start_download():
             'year':         data.get('year',   ''),
             'track_number': data.get('track_number', ''),
         }
-        download_queue.put({
+        _enqueue_job([{
             'url':         url,
             'metadata':    metadata,
             'user_sub':    user['sub'],
             'user_role':   user.get('role', 'member'),
             'user_pseudo': _user_pseudo(user),
             'added_at':    datetime.now().isoformat(),
-        })
-        _start_or_extend_batch(1)
+        }])
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
-        return jsonify({'success': True, 'queue_size': download_queue.qsize()})
+        return jsonify({'success': True, 'queue_size': _pending_songs})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1023,18 +1044,17 @@ def download_playlist():
         songs    = playlist.get('songs', [])
         if not songs:
             return jsonify({'success': False, 'error': 'Données manquantes'}), 400
-        # File serveur drainée séquentiellement : on empile même si un batch tourne
-        # déjà (le worker enchaîne sans dépendre de la page ouverte).
-        if download_queue.full():
+        # L'album entier est empilé comme un seul job : le worker le draine d'une
+        # traite avant de passer au prochain album. Plusieurs albums ne se marchent
+        # donc plus dessus, et l'enchaînement continue même si on quitte la page.
+        if job_queue.full():
             return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
         if _daily_limit_reached():
             return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
 
-        added = 0
-        for song in songs:
-            if download_queue.full():
-                break
-            metadata = {
+        items = [{
+            'url':         song['url'],
+            'metadata':    {
                 'artist':       playlist.get('artist') or song.get('artist') or 'Unknown Artist',
                 'artists':      song.get('artists') or [],
                 'album_artist': playlist.get('artist') or '',
@@ -1043,19 +1063,15 @@ def download_playlist():
                 'year':         playlist.get('year', ''),
                 'track_number': song.get('track_number', ''),
                 'track_total':  len(songs),
-            }
-            download_queue.put({
-                'url':         song['url'],
-                'metadata':    metadata,
-                'user_sub':    user['sub'],
-                'user_role':   user.get('role', 'member'),
-                'user_pseudo': _user_pseudo(user),
-                'added_at':    datetime.now().isoformat(),
-            })
-            added += 1
+            },
+            'user_sub':    user['sub'],
+            'user_role':   user.get('role', 'member'),
+            'user_pseudo': _user_pseudo(user),
+            'added_at':    datetime.now().isoformat(),
+        } for song in songs]
 
-        _start_or_extend_batch(added)
-        return jsonify({'success': True, 'added': added, 'total': len(songs), 'queue_size': download_queue.qsize()})
+        added = _enqueue_job(items)
+        return jsonify({'success': True, 'added': added, 'total': len(songs), 'queue_size': _pending_songs})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1502,17 +1518,18 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':         meta.get('year', ''),
                     'track_number': meta.get('track_number', ''),
                 }
-            if not download_queue.full():
-                download_queue.put({
+            try:
+                _enqueue_job([{
                     'url':         url,
                     'metadata':    metadata,
                     'user_sub':    user['sub'],
                     'user_role':   user.get('role', 'member'),
                     'user_pseudo': _user_pseudo(user),
                     'added_at':    datetime.now().isoformat(),
-                })
-                _start_or_extend_batch(1)
+                }])
                 logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
+            except queue.Full:
+                logger.warning("⚠️ queue-direct (song): file pleine")
         else:
             result = downloader.extract_playlist_metadata(url)
             if not result.get('success'):
@@ -1521,11 +1538,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
             songs       = result.get('songs', [])
             album_name  = (override or {}).get('album')  or result.get('title', 'Unknown Album')
             artist_name = (override or {}).get('artist') or result.get('artist', 'Unknown Artist')
-            added = 0
-            for song in songs:
-                if download_queue.full():
-                    break
-                metadata = {
+            items = [{
+                'url':         song['url'],
+                'metadata':    {
                     'artist':       artist_name,
                     'artists':      song.get('artists') or [],
                     'album_artist': artist_name,
@@ -1534,18 +1549,17 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':         result.get('year', ''),
                     'track_number': song.get('track_number', ''),
                     'track_total':  len(songs),
-                }
-                download_queue.put({
-                    'url':         song['url'],
-                    'metadata':    metadata,
-                    'user_sub':    user['sub'],
-                    'user_role':   user.get('role', 'member'),
-                    'user_pseudo': _user_pseudo(user),
-                    'added_at':    datetime.now().isoformat(),
-                })
-                added += 1
-            _start_or_extend_batch(added)
-            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
+                },
+                'user_sub':    user['sub'],
+                'user_role':   user.get('role', 'member'),
+                'user_pseudo': _user_pseudo(user),
+                'added_at':    datetime.now().isoformat(),
+            } for song in songs]
+            try:
+                added = _enqueue_job(items)
+                logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
+            except queue.Full:
+                logger.warning("⚠️ queue-direct (album): file pleine")
     except Exception as e:
         logger.error(f"❌ queue-direct async: {e}")
 
@@ -1914,126 +1928,143 @@ def _friendly_download_error(msg: str) -> str:
 
 # ── Queue worker ───────────────────────────────────────────────────────────────
 
+def _batch_progress_after_song():
+    """Sous queue_lock : incrémente batch_done et clôture le batch si tout est fini."""
+    download_status['batch_done'] = int(download_status.get('batch_done', 0)) + 1
+    if (download_status['batch_done'] >= download_status.get('batch_total', 0)
+            and _pending_songs == 0 and job_queue.empty()):
+        download_status['batch_active'] = False
+
+
+def _process_song(item):
+    """Traite un titre : download → organize → tags, met à jour download_status.
+
+    Toujours non bloquant pour la suite de la file : toute erreur est capturée et
+    batch_done est incrémenté dans tous les cas, pour que le batch puisse se clôturer.
+    """
+    global _pending_songs
+    url         = item['url']
+    metadata    = item['metadata']
+    user_sub    = item.get('user_sub', 'dev-user-local')
+    user_pseudo = item.get('user_pseudo', '')
+    cancel_flag.clear()
+
+    with queue_lock:
+        if _pending_songs > 0:
+            _pending_songs -= 1
+        download_status.update({
+            'in_progress':      True,
+            'current_download': {
+                'url': url, 'metadata': metadata,
+                'user_sub': user_sub,
+                'started_at': datetime.now().isoformat()
+            },
+            'last_error': None,
+        })
+
+    logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_sub[:8]}]")
+
+    try:
+        music_dir = _user_music_dir({'sub': user_sub, '_pseudo': user_pseudo})
+        org       = MusicOrganizer(music_dir)
+
+        # Court-circuit doublon : si le titre est déjà en bibliothèque,
+        # on ne télécharge même pas (économie de bande passante / quota).
+        if org.target_exists(metadata):
+            logger.info(f"⏭️ Doublon ignoré (pas de download): {metadata.get('artist')} - {metadata.get('title')}")
+            org_result = {'success': True, 'skipped': True, 'final_path': ''}
+        else:
+            result = downloader.download(url, metadata)
+
+            if cancel_flag.is_set():
+                raise Exception("Annulé par l'utilisateur")
+            if not result['success']:
+                raise Exception(result.get('error', 'Erreur inconnue'))
+
+            # Genre iTunes (admin uniquement) — échec silencieux, jamais bloquant.
+            if item.get('user_role') == 'admin' and not metadata.get('genres'):
+                metadata['genres'] = lookup_genres(
+                    metadata.get('artist', ''),
+                    metadata.get('title', ''),
+                    metadata.get('album', ''),
+                )
+
+            org_result = org.organize(result['file_path'], metadata)
+            if not org_result['success']:
+                raise Exception(org_result.get('error', 'Erreur organisation'))
+
+        downloader.progress.phase   = 'completed'
+        downloader.progress.percent = 100
+        _skipped = bool(org_result.get('skipped'))
+
+        with queue_lock:
+            download_status['in_progress']    = False
+            download_status['current_download'] = None
+            download_status['last_completed'] = {
+                'success':   True,
+                'skipped':   _skipped,
+                'file_path': org_result.get('final_path', ''),
+                'metadata':  metadata,
+                'timestamp': datetime.now().isoformat(),
+            }
+            _batch_progress_after_song()
+
+        # Un doublon ignoré ne compte pas comme téléchargement (quota, logs, events).
+        if _skipped:
+            logger.info(f"✅ Doublon ignoré : {metadata.get('artist')} - {metadata.get('title')}")
+        else:
+            logger.info(f"✅ {org_result['final_path']}")
+            _label = user_pseudo or user_sub[:8]
+            activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
+            dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
+            events_client.emit(
+                'download_success',
+                pseudo=_label,
+                artist=metadata.get('artist', ''),
+                album=metadata.get('album', ''),
+                title=metadata.get('title', ''),
+            )
+            _daily_increment()
+
+    except Exception as e:
+        err_msg  = str(e)
+        friendly = _friendly_download_error(err_msg)
+        if _is_cookie_error(err_msg):
+            logger.warning(f"🍪 Échec lié aux cookies/âge — {_cookies_diagnostic()}")
+        logger.error(f"❌ {err_msg}")
+        with queue_lock:
+            download_status['in_progress']    = False
+            download_status['current_download'] = None
+            download_status['last_error']     = {
+                'error': friendly, 'metadata': metadata,
+                'timestamp': datetime.now().isoformat(),
+            }
+            _batch_progress_after_song()
+        events_client.emit(
+            'download_failed',
+            pseudo=user_pseudo or user_sub[:8],
+            artist=(metadata or {}).get('artist', ''),
+            album=(metadata or {}).get('album', ''),
+            title=(metadata or {}).get('title', ''),
+            detail={'error': err_msg[:300]},
+        )
+
+
 def queue_worker():
     logger.info("🔄 Queue worker démarré")
     while True:
         try:
-            item = download_queue.get()
-            if item is None:
+            job = job_queue.get()
+            if job is None:
                 break
-
-            url         = item['url']
-            metadata    = item['metadata']
-            user_sub    = item.get('user_sub', 'dev-user-local')
-            user_pseudo = item.get('user_pseudo', '')
-            cancel_flag.clear()
-
-            music_dir = _user_music_dir({'sub': user_sub, '_pseudo': user_pseudo})
-            org       = MusicOrganizer(music_dir)
-
-            with queue_lock:
-                download_status.update({
-                    'in_progress':      True,
-                    'current_download': {
-                        'url': url, 'metadata': metadata,
-                        'user_sub': user_sub,
-                        'started_at': datetime.now().isoformat()
-                    },
-                    'last_error': None,
-                })
-
-            logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_sub[:8]}]")
-
-            try:
-                # Court-circuit doublon : si le titre est déjà en bibliothèque,
-                # on ne télécharge même pas (économie de bande passante / quota).
-                if org.target_exists(metadata):
-                    logger.info(f"⏭️ Doublon ignoré (pas de download): {metadata.get('artist')} - {metadata.get('title')}")
-                    org_result = {'success': True, 'skipped': True, 'final_path': ''}
-                else:
-                    result = downloader.download(url, metadata)
-
-                    if cancel_flag.is_set():
-                        raise Exception("Annulé par l'utilisateur")
-                    if not result['success']:
-                        raise Exception(result.get('error', 'Erreur inconnue'))
-
-                    # Genre iTunes (admin uniquement) — échec silencieux, jamais bloquant.
-                    if item.get('user_role') == 'admin' and not metadata.get('genres'):
-                        metadata['genres'] = lookup_genres(
-                            metadata.get('artist', ''),
-                            metadata.get('title', ''),
-                            metadata.get('album', ''),
-                        )
-
-                    org_result = org.organize(result['file_path'], metadata)
-                    if not org_result['success']:
-                        raise Exception(org_result.get('error', 'Erreur organisation'))
-
-                downloader.progress.phase   = 'completed'
-                downloader.progress.percent = 100
-                _skipped = bool(org_result.get('skipped'))
-
-                with queue_lock:
-                    download_status['in_progress']    = False
-                    download_status['current_download'] = None
-                    download_status['batch_done']     = int(download_status.get('batch_done', 0)) + 1
-                    download_status['last_completed'] = {
-                        'success':   True,
-                        'skipped':   _skipped,
-                        'file_path': org_result.get('final_path', ''),
-                        'metadata':  metadata,
-                        'timestamp': datetime.now().isoformat(),
-                    }
-                    if (download_status['batch_done'] >= download_status.get('batch_total', 0)
-                            and download_queue.qsize() == 0):
-                        download_status['batch_active'] = False
-
-                # Un doublon ignoré ne compte pas comme téléchargement (quota, logs, events).
-                if _skipped:
-                    logger.info(f"✅ Doublon ignoré : {metadata.get('artist')} - {metadata.get('title')}")
-                else:
-                    logger.info(f"✅ {org_result['final_path']}")
-                    _label = user_pseudo or user_sub[:8]
-                    activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
-                    dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
-                    events_client.emit(
-                        'download_success',
-                        pseudo=_label,
-                        artist=metadata.get('artist', ''),
-                        album=metadata.get('album', ''),
-                        title=metadata.get('title', ''),
-                    )
-                    _daily_increment()
-
-            except Exception as e:
-                err_msg  = str(e)
-                friendly = _friendly_download_error(err_msg)
-                if _is_cookie_error(err_msg):
-                    logger.warning(f"🍪 Échec lié aux cookies/âge — {_cookies_diagnostic()}")
-                logger.error(f"❌ {err_msg}")
-                with queue_lock:
-                    download_status['in_progress']    = False
-                    download_status['current_download'] = None
-                    download_status['batch_done']     = int(download_status.get('batch_done', 0)) + 1
-                    download_status['last_error']     = {
-                        'error': friendly, 'metadata': metadata,
-                        'timestamp': datetime.now().isoformat(),
-                    }
-                    if (download_status['batch_done'] >= download_status.get('batch_total', 0)
-                            and download_queue.qsize() == 0):
-                        download_status['batch_active'] = False
-                events_client.emit(
-                    'download_failed',
-                    pseudo=user_pseudo or user_sub[:8],
-                    artist=(metadata or {}).get('artist', ''),
-                    album=(metadata or {}).get('album', ''),
-                    title=(metadata or {}).get('title', ''),
-                    detail={'error': err_msg[:300]},
-                )
-
-            download_queue.task_done()
-
+            # Un job = un album (ou un titre seul) : on draine ses pistes en séquence
+            # avant de prendre le job suivant.
+            for item in job.get('songs', []):
+                try:
+                    _process_song(item)
+                except Exception as e:
+                    logger.error(f"❌ Worker error (titre): {e}")
+            job_queue.task_done()
         except Exception as e:
             logger.error(f"❌ Worker error: {e}")
             time.sleep(1)

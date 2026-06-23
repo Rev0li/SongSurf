@@ -100,8 +100,8 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 
 ## Threading model (SongSurf)
 
-- Main Flask thread: HTTP, validation, enqueue (`queue.Queue`, max 50, daily limit `DAILY_DOWNLOAD_LIMIT`).
-- One download worker thread: processes the queue sequentially, updates `download_status` under `queue_lock`.
+- Main Flask thread: HTTP, validation, enqueue. The queue is **job-level** (`job_queue`, `queue.Queue` of jobs, max `MAX_PENDING_JOBS=100`): one album = one job, a single track = a one-song job (`_enqueue_job`). Daily limit `DAILY_DOWNLOAD_LIMIT`. `_pending_songs` (under `queue_lock`) = songs queued but not yet started, exposed as `queue_size` in `/api/status`. The frontend submits everything at once; the server owns ordering, so queuing several albums no longer overflows a flat queue and the batch keeps draining even if the page is closed.
+- One download worker thread: pulls a job, processes its songs sequentially via `_process_song`, then takes the next job; updates `download_status` under `queue_lock`.
 - Prefetch daemon thread: pre-downloads the first playlist track for instant cover preview.
 - Watcher side: inactivity thread (warn after `INACTIVITY_WARN_TIMEOUT`, stop container after `+ INACTIVITY_GRACE_TIMEOUT`).
 
