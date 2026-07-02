@@ -87,6 +87,17 @@ async function previewUrl(url) {
   }
 }
 
+// Les titres restreints (âge/connexion) échouent côté yt-dlp dès que les cookies
+// sont périmés : on resynchronise avant chaque mise en file, en attendant la fin.
+// Jamais fatal — sans cookies frais, les titres non restreints passent quand même.
+let lastCookieSyncAt = 0;
+const COOKIE_SYNC_TTL_MS = 60 * 1000;
+
+async function syncCookiesBeforeQueue() {
+  if (Date.now() - lastCookieSyncAt < COOKIE_SYNC_TTL_MS) return;
+  await getCookiesAndSend();
+}
+
 async function queueUrl(url, meta = {}) {
   await loadConfig();
   if (!songSurfUrl)
@@ -94,6 +105,7 @@ async function queueUrl(url, meta = {}) {
   if (serverStatus === 'offline')
     return { success: false, error: 'SongSurf est hors ligne.' };
   try {
+    await syncCookiesBeforeQueue();
     const body = { url, ...meta };
     const data = await apiPost('/api/queue-direct', body, 10000);
     if (data._noConfig) return { success: false, error: 'URL SongSurf non configurée.' };
@@ -147,7 +159,11 @@ async function getCookiesAndSend() {
       signal:      AbortSignal.timeout(10000),
     });
     const data = await r.json().catch(() => ({}));
-    if (r.ok && data.success) { setStatus('online'); return { success: true, count: all.length }; }
+    if (r.ok && data.success) {
+      setStatus('online');
+      lastCookieSyncAt = Date.now();
+      return { success: true, count: all.length };
+    }
     if (r.status === 401 || r.status === 503) return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
     return { success: false, error: data.error || `Erreur ${r.status}` };
   } catch {
@@ -159,6 +175,7 @@ async function queueBatch(items) {
   await loadConfig();
   if (!songSurfUrl)
     return { success: false, error: 'URL SongSurf non configurée. Ouvre les options.' };
+  await syncCookiesBeforeQueue();
   let added = 0, failed = 0;
   for (const item of items) {
     // Accept both plain URL strings and {url, artist, album} objects
