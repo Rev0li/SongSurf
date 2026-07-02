@@ -182,6 +182,7 @@
     `;
 
     document.body.appendChild(panelEl);
+    positionPanel();
 
     document.getElementById('ssp-cancel').addEventListener('click', () => {
       closePanel();
@@ -213,16 +214,29 @@
 
   // ── Panel artiste (discographie — batch sans métadonnées) ─────────────────────
 
-  function scrapeAlbumUrls() {
+  // Shelf headings on the artist page: "Albums" / "Singles et EP" (FR),
+  // "Albums" / "Singles & EPs" (EN). Singles and EPs are MPREb_ releases too,
+  // so the link extraction is identical — only the shelf heading differs.
+  const SHELF_MATCHERS = {
+    albums:  (t) => t.includes('album'),
+    singles: (t) => /single|\beps?\b/.test(t),
+  };
+
+  const RELEASE_KIND_META = {
+    albums:  { label: 'Albums',       noun: 'album'     },
+    singles: { label: 'EP & Singles', noun: 'EP/single' },
+  };
+
+  function scrapeReleases(kind) {
     const seen       = new Set();
     const items      = [];
     const artistName = document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || '';
+    const matches    = SHELF_MATCHERS[kind];
 
-    // Target only the "Albums" shelf — not Singles, Videos, EPs, etc.
     const shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer');
     for (const shelf of shelves) {
       const heading = shelf.querySelector('yt-formatted-string.title');
-      if (!heading || !heading.textContent.trim().toLowerCase().includes('album')) continue;
+      if (!heading || !matches(heading.textContent.trim().toLowerCase())) continue;
 
       shelf.querySelectorAll('a[href*="browse/MPREb_"]').forEach(link => {
         try {
@@ -246,12 +260,13 @@
     return items;
   }
 
-  function showArtistPanel(albums) {
+  function showArtistPanel(items, kind) {
     closePanel();
     ensurePanelStyles();
 
-    const artistName = (albums[0] && albums[0].artist) || document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || 'Artiste';
-    const n = albums.length;
+    const artistName = (items[0] && items[0].artist) || document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || 'Artiste';
+    const n = items.length;
+    const { label, noun } = RELEASE_KIND_META[kind] || RELEASE_KIND_META.albums;
 
     panelEl = document.createElement('div');
     panelEl.id = 'songsurf-panel';
@@ -259,9 +274,9 @@
     panelEl.innerHTML = `
       <div id="ssp-inner">
         <div id="ssp-header">
-          <div id="ssp-type">🎤 Artiste · Discographie</div>
+          <div id="ssp-type">🎤 Artiste · ${label}</div>
           <div id="ssp-title" title="${esc(artistName)}">${esc(artistName)}</div>
-          <div id="ssp-count">${n} album${n > 1 ? 's' : ''} détecté${n > 1 ? 's' : ''}</div>
+          <div id="ssp-count">${n} ${noun}${n > 1 ? 's' : ''} détecté${n > 1 ? 's' : ''}</div>
         </div>
         <div id="ssp-actions">
           <button id="ssp-cancel">Annuler</button>
@@ -271,6 +286,7 @@
     `;
 
     document.body.appendChild(panelEl);
+    positionPanel();
 
     document.getElementById('ssp-cancel').addEventListener('click', () => {
       closePanel();
@@ -282,11 +298,11 @@
       btn.disabled    = true;
       btn.textContent = '…';
 
-      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_BATCH', items: albums });
+      const result = await chrome.runtime.sendMessage({ type: 'QUEUE_BATCH', items });
 
       closePanel();
       if (result && result.success) {
-        showToast('✅', `${result.added} album${result.added > 1 ? 's' : ''} ajouté${result.added > 1 ? 's' : ''} à la queue SongSurf`);
+        showToast('✅', `${result.added} ${noun}${result.added > 1 ? 's' : ''} ajouté${result.added > 1 ? 's' : ''} à la queue SongSurf`);
         flashButton('green');
       } else {
         showToast('❌', (result && result.error) || 'Erreur', true);
@@ -300,100 +316,239 @@
                       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── Floating button ───────────────────────────────────────────────────────────
+  // ── Floating buttons (draggable) ──────────────────────────────────────────────
 
-  let floatBtn = null, lastType = null, isBusy = false;
+  let fabWrap = null, floatBtn = null, singlesBtn = null, lastType = null, isBusy = false;
+  let dragMoved = false;
+  const FAB_POS_KEY = 'ssf_fab_pos';
+  const FAB_BG = 'rgba(20,20,30,.88)';
 
-  function ensureButton() {
-    if (floatBtn && document.body.contains(floatBtn)) return;
-    floatBtn = document.createElement('button');
-    floatBtn.id = 'songsurf-fab';
-    Object.assign(floatBtn.style, {
-      position: 'fixed', bottom: '24px', right: '20px', zIndex: '2147483647',
+  function makeFabButton(id) {
+    const btn = document.createElement('button');
+    btn.id = id;
+    Object.assign(btn.style, {
       display: 'flex', alignItems: 'center', gap: '7px',
       padding: '9px 18px', borderRadius: '24px', border: 'none',
-      background: 'rgba(20,20,30,.88)', backdropFilter: 'blur(8px)',
+      background: FAB_BG, backdropFilter: 'blur(8px)',
       color: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif',
       fontSize: '13px', fontWeight: '600', cursor: 'pointer',
       boxShadow: '0 2px 16px rgba(0,0,0,.5)',
-      transition: 'transform .15s, background .15s, opacity .2s',
+      transition: 'background .15s, opacity .2s',
       outline: 'none', whiteSpace: 'nowrap',
     });
-
-    floatBtn.addEventListener('mouseenter', () => {
-      if (!isBusy) floatBtn.style.background = 'rgba(37,99,235,.9)';
+    btn.addEventListener('mouseenter', () => {
+      if (!isBusy) btn.style.background = 'rgba(37,99,235,.9)';
     });
-    floatBtn.addEventListener('mouseleave', () => {
-      if (!isBusy) floatBtn.style.background = 'rgba(20,20,30,.88)';
+    btn.addEventListener('mouseleave', () => {
+      if (!isBusy) btn.style.background = FAB_BG;
     });
-    floatBtn.addEventListener('mousedown', () => { floatBtn.style.transform = 'scale(.95)'; });
-    floatBtn.addEventListener('mouseup',   () => { floatBtn.style.transform = 'scale(1)'; });
-
-    floatBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (isBusy) return;
-
-      // If panel already open, close it
-      if (panelEl) { closePanel(); updateButtonForUrl(location.href); return; }
-
-      const type = detectType(location.href);
-      if (!type) return;
-
-      // ── Artiste : scraping DOM synchrone, pas d'appel API ──
-      if (type === 'artist') {
-        const albums = scrapeAlbumUrls();
-        if (!albums.length) {
-          showToast('⚠️', 'Aucun album détecté — fais défiler la discographie d\'abord', true);
-          updateButtonForUrl(location.href);
-          return;
-        }
-        showArtistPanel(albums);
-        setButtonLabel('Fermer ✕', '');
-        return;
-      }
-
-      // ── Song / album / playlist : preview API ──
-      const url = getCleanUrl(location.href, type);
-
-      isBusy = true;
-      setButtonLabel('Analyse…', '⏳');
-      floatBtn.style.background = 'rgba(20,20,30,.88)';
-
-      const result = await chrome.runtime.sendMessage({ type: 'PREVIEW_URL', url });
-
-      isBusy = false;
-
-      if (!result || !result.success) {
-        const msg = result?.error || 'Erreur réseau';
-        if (msg.includes('uthenti') || msg.includes('connecte')) {
-          showToast('🔐', msg, true);
-        } else {
-          showToast('❌', msg, true);
-        }
-        updateButtonForUrl(location.href);
-        return;
-      }
-
-      showPanel(result, url, type);
-      setButtonLabel('Fermer ✕', '');
-    });
-
-    document.body.appendChild(floatBtn);
+    return btn;
   }
 
-  function setButtonLabel(label, emoji) {
-    if (!floatBtn) return;
-    floatBtn.innerHTML = emoji
+  function ensureButtons() {
+    if (fabWrap && document.body.contains(fabWrap)) return;
+    if (!fabWrap) {
+      fabWrap = document.createElement('div');
+      fabWrap.id = 'songsurf-fab-wrap';
+      Object.assign(fabWrap.style, {
+        position: 'fixed', bottom: '24px', right: '20px', zIndex: '2147483647',
+        display: 'flex', flexDirection: 'column', gap: '8px',
+        alignItems: 'flex-end', touchAction: 'none', userSelect: 'none',
+      });
+
+      singlesBtn = makeFabButton('songsurf-fab-singles');
+      floatBtn   = makeFabButton('songsurf-fab');
+      fabWrap.appendChild(singlesBtn);
+      fabWrap.appendChild(floatBtn);
+
+      floatBtn.addEventListener('click', onMainButtonClick);
+      singlesBtn.addEventListener('click', onSinglesButtonClick);
+
+      initFabDrag(fabWrap);
+      restoreFabPos();
+    }
+    document.body.appendChild(fabWrap);
+  }
+
+  async function onMainButtonClick(e) {
+    e.stopPropagation();
+    if (isBusy) return;
+
+    // If panel already open, close it
+    if (panelEl) { closePanel(); updateButtonForUrl(location.href); return; }
+
+    const type = detectType(location.href);
+    if (!type) return;
+
+    // ── Artiste : scraping DOM synchrone, pas d'appel API ──
+    if (type === 'artist') {
+      openArtistPanel(floatBtn, 'albums');
+      return;
+    }
+
+    // ── Song / album / playlist : preview API ──
+    const url = getCleanUrl(location.href, type);
+
+    isBusy = true;
+    setButtonLabel('Analyse…', '⏳');
+    floatBtn.style.background = FAB_BG;
+
+    const result = await chrome.runtime.sendMessage({ type: 'PREVIEW_URL', url });
+
+    isBusy = false;
+
+    if (!result || !result.success) {
+      const msg = result?.error || 'Erreur réseau';
+      if (msg.includes('uthenti') || msg.includes('connecte')) {
+        showToast('🔐', msg, true);
+      } else {
+        showToast('❌', msg, true);
+      }
+      updateButtonForUrl(location.href);
+      return;
+    }
+
+    showPanel(result, url, type);
+    setButtonLabel('Fermer ✕', '');
+  }
+
+  function onSinglesButtonClick(e) {
+    e.stopPropagation();
+    if (isBusy) return;
+    if (panelEl) { closePanel(); updateButtonForUrl(location.href); return; }
+    openArtistPanel(singlesBtn, 'singles');
+  }
+
+  function openArtistPanel(btn, kind) {
+    const items = scrapeReleases(kind);
+    if (!items.length) {
+      const { noun } = RELEASE_KIND_META[kind];
+      showToast('⚠️', `Aucun ${noun} détecté — fais défiler la discographie d'abord`, true);
+      updateButtonForUrl(location.href);
+      return;
+    }
+    showArtistPanel(items, kind);
+    setBtnLabel(btn, 'Fermer ✕', '');
+  }
+
+  // ── Drag & drop du bloc de boutons ──
+  // Un vrai clic reste un clic : le drag ne démarre qu'au-delà de 6 px de
+  // mouvement, et le clic qui suit un drag est avalé (listener en capture).
+
+  function initFabDrag(wrap) {
+    let startX = 0, startY = 0, origL = 0, origT = 0, pid = null;
+
+    // Pas de setPointerCapture : Chrome retargetterait le click vers le wrap
+    // et les clics normaux sur les boutons ne partiraient plus. Le suivi se
+    // fait sur window, ce qui couvre aussi les mouvements rapides hors bouton.
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      pid = e.pointerId;
+      dragMoved = false;
+      startX = e.clientX; startY = e.clientY;
+      const r = wrap.getBoundingClientRect();
+      origL = r.left; origT = r.top;
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (pid === null || e.pointerId !== pid) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!dragMoved && Math.hypot(dx, dy) < 6) return;
+      dragMoved = true;
+      setFabPos(origL + dx, origT + dy);
+    });
+
+    const endDrag = (e) => {
+      if (pid === null || e.pointerId !== pid) return;
+      pid = null;
+      if (dragMoved) {
+        saveFabPos();
+        // Le click de fin de drag (s'il part) est avalé par le listener
+        // capture ci-dessous ; on réarme après coup dans tous les cas.
+        setTimeout(() => { dragMoved = false; }, 0);
+      }
+    };
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+
+    wrap.addEventListener('click', (e) => {
+      if (dragMoved) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+  }
+
+  function setFabPos(left, top) {
+    if (!fabWrap) return;
+    const r    = fabWrap.getBoundingClientRect();
+    const maxL = window.innerWidth  - r.width  - 4;
+    const maxT = window.innerHeight - r.height - 4;
+    fabWrap.style.left   = `${Math.min(Math.max(4, left), maxL)}px`;
+    fabWrap.style.top    = `${Math.min(Math.max(4, top),  maxT)}px`;
+    fabWrap.style.right  = 'auto';
+    fabWrap.style.bottom = 'auto';
+  }
+
+  function reclampFab() {
+    if (fabWrap && fabWrap.style.left)
+      setFabPos(parseFloat(fabWrap.style.left), parseFloat(fabWrap.style.top));
+  }
+
+  function saveFabPos() {
+    try {
+      const r = fabWrap.getBoundingClientRect();
+      chrome.storage.local.set({ [FAB_POS_KEY]: { left: r.left, top: r.top } });
+    } catch {}
+  }
+
+  function restoreFabPos() {
+    try {
+      chrome.storage.local.get(FAB_POS_KEY, (v) => {
+        const pos = v && v[FAB_POS_KEY];
+        if (pos && typeof pos.left === 'number' && typeof pos.top === 'number')
+          setFabPos(pos.left, pos.top);
+      });
+    } catch {}
+  }
+
+  window.addEventListener('resize', reclampFab);
+
+  // Le panneau s'ancre au-dessus des boutons (où qu'ils soient), en restant
+  // dans le viewport ; s'il n'y a pas la place au-dessus, il s'ouvre dessous.
+  function positionPanel() {
+    if (!panelEl || !fabWrap) return;
+    const r      = fabWrap.getBoundingClientRect();
+    const pw     = panelEl.offsetWidth  || 290;
+    const ph     = panelEl.offsetHeight || 200;
+    const margin = 10;
+    const left   = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
+    let top = r.top - ph - margin;
+    if (top < 8) top = Math.min(r.bottom + margin, window.innerHeight - ph - 8);
+    Object.assign(panelEl.style, {
+      left: `${left}px`, top: `${Math.max(8, top)}px`,
+      right: 'auto', bottom: 'auto',
+    });
+  }
+
+  function setBtnLabel(btn, label, emoji) {
+    if (!btn) return;
+    btn.innerHTML = emoji
       ? `<span style="font-size:16px">${emoji}</span><span>${label}</span>`
       : `<span>${label}</span>`;
   }
 
+  function setButtonLabel(label, emoji) {
+    setBtnLabel(floatBtn, label, emoji);
+  }
+
   function flashButton(color) {
-    if (!floatBtn) return;
     const bg = color === 'green' ? 'rgba(16,185,129,.85)' : 'rgba(239,68,68,.8)';
-    floatBtn.style.background = bg;
+    for (const b of [floatBtn, singlesBtn])
+      if (b && b.style.display !== 'none') b.style.background = bg;
     setTimeout(() => {
-      floatBtn.style.background = 'rgba(20,20,30,.88)';
+      for (const b of [floatBtn, singlesBtn])
+        if (b) b.style.background = FAB_BG;
       updateButtonForUrl(location.href);
     }, 1200);
   }
@@ -402,18 +557,27 @@
     const type = detectType(url);
     isBusy = false;
     if (!type) {
-      if (floatBtn) floatBtn.style.display = 'none';
+      if (fabWrap) fabWrap.style.display = 'none';
       lastType = null;
       return;
     }
-    ensureButton();
-    floatBtn.style.display = 'flex';
+    ensureButtons();
+    fabWrap.style.display = 'flex';
     lastType = type;
-    const m = TYPE_META[type];
-    setButtonLabel(`+ SongSurf · ${m.label}`, m.emoji);
-    floatBtn.title = type === 'artist'
-      ? 'Détecter les albums de cet artiste et ajouter à SongSurf'
-      : `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
+
+    if (type === 'artist') {
+      singlesBtn.style.display = 'flex';
+      setBtnLabel(floatBtn,   '+ SongSurf · Albums',       '💿');
+      setBtnLabel(singlesBtn, '+ SongSurf · EP & Singles', '🎶');
+      floatBtn.title   = 'Détecter les albums de cet artiste et les ajouter à SongSurf';
+      singlesBtn.title = 'Détecter les EP et singles de cet artiste et les ajouter à SongSurf';
+    } else {
+      singlesBtn.style.display = 'none';
+      const m = TYPE_META[type];
+      setBtnLabel(floatBtn, `+ SongSurf · ${m.label}`, m.emoji);
+      floatBtn.title = `Analyser et ajouter ${m.label.toLowerCase()} à SongSurf`;
+    }
+    reclampFab();
   }
 
   // ── SPA watcher ───────────────────────────────────────────────────────────────
@@ -426,8 +590,8 @@
       closePanel();
       updateButtonForUrl(location.href);
     }
-    if (floatBtn && !document.body.contains(floatBtn) && lastType)
-      document.body.appendChild(floatBtn);
+    if (fabWrap && !document.body.contains(fabWrap) && lastType)
+      document.body.appendChild(fabWrap);
     if (toastEl && !document.body.contains(toastEl))
       document.body.appendChild(toastEl);
   });
