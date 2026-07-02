@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Global toggle:
-#   DEPLOY_TARGET=local -> docker-compose.yml + docker-compose.local.yml
+# Global toggle (branche `locale` : local = standalone, sans watcher):
+#   DEPLOY_TARGET=local -> docker-compose.standalone.yml (SongSurf seul, DEV_MODE)
+#   DEPLOY_TARGET=full  -> docker-compose.yml + docker-compose.local.yml (stack complète)
 #   DEPLOY_TARGET=nas   -> docker-compose.yml + docker-compose.nas.yml
 TARGET="${DEPLOY_TARGET:-local}"
 FILES=(-f docker-compose.yml)
@@ -21,7 +22,11 @@ fi
 
 case "$TARGET" in
     local)
-        # Vérifie si le fichier local existe avant de l'ajouter
+        # Standalone : SongSurf seul, remplace entièrement la base (pas de watcher)
+        FILES=(-f docker-compose.standalone.yml)
+        ;;
+    full)
+        # Stack complète watcher + songsurf (ancien mode local)
         if [ -f docker-compose.local.yml ]; then
             FILES+=(-f docker-compose.local.yml)
         fi
@@ -30,7 +35,7 @@ case "$TARGET" in
         FILES+=(-f docker-compose.nas.yml)
         ;;
     *)
-        echo "[compose-switch] DEPLOY_TARGET invalide: '$TARGET' (attendu: local|nas)" >&2
+        echo "[compose-switch] DEPLOY_TARGET invalide: '$TARGET' (attendu: local|full|nas)" >&2
         exit 2
         ;;
 esac

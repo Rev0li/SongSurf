@@ -22,11 +22,14 @@ Repo layout note: the actual app lives under `SongSurf/SongSurf/` (nested). Path
 
 ## Commands
 
+**Branch `locale`**: `make up-local` starts SongSurf **standalone** (no watcher, `DEV_MODE=true`, port 8081 on 127.0.0.1, zero secrets — `docker-compose.standalone.yml`). The old watcher+songsurf local stack moved to `make up-full` (`DEPLOY_TARGET=full`). `app.py` adds extension CORS headers itself in this mode (in prod the watcher does it).
+
 All `make` commands run from `SongSurf/SongSurf/`:
 
 ```bash
-make secrets         # interactive wizard → .env + .secrets (first run)
-make up-local        # start in local mode (bridge network, localhost ports)
+make secrets         # interactive wizard → .env + .secrets (first run, full/nas only)
+make up-local        # SongSurf standalone (no watcher, DEV_MODE, port 8081)
+make up-full         # full stack watcher + songsurf (bridge network)
 make up-nas          # start in NAS mode (network_mode: host, JWT required)
 make logs            # stream all container logs (logs-watcher / logs-songsurf)
 make down / restart  # stop / full restart

@@ -387,6 +387,24 @@ def ping():
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
 
 
+# ── CORS extension (mode standalone uniquement) ────────────────────────────────
+# En production le Watcher gère le CORS ; en accès direct sans Watcher
+# (DEV_MODE, branche `locale`) Flask doit répondre lui-même à l'extension.
+# Flask répond automatiquement aux OPTIONS ; ce hook y ajoute les en-têtes CORS.
+
+@app.after_request
+def _dev_mode_cors(response):
+    if WATCHER_SECRET or not DEV_MODE:
+        return response
+    origin = request.headers.get('Origin', '')
+    if origin.startswith(('chrome-extension://', 'moz-extension://')) or origin == 'null':
+        response.headers['Access-Control-Allow-Origin']      = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods']     = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers']     = 'Content-Type, Accept'
+    return response
+
+
 # ── Download status ────────────────────────────────────────────────────────────
 
 @app.route('/api/status')

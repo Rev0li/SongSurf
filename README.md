@@ -25,26 +25,36 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 - For production auth: any service that issues an HS256 JWT in an `access_token` cookie with `sub` / `role` / `email` / `token_type=access` claims (see `documentation/CONNECTOR.md`)
 - For frontend development only: Node 20+
 
-## Quick start (local)
+## Quick start (local — this branch)
+
+> **Branch `locale`** — SongSurf standalone: no Watcher, no auth service, no secrets. One command and you're in.
 
 ```bash
 cd SongSurf
-make secrets      # interactive wizard → creates .env + .secrets
-make up-local     # build + start (bridge network, ports on localhost)
+make up-local     # build + start SongSurf alone (DEV_MODE, no secrets needed)
 ```
 
-Open `http://localhost:8080` (default `WATCHER_PORT`).
+Open `http://localhost:8081`. You are logged in as a local admin dev user; downloads land in `SongSurf/data/music/`.
 
-For a quick try without an auth provider, set `DEV_MODE=true` in `.env` — full bypass, local admin user. **Never in production.**
+The browser extension works too: point its options to `http://localhost:8081`.
+
+**Never expose this mode to the WAN** — `DEV_MODE` bypasses all auth (the port is bound to `127.0.0.1` on purpose).
 
 Useful commands:
 
 ```bash
-make logs         # stream all logs
+make logs         # stream logs
 make down         # stop
 make restart      # down → up
-make config       # preview resolved compose config
 make dev          # Flask backend only, no Docker (port 8081)
+make frontend-dev # SvelteKit hot-reload dev server (port 5173)
+```
+
+Need the full production-like stack (Watcher auth proxy + SongSurf)?
+
+```bash
+make secrets      # interactive wizard → creates .env + .secrets
+make up-full      # watcher + songsurf (bridge network) → http://localhost:8080
 make token        # generate a test JWT (test prod-mode auth without an auth service)
 ```
 
@@ -54,7 +64,7 @@ make token        # generate a test JWT (test prod-mode auth without an auth ser
 
 | Variable | Default | Description |
 |---|---|---|
-| `DEPLOY_TARGET` | `local` | `local` (bridge, published ports) or `nas` (host network) |
+| `DEPLOY_TARGET` | `local` | `local` (standalone, no watcher), `full` (watcher + songsurf, bridge) or `nas` (host network) |
 | `WATCHER_PORT` | `8080` | Public port — the only one that should face traffic |
 | `DEV_MODE` | `false` | `true` bypasses JWT auth — never in production |
 | `AUTH_SERVICE_LOGIN_URL` | _(empty)_ | Login page to redirect unauthenticated users to |

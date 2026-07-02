@@ -1,7 +1,8 @@
-# SongSurf — Makefile
+# SongSurf — Makefile (branche `locale` : local = standalone, sans watcher)
 #
 # Modes:
-#   make up-local   → force local mode (bridge network, localhost ports, DEV_MODE)
+#   make up-local   → SongSurf seul (DEV_MODE, port 8081, aucun secret requis)
+#   make up-full    → stack complète watcher + songsurf (bridge network)
 #   make up-nas     → force NAS mode   (host network, production)
 #   make up         → use DEPLOY_TARGET from .env (defaults to local)
 #
@@ -53,9 +54,12 @@ frontend-dev:                     ## SvelteKit hot-reload dev server (port 5173)
 
 # ── Docker — explicit mode targets ───────────────────────────────────────────
 
-.PHONY: up-local up-nas
-up-local: init-dirs               ## Start in LOCAL mode (bridge network, DEV_MODE=true)
+.PHONY: up-local up-full up-nas
+up-local: init-dirs               ## Start SongSurf STANDALONE (no watcher, DEV_MODE=true, port 8081)
 	DEPLOY_TARGET=local $(COMPOSE) up -d --build
+
+up-full: init-dirs                ## Start FULL stack (watcher + songsurf, bridge network)
+	DEPLOY_TARGET=full $(COMPOSE) up -d --build
 
 up-nas: init-dirs                 ## Start in NAS mode (host network, JWT auth required)
 	DEPLOY_TARGET=nas $(COMPOSE) up -d --build

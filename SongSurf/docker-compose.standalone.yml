@@ -1,0 +1,41 @@
+# SongSurf — mode standalone (branche `locale`)
+#
+# SongSurf seul, sans Watcher ni rev0auth :
+#   - DEV_MODE=true → utilisateur dev admin injecté, aucune auth
+#   - aucun secret requis (.env / .secrets facultatifs)
+#   - port publié en localhost uniquement — ne JAMAIS exposer ce mode sur le WAN
+#
+# Usage:
+#   make up-local   ← build + start
+#   → http://localhost:8081
+
+services:
+
+  songsurf:
+    container_name: songsurf
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: songsurf:latest
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:${SONGSURF_PORT:-8081}:${SONGSURF_PORT:-8081}"
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Paris
+      - FLASK_PORT=${SONGSURF_PORT:-8081}
+      - DEV_MODE=true
+
+    volumes:
+      - ./data/music:/data/music
+      - ./data/temp:/data/temp
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${FLASK_PORT:-8081}/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
