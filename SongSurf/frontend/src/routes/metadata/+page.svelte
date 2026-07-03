@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
-	import { addToast, user, confirmAction } from '$lib/stores.js';
+	import { addToast, user, confirmAction, helpOpen } from '$lib/stores.js';
 	import Header from '$lib/components/Header.svelte';
 
 	// ── Library tree ──────────────────────────────────────────────────────────────
@@ -479,6 +479,25 @@
 		finally { metaLoading = false; }
 	}
 
+	// ── Navigation prev/next dans l'album (flèches du panneau titre) ─────────────
+	$: albumOrderedTracks = selectedAlbum ? (albumPanelTracks ?? selectedAlbum.songs ?? []) : null;
+	$: albumTrackIndex    = albumOrderedTracks ? albumOrderedTracks.findIndex((t) => t.path === selectedPath) : -1;
+	$: prevTrack = albumOrderedTracks && albumTrackIndex > 0 ? albumOrderedTracks[albumTrackIndex - 1] : null;
+	$: nextTrack = albumOrderedTracks && albumTrackIndex >= 0 && albumTrackIndex < albumOrderedTracks.length - 1
+		? albumOrderedTracks[albumTrackIndex + 1] : null;
+
+	function goPrevTrack() { if (prevTrack) selectSong(prevTrack.path, true); }
+	function goNextTrack() { if (nextTrack) selectSong(nextTrack.path, true); }
+
+	function onSongNavKeydown(e) {
+		if (selectedType !== 'song' || $helpOpen) return;
+		if (e.ctrlKey || e.metaKey || e.altKey) return;
+		const tag = e.target?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+		if (e.key === 'ArrowLeft' && prevTrack) { e.preventDefault(); goPrevTrack(); }
+		else if (e.key === 'ArrowRight' && nextTrack) { e.preventDefault(); goNextTrack(); }
+	}
+
 	function goHome() {
 		selectedType   = null;
 		selectedPath   = '';
@@ -669,7 +688,7 @@
 	let secondaryOpen = false;
 </script>
 
-<svelte:window on:paste={onCoverPaste} />
+<svelte:window on:paste={onCoverPaste} on:keydown={onSongNavKeydown} />
 <svelte:head><title>Métadonnées — SongSurf</title></svelte:head>
 
 <Header />
@@ -708,7 +727,7 @@
 							<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(artist.path)}>
 								{expanded.has(artist.path) || q ? '▾' : '▸'}
 							</button>
-							<button class="artist-label-btn" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
+							<button class="artist-label-btn" on:click={() => selectArtist(artist)}>
 								<span class="tree-artist-pic">
 									{#if artist.has_picture}
 										<img
@@ -815,7 +834,7 @@
 				<div class="home-gallery">
 					<div class="home-gallery-grid">
 						{#each (tree.artists ?? []) as artist (artist.path)}
-							<button class="home-artist-card" on:click={() => { toggleExpand(artist.path); selectArtist(artist); }}>
+							<button class="home-artist-card" on:click={() => selectArtist(artist)}>
 								<div class="home-artist-cover">
 									<img
 										src={api.getArtistPictureUrl(artist.path, artistPicTs)}
@@ -1174,7 +1193,17 @@
 			{:else if metaError}
 				<div class="meta-empty"><span class="meta-empty-icon">❌</span><p>{metaError}</p></div>
 			{:else if meta}
-				<div class="meta-content">
+				<div class="song-nav-row">
+					{#if selectedAlbum}
+						<button
+							class="song-nav-arrow song-nav-prev"
+							disabled={!prevTrack}
+							on:click={goPrevTrack}
+							title={prevTrack ? `Titre précédent : ${songDisplayName(prevTrack.name)}` : 'Premier titre de l\'album'}
+							aria-label="Titre précédent"
+						>‹</button>
+					{/if}
+					<div class="meta-content">
 					<nav class="crumbs">
 						<button class="crumb" on:click={goHome}>🏠 Bibliothèque</button>
 						{#if songCrumbParts.length === 3}
@@ -1367,6 +1396,16 @@
 						{/if}
 
 					</div>
+					</div>
+					{#if selectedAlbum}
+						<button
+							class="song-nav-arrow song-nav-next"
+							disabled={!nextTrack}
+							on:click={goNextTrack}
+							title={nextTrack ? `Titre suivant : ${songDisplayName(nextTrack.name)}` : 'Dernier titre de l\'album'}
+							aria-label="Titre suivant"
+						>›</button>
+					{/if}
 				</div>
 			{/if}
 		{/if}
@@ -1553,6 +1592,21 @@
 	.meta-empty p { font-size: 14px; max-width: 280px; line-height: 1.5; margin: 0; }
 
 	.meta-content { max-width: 720px; margin: 0 auto; }
+
+	/* ── Navigation titre précédent/suivant (panneau titre) ──────── */
+	.song-nav-row { display: flex; align-items: flex-start; gap: var(--s3); }
+	.song-nav-row > .meta-content { flex: 1 1 auto; min-width: 0; }
+	.song-nav-arrow {
+		flex-shrink: 0;
+		position: sticky; top: var(--s6);
+		width: 40px; height: 40px; border-radius: 50%;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 20px; line-height: 1;
+		background: var(--bg-2); border: 1px solid var(--sep); color: var(--text);
+		cursor: pointer; transition: background .1s, color .1s, border-color .1s, opacity .1s;
+	}
+	.song-nav-arrow:hover:not(:disabled) { background: rgba(10,132,255,.12); color: var(--blue); border-color: var(--blue); }
+	.song-nav-arrow:disabled { opacity: .3; cursor: default; }
 
 	/* ── Fil d'Ariane unifié ──────────────────────────────────── */
 	.crumbs {
@@ -2017,5 +2071,9 @@
 
 		/* Hide drag handles (D&D is desktop-only) */
 		.lib-drag-handle { display: none; }
+
+		/* Song nav arrows: smaller, tighter gap */
+		.song-nav-row { gap: var(--s2); }
+		.song-nav-arrow { width: 32px; height: 32px; font-size: 16px; }
 	}
 </style>
