@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { nrm } from '$lib/utils.js';
 	import { addToast, user, confirmAction, helpOpen } from '$lib/stores.js';
@@ -15,6 +15,28 @@
 	const LS_SIDEBAR  = 'ssf.meta.sidebar';
 	const LS_SEL      = 'ssf.meta.sel';
 	const LS_TREE     = 'ssf.meta.tree';
+	const LS_HOME_SCROLL = 'ssf.meta.homeScroll';
+
+	// Position de scroll de la galerie d'artistes (page d'accueil de /metadata) :
+	// restaurée après un remount (ex: aller sur Téléchargement puis revenir).
+	let metaMainEl;
+	let homeScrollSaveTimer = null;
+
+	function saveHomeScroll() {
+		if (selectedType !== null || !metaMainEl) return;
+		clearTimeout(homeScrollSaveTimer);
+		homeScrollSaveTimer = setTimeout(() => {
+			try { localStorage.setItem(LS_HOME_SCROLL, String(metaMainEl.scrollTop)); } catch { /* ignore */ }
+		}, 150);
+	}
+
+	async function restoreHomeScroll() {
+		await tick();
+		if (selectedType !== null || !metaMainEl) return;
+		let y = 0;
+		try { y = parseInt(localStorage.getItem(LS_HOME_SCROLL) || '0', 10) || 0; } catch { /* ignore */ }
+		metaMainEl.scrollTop = y;
+	}
 
 	function persistTree() {
 		try { localStorage.setItem(LS_TREE, JSON.stringify(tree)); } catch { /* ignore */ }
@@ -322,6 +344,7 @@
 		if (cached?.artists) {
 			tree = cached;
 			restoreSelection();
+			restoreHomeScroll();
 		}
 
 		try {
@@ -332,6 +355,7 @@
 				persistTree();
 				// Re-résout la sélection contre l'arbre frais (les objets du cache sont périmés)
 				restoreSelection();
+				restoreHomeScroll();
 			}
 		} catch {
 			if (!tree) tree = { artists: [], playlists: [] };
@@ -826,7 +850,7 @@
 	{/if}
 
 	<!-- ── Right: panel ─────────────────────────────────────────── -->
-	<main class="meta-main">
+	<main class="meta-main" bind:this={metaMainEl} on:scroll={saveHomeScroll}>
 
 		<!-- ── Home / Artist gallery ── -->
 		{#if selectedType === null}
