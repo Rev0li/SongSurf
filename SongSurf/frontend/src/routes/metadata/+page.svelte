@@ -403,7 +403,8 @@
 	}
 
 	// ── Vraie tracklist du panneau album (TRCK réels) ─────────────────────────────
-	let albumPanelTracks = null;  // [{path, name, title, track_number}] triés par TRCK
+	let albumPanelTracks  = null;   // [{path, name, title, track_number}] triés par TRCK
+	let albumTracksLoading = false; // true pendant la lecture des tags réels (évite d'afficher l'ordre alpha puis de le remplacer)
 
 	function sortByTrck(tracks) {
 		const num = (t) => parseInt(String(t.track_number).split('/')[0], 10);
@@ -413,12 +414,16 @@
 	}
 
 	async function loadAlbumPanelTracks(albumPath) {
-		albumPanelTracks = null;
+		albumPanelTracks   = null;
+		albumTracksLoading = true;
 		try {
 			const data = await api.albumTracks(albumPath);
 			if (selectedAlbum?.path !== albumPath) return;
 			albumPanelTracks = sortByTrck(data.tracks ?? []);
-		} catch { albumPanelTracks = null; /* fallback : liste alphabétique */ }
+		} catch { albumPanelTracks = null; /* repli : ordre alphabétique si l'appel échoue */ }
+		finally {
+			if (selectedAlbum?.path === albumPath) albumTracksLoading = false;
+		}
 	}
 
 	function trackDisplayNum(t) {
@@ -1167,8 +1172,11 @@
 									</button>
 								{/each}
 							</div>
+						{:else if albumTracksLoading}
+							<!-- Chargement des TRCK réels : pas d'affichage intermédiaire pour éviter le clip visuel -->
+							<div class="meta-empty"><span class="meta-empty-icon">⏳</span><p>Chargement des titres…</p></div>
 						{:else}
-							<!-- Repli : ordre alphabétique tant que les TRCK ne sont pas chargés -->
+							<!-- Repli : ordre alphabétique si la lecture des TRCK a échoué -->
 							<div class="tracklist">
 								{#each selectedAlbum.songs as song, i (song.path)}
 									<button
