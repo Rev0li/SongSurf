@@ -78,6 +78,12 @@ export const api = {
 			body: JSON.stringify({ folder_path: folderPath, paths }),
 		});
 	},
+	setArtistGenre(folderPath, genre) {
+		return request('/api/library/set-artist-genre', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath, genre }),
+		});
+	},
 	auditArtist(path) {
 		return request(`/api/library/audit/artist?path=${encodeURIComponent(path)}`);
 	},

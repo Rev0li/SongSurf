@@ -399,6 +399,58 @@ def test_renumber_album_rejects_foreign_path(flask_setup):
     assert r.status_code == 400
 
 
+# ── Genre artiste (TCON réécrit sur tous les albums) ─────────────────────────
+
+def _make_real_mp3(path):
+    """MP3 minimal avec de vraies frames MPEG : mutagen.MP3() doit pouvoir l'ouvrir
+    (contrairement à _make_tagged_mp3, réservé aux routes qui ne lisent que l'ID3)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = b'\xff\xfb\x90\x00' + b'\x00' * 413  # MPEG-1 Layer III 128kbps 44.1kHz
+    path.write_bytes(frame * 4)
+
+
+def test_set_artist_genre_writes_all_albums(flask_setup):
+    c, music, _, app_mod = flask_setup
+    artist = music / 'user' / 'ArtistG'
+    _make_real_mp3(artist / 'Al1' / 'a.mp3')
+    _make_real_mp3(artist / 'Al1' / 'b.mp3')
+    _make_real_mp3(artist / 'Al2' / 'c.mp3')
+    (artist / 'Al1' / 'cover.jpg').write_bytes(b'x')  # ignoré (pas un MP3)
+
+    r = c.post('/api/library/set-artist-genre',
+               json={'folder_path': 'ArtistG', 'genre': 'Rock; Pop'},
+               headers=auth_headers(),
+               content_type='application/json')
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data['updated'] == 3 and data['errors'] == []
+
+    from mutagen.id3 import ID3
+    for rel in ('Al1/a.mp3', 'Al1/b.mp3', 'Al2/c.mp3'):
+        assert [str(t) for t in ID3(artist / rel)['TCON'].text] == ['Rock', 'Pop']
+
+
+def test_set_artist_genre_requires_genre(flask_setup):
+    c, music, _, app_mod = flask_setup
+    _make_tagged_mp3(music / 'user' / 'ArtistGE' / 'Al' / 'a.mp3')
+
+    r = c.post('/api/library/set-artist-genre',
+               json={'folder_path': 'ArtistGE', 'genre': '  '},
+               headers=auth_headers(),
+               content_type='application/json')
+    assert r.status_code == 400
+
+
+def test_set_artist_genre_rejects_music_root_and_escape(flask_setup):
+    c, *_ = flask_setup
+    for bad in ('.', '../autre'):
+        r = c.post('/api/library/set-artist-genre',
+                   json={'folder_path': bad, 'genre': 'Rock'},
+                   headers=auth_headers(),
+                   content_type='application/json')
+        assert r.status_code == 400, bad
+
+
 def test_me_returns_pseudo(flask_setup):
     c, *_ = flask_setup
     r = c.get('/api/me', headers=auth_headers(email='oliver.k@test.com'))

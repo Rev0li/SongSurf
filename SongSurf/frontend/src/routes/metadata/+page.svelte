@@ -415,6 +415,7 @@
 			const data = await api.albumStatus(artistPath);
 			if (selectedArtist?.path !== artistPath) return; // sélection changée entre-temps
 			artistAlbumStatus = Object.fromEntries((data.albums ?? []).map((a) => [a.path, a]));
+			prefillArtistGenre();
 		} catch { /* badges absents, pas bloquant */ }
 	}
 
@@ -424,6 +425,47 @@
 		if (st.missing.year)         parts.push(`année (${st.missing.year})`);
 		if (st.missing.track_number) parts.push(`n° de piste (${st.missing.track_number})`);
 		return parts.length ? `Manque : ${parts.join(', ')}` : 'Tags complets';
+	}
+
+	// ── Genre artiste (TCON réécrit sur tous les albums) ──────────────────────────
+	let artistGenre        = '';
+	let artistGenreTouched = false; // saisie manuelle en cours → ne pas écraser par le pré-remplissage
+	let artistGenreSaving  = false;
+
+	// Pré-remplit avec la combinaison de genres la plus fréquente parmi les albums.
+	function prefillArtistGenre() {
+		if (artistGenreTouched) return;
+		const counts = new Map();
+		for (const st of Object.values(artistAlbumStatus)) {
+			const g = (st.genres ?? []).join('; ');
+			if (g) counts.set(g, (counts.get(g) ?? 0) + 1);
+		}
+		artistGenre = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+	}
+
+	async function applyArtistGenre() {
+		const genre = artistGenre.trim();
+		if (!selectedArtist || !genre || artistGenreSaving) return;
+		const nSongs = artistAlbums.reduce((n, al) => n + al.songs.length, 0);
+		const ok = await confirmAction({
+			title: `Appliquer « ${genre} » ?`,
+			message: `Le genre (TCON) sera réécrit sur les ${nSongs} titre${nSongs > 1 ? 's' : ''} `
+				+ `des ${artistAlbums.length} album${artistAlbums.length > 1 ? 's' : ''} de ${selectedArtist.name}.`,
+			confirmLabel: 'Appliquer',
+		});
+		if (!ok) return;
+		artistGenreSaving = true;
+		try {
+			const res = await api.setArtistGenre(selectedArtist.path, genre);
+			if ((res.errors ?? []).length === 0) {
+				addToast(`Genre appliqué à ${res.updated} titre${res.updated > 1 ? 's' : ''}.`, 'info');
+			} else {
+				addToast(`${res.updated} OK, ${res.errors.length} erreur${res.errors.length > 1 ? 's' : ''}.`, 'error');
+			}
+			artistGenreTouched = false;
+			loadArtistAlbumStatus(selectedArtist.path); // rafraîchit badges + pré-remplissage
+		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
+		finally { artistGenreSaving = false; }
 	}
 
 	// ── Vraie tracklist du panneau album (TRCK réels) ─────────────────────────────
@@ -465,6 +507,8 @@
 		uploadingArtist  = false;
 		artistTs         = Date.now();
 		artistPicMissing = false;
+		artistGenre        = '';
+		artistGenreTouched = false;
 		resetAudit();
 		loadArtistAlbumStatus(artist.path);
 		persistSelection({ type: 'artist', path: artist.path });
@@ -933,6 +977,29 @@
 								<label for="artist-pic-file" class="btn btn-ghost btn-sm" class:loading={uploadingArtist}>
 									{uploadingArtist ? '⏳…' : '📁 Choisir'}
 								</label>
+							</div>
+						</div>
+
+						<div class="artist-genre-zone">
+							<label class="cover-hint" for="artist-genre-input">
+								Genre (TCON) — réécrit sur tous les albums · plusieurs valeurs : « ; »
+							</label>
+							<div class="artist-genre-row">
+								<input
+									id="artist-genre-input"
+									class="meta-input"
+									placeholder="Rap français; Hip-hop"
+									bind:value={artistGenre}
+									on:input={() => { artistGenreTouched = true; }}
+									on:keydown={(e) => e.key === 'Enter' && applyArtistGenre()}
+								/>
+								<button
+									class="btn btn-primary btn-sm"
+									on:click={applyArtistGenre}
+									disabled={artistGenreSaving || !artistGenre.trim()}
+								>
+									{artistGenreSaving ? '⏳…' : '🎼 Appliquer'}
+								</button>
 							</div>
 						</div>
 
@@ -1698,6 +1765,12 @@
 		line-height: 1.4;
 	}
 	.artist-album-count-label { font-size: 13px; color: var(--text-3); margin-bottom: var(--s4); }
+
+	/* Genre (TCON) appliqué à tout l'artiste */
+	.artist-genre-zone { margin-bottom: var(--s4); }
+	.artist-genre-zone .cover-hint { display: block; }
+	.artist-genre-row { display: flex; align-items: center; gap: var(--s2); }
+	.artist-genre-row .meta-input { max-width: 300px; }
 
 	/* ── Artist album grid ────────────────────────────────────── */
 	.artist-album-grid {

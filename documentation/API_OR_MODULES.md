@@ -66,8 +66,9 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library/song-meta` | GET | `?path=` → full dump: file info, audio info (duration, bitrate…), all ID3 frames (multi-value frames joined with `"; "`), custom TXXX tags, cover presence |
 | `/api/library/song-meta/save` | POST | `{path, tags: {title, artist, album_artist, album, year, track_number, disc_number, genre, composer, copyright, publisher, bpm, key, language, isrc, encoded_by, comment}}` — empty value deletes the frame. **`artist`, `genre`, `composer` accept `;`-separated input → written as real ID3v2.4 multi-value frames. `album_artist` stays single-value (Jellyfin grouping key)** |
 | `/api/library/album-tracks` | GET | `?folder_path=` → lightweight tracklist `[{path, name, title, track_number}]` (powers the album panel TRCK display and the "Numéroter les pistes" reorder mode) |
-| `/api/library/album-status` | GET | `?folder_path=<artist>` → per-album tag completeness `[{path, name, tracks, missing: {genre, year, track_number}, complete}]` (powers the artist-view badges) |
+| `/api/library/album-status` | GET | `?folder_path=<artist>` → per-album tag completeness `[{path, name, tracks, missing: {genre, year, track_number}, genres: [distinct TCON values], complete}]` (powers the artist-view badges + prefills the artist genre field) |
 | `/api/library/renumber-album` | POST | `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
+| `/api/library/set-artist-genre` | POST | `{folder_path: <artist>, genre}` → overwrites TCON on every MP3 under the artist folder (all albums, recursive). `genre` accepts `;`-separated multi-values → `{updated, errors[]}` |
 | `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
@@ -178,6 +179,7 @@ api.saveSongMeta(path, tags)               // POST /api/library/song-meta/save
 api.albumTracks(folderPath)                // GET  /api/library/album-tracks
 api.albumStatus(folderPath)                // GET  /api/library/album-status
 api.renumberAlbum(folderPath, paths)       // POST /api/library/renumber-album
+api.setArtistGenre(folderPath, genre)      // POST /api/library/set-artist-genre
 api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
 api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload

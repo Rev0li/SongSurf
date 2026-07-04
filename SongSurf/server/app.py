@@ -1664,10 +1664,12 @@ def library_album_status():
             if not mp3s:
                 continue
             missing = {'genre': 0, 'year': 0, 'track_number': 0}
+            genres  = set()
             for f in mp3s:
                 tags = _read_tags(f)
                 if not tags['genres']:
                     missing['genre'] += 1
+                genres.update(tags['genres'])
                 if not tags['year']:
                     missing['year'] += 1
                 if not tags['track_number']:
@@ -1677,6 +1679,7 @@ def library_album_status():
                 'name':     album_dir.name,
                 'tracks':   len(mp3s),
                 'missing':  missing,
+                'genres':   sorted(genres),
                 'complete': not any(missing.values()),
             })
         return jsonify({'success': True, 'albums': albums})
@@ -1732,6 +1735,47 @@ def library_renumber_album():
         return jsonify({'success': True, 'total': total})
     except Exception as e:
         logger.error(f"❌ /api/library/renumber-album: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/set-artist-genre', methods=['POST'])
+@auth_required
+def library_set_artist_genre():
+    """Écrit TCON sur tous les MP3 d'un dossier artiste (tous ses albums).
+
+    `genre` accepte plusieurs valeurs séparées par « ; » (frame multi-valeurs,
+    même convention que l'éditeur de métadonnées). Écrase le genre existant.
+    """
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        data        = request.get_json(silent=True) or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        genre       = str(data.get('genre') or '').strip()
+        if not folder_path or not genre:
+            return jsonify({'success': False, 'error': 'folder_path et genre requis'}), 400
+
+        base   = music_dir.resolve()
+        folder = (music_dir / folder_path).resolve()
+        if folder == base or not folder.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        mp3s = sorted(f for f in folder.rglob('*')
+                      if f.is_file() and f.suffix.lower() == '.mp3')
+        updated, errors = 0, []
+        for f in mp3s:
+            try:
+                _write_song_tags(f, {'genre': genre})
+                updated += 1
+            except Exception as e:
+                errors.append({'path': str(f.relative_to(base)), 'error': str(e)})
+
+        logger.info(f"🎼 Genre « {genre} » appliqué à {updated} titre(s) : {folder_path}")
+        return jsonify({'success': True, 'updated': updated, 'errors': errors})
+    except Exception as e:
+        logger.error(f"❌ /api/library/set-artist-genre: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
