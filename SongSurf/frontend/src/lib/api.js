@@ -57,7 +57,9 @@ export const api = {
 			body: JSON.stringify({ folder_path: folderPath }),
 		});
 	},
-	getFolderCoverUrl(folderPath, ts = Date.now()) {
+	// ts = version stable (incrémentée à l'upload d'une pochette), jamais Date.now() :
+	// une URL stable permet au navigateur de mettre l'image en cache.
+	getFolderCoverUrl(folderPath, ts = 0) {
 		return `/api/library/folder-cover?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},
 	songMeta(path) {
@@ -90,7 +92,7 @@ export const api = {
 	auditApply(changes) {
 		return request('/api/library/audit/apply', { method: 'POST', body: JSON.stringify({ changes }) });
 	},
-	getArtistPictureUrl(folderPath, ts = Date.now()) {
+	getArtistPictureUrl(folderPath, ts = 0) {
 		return `/api/library/artist-picture?folder_path=${encodeURIComponent(folderPath)}&t=${ts}`;
 	},
 	uploadSongCover(path, file) {

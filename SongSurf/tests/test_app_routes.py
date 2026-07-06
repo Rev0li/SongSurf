@@ -573,3 +573,71 @@ def test_delete_folder_missing_dir_404(flask_setup):
                json={'folder_path': 'NopeArtist/NopeAlbum'},
                headers=admin_headers(), content_type='application/json')
     assert r.status_code == 404
+
+
+# ── Images: cache HTTP + persistance de l'extraction APIC ────────────────────
+# Les URLs d'images sont versionnées côté frontend (?t=<version>) : le serveur
+# doit renvoyer un Cache-Control pour que le navigateur garde les pochettes.
+
+def _tiny_png_bytes():
+    from PIL import Image
+    import io as _io
+    buf = _io.BytesIO()
+    Image.new('RGB', (4, 4), (200, 30, 30)).save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def test_folder_cover_file_served_with_cache_header(flask_setup):
+    c, music, *_ = flask_setup
+    album = music / 'user' / 'ArtistC' / 'AlbumFile'
+    album.mkdir(parents=True)
+    (album / 'cover.jpg').write_bytes(b'\xff\xd8\xff\xdbjpegdata')
+
+    r = c.get('/api/library/folder-cover?folder_path=ArtistC/AlbumFile',
+              headers=auth_headers())
+    assert r.status_code == 200
+    assert r.headers['Cache-Control'] == 'private, max-age=86400'
+
+
+def test_folder_cover_apic_extraction_persists_cover_jpg(flask_setup):
+    c, music, *_ = flask_setup
+    album = music / 'user' / 'ArtistC' / 'AlbumApic'
+    _make_real_mp3(album / 'a.mp3')
+    from mutagen.id3 import ID3, APIC
+    id3 = ID3()
+    id3['APIC'] = APIC(encoding=3, mime='image/png', type=3, desc='',
+                       data=_tiny_png_bytes())
+    id3.save(album / 'a.mp3')
+
+    r = c.get('/api/library/folder-cover?folder_path=ArtistC/AlbumApic',
+              headers=auth_headers())
+    assert r.status_code == 200
+    assert r.headers['Cache-Control'] == 'private, max-age=86400'
+    assert r.data[:3] == b'\xff\xd8\xff'  # converti en JPEG
+    # L'extraction est persistée : les requêtes suivantes servent le fichier
+    # sans re-parser le MP3
+    cover = album / 'cover.jpg'
+    assert cover.exists() and cover.read_bytes()[:3] == b'\xff\xd8\xff'
+
+
+def test_folder_cover_no_cover_still_204(flask_setup):
+    c, music, *_ = flask_setup
+    album = music / 'user' / 'ArtistC' / 'AlbumBare'
+    _make_real_mp3(album / 'a.mp3')  # aucun APIC
+
+    r = c.get('/api/library/folder-cover?folder_path=ArtistC/AlbumBare',
+              headers=auth_headers())
+    assert r.status_code == 204
+    assert not (album / 'cover.jpg').exists()
+
+
+def test_artist_picture_served_with_cache_header(flask_setup):
+    c, music, *_ = flask_setup
+    artist = music / 'user' / 'ArtistPic'
+    artist.mkdir(parents=True)
+    (artist / 'folder.jpg').write_bytes(b'\xff\xd8\xffjpeg')
+
+    r = c.get('/api/library/artist-picture?folder_path=ArtistPic',
+              headers=auth_headers())
+    assert r.status_code == 200
+    assert r.headers['Cache-Control'] == 'private, max-age=86400'

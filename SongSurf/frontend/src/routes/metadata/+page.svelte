@@ -84,17 +84,26 @@
 	// ── Cover upload ──────────────────────────────────────────────────────────────
 	let uploadingCover      = false;
 	let coverError          = '';
-	let coverTs             = Date.now();
 
 	// ── Album panel state ─────────────────────────────────────────────────────────
-	let albumCoverTs        = Date.now();
 	let uploadingAlbumCover = false;
 
 	// ── Artist panel state ────────────────────────────────────────────────────────
-	let artistPicTs     = Date.now();
-	let artistTs        = Date.now(); // cache buster for album grid covers
 	let artistPicMissing = false;     // true when artist picture fails to load
 	let uploadingArtist = false;
+
+	// ── Versions d'images (cache navigateur) ─────────────────────────────────────
+	// Les URLs d'images portent ?t=<version> : stable entre les montages de la page
+	// (le navigateur garde les images en cache au lieu de tout re-télécharger),
+	// incrémentée uniquement à l'upload d'une pochette/photo, pour ce chemin-là.
+	const LS_IMGV = 'ssf.meta.imgv';
+	let imgVersions = {};
+	try { imgVersions = JSON.parse(localStorage.getItem(LS_IMGV) || '{}') || {}; } catch { /* ignore */ }
+
+	function bumpImgVersion(path) {
+		imgVersions = { ...imgVersions, [path]: (imgVersions[path] ?? 0) + 1 };
+		try { localStorage.setItem(LS_IMGV, JSON.stringify(imgVersions)); } catch { /* ignore */ }
+	}
 
 	// ── Renumérotation album (mode « Numéroter les pistes ») ─────────────────────
 	let reorderMode    = false;
@@ -505,7 +514,6 @@
 		meta           = null;
 		coverError     = '';
 		uploadingArtist  = false;
-		artistTs         = Date.now();
 		artistPicMissing = false;
 		artistGenre        = '';
 		artistGenreTouched = false;
@@ -523,7 +531,6 @@
 		metaError      = '';
 		dirty          = false;
 		detailsOpen    = false;
-		albumCoverTs   = Date.now();
 		resetReorder();
 		loadAlbumPanelTracks(album.path);
 		persistSelection({ type: 'album', path: album.path, artistPath: artist.path });
@@ -653,7 +660,7 @@
 		uploadingCover = true; coverError = '';
 		try {
 			await api.uploadSongCover(selectedPath, file);
-			coverTs = Date.now();
+			bumpImgVersion(albumFolderPath); // l'upload écrit aussi cover.jpg dans le dossier album
 			const data = await api.songMeta(selectedPath);
 			if (data.success) meta = data;
 			addToast('Pochette mise à jour.', 'info');
@@ -667,7 +674,7 @@
 		uploadingAlbumCover = true;
 		try {
 			await api.uploadAlbumCover(selectedAlbum.path, file);
-			albumCoverTs = Date.now();
+			bumpImgVersion(selectedAlbum.path);
 			addToast('Pochette album mise à jour.', 'info');
 		} catch (e) { addToast(e.message ?? 'Erreur upload', 'error'); }
 		finally { uploadingAlbumCover = false; }
@@ -679,7 +686,7 @@
 		uploadingArtist = true;
 		try {
 			await api.uploadArtistCover(selectedArtist.path, file);
-			artistPicTs = Date.now();
+			bumpImgVersion(selectedArtist.path);
 			addToast('Photo artiste mise à jour.', 'info');
 		} catch (e) { addToast(e.message ?? 'Erreur upload', 'error'); }
 		finally { uploadingArtist = false; }
@@ -729,9 +736,9 @@
 
 	// ── Derived for right panel ───────────────────────────────────────────────────
 	$: albumFolderPath = meta?.path ? meta.path.split('/').slice(0, -1).join('/') : '';
-	$: albumCoverUrl         = albumFolderPath ? api.getFolderCoverUrl(albumFolderPath, coverTs) : '';
-	$: selectedAlbumCoverUrl = selectedAlbum   ? api.getFolderCoverUrl(selectedAlbum.path, albumCoverTs) : '';
-	$: artistPicUrl          = selectedArtist  ? api.getArtistPictureUrl(selectedArtist.path, artistPicTs) : '';
+	$: albumCoverUrl         = albumFolderPath ? api.getFolderCoverUrl(albumFolderPath, imgVersions[albumFolderPath] ?? 0) : '';
+	$: selectedAlbumCoverUrl = selectedAlbum   ? api.getFolderCoverUrl(selectedAlbum.path, imgVersions[selectedAlbum.path] ?? 0) : '';
+	$: artistPicUrl          = selectedArtist  ? api.getArtistPictureUrl(selectedArtist.path, imgVersions[selectedArtist.path] ?? 0) : '';
 
 	// ID3 layout
 	const ID3_PRIMARY   = ['title','artist','album_artist','album','year','track_number','disc_number','genre'];
@@ -804,8 +811,9 @@
 								<span class="tree-artist-pic">
 									{#if artist.has_picture}
 										<img
-											src={api.getArtistPictureUrl(artist.path, artistPicTs)}
+											src={api.getArtistPictureUrl(artist.path, imgVersions[artist.path] ?? 0)}
 											alt="" loading="lazy"
+											on:load={(e) => e.currentTarget.style.display=''}
 											on:error={(e) => e.currentTarget.style.display='none'}
 										/>
 									{/if}
@@ -910,8 +918,9 @@
 							<button class="home-artist-card" on:click={() => selectArtist(artist)}>
 								<div class="home-artist-cover">
 									<img
-										src={api.getArtistPictureUrl(artist.path, artistPicTs)}
+										src={api.getArtistPictureUrl(artist.path, imgVersions[artist.path] ?? 0)}
 										alt="" loading="lazy"
+										on:load={(e) => e.currentTarget.style.display=''}
 										on:error={(e) => e.currentTarget.style.display='none'}
 									/>
 									<div class="home-artist-placeholder">🎤</div>
@@ -944,7 +953,7 @@
 				<!-- Artist header: photo + name + upload -->
 				<div class="artist-panel">
 					<div class="artist-pic-zone">
-						{#key `${selectedArtist?.path}:${artistPicTs}`}
+						{#key artistPicUrl}
 							<img
 								class="artist-pic"
 								src={artistPicUrl}
@@ -1026,9 +1035,10 @@
 									<button class="artist-album-card" on:click={() => selectAlbum(album, selectedArtist)}>
 										<div class="artist-album-cover">
 											<img
-												src={api.getFolderCoverUrl(album.path, artistTs)}
+												src={api.getFolderCoverUrl(album.path, imgVersions[album.path] ?? 0)}
 												alt=""
 												loading="lazy"
+												on:load={(e) => e.currentTarget.style.display=''}
 												on:error={(e) => e.currentTarget.style.display='none'}
 											/>
 											<div class="artist-album-placeholder">💿</div>
@@ -1143,7 +1153,7 @@
 				<!-- Album header: cover + info -->
 				<div class="album-header">
 					<div class="album-cover-zone">
-						{#key `${selectedAlbum?.path}:${albumCoverTs}`}
+						{#key selectedAlbumCoverUrl}
 							<img
 								class="album-cover-img"
 								src={selectedAlbumCoverUrl}
@@ -1467,7 +1477,7 @@
 									{#if meta.has_album_cover && albumCoverUrl}
 										<div class="cover-preview-area">
 											<div class="cover-item">
-												{#key coverTs}
+												{#key albumCoverUrl}
 													<img class="cover-thumb" src={albumCoverUrl} alt="Pochette" loading="lazy" />
 												{/key}
 												<span class="cover-label">Fichier externe</span>

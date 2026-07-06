@@ -56,8 +56,8 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library/move` | POST | `{source, target_folder}` — move one MP3; re-syncs TPE1/TALB to the new folder position |
 | `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists) |
 | `/api/library/delete-folder` | POST | **Admin only** (403 otherwise). `{folder_path}` — permanently delete an artist or album folder (`shutil.rmtree`); an artist folder left empty after an album deletion is removed too. Returns `{deleted_songs}`. The library root itself is rejected |
-| `/api/library/folder-cover` | GET | `?folder_path=` → cover image (cover/folder/artist.*, falls back to embedded APIC) |
-| `/api/library/artist-picture` | GET | `?folder_path=` → artist picture (folder.* / artist.*) |
+| `/api/library/folder-cover` | GET | `?folder_path=` → cover image (cover/folder/artist.*, falls back to embedded APIC). The APIC extraction is persisted as `cover.jpg` in the album folder (JPEG-converted, atomic write) so the MP3 is only parsed once. Sends `Cache-Control: private, max-age=86400` — safe because the frontend versions image URLs (`?t=<version>`, bumped only on cover upload) |
+| `/api/library/artist-picture` | GET | `?folder_path=` → artist picture (folder.* / artist.*). Same `Cache-Control: private, max-age=86400` |
 
 ### Metadata editor
 
@@ -183,8 +183,8 @@ api.setArtistGenre(folderPath, genre)      // POST /api/library/set-artist-genre
 api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
 api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
-api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder)
-api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder)
+api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder — ts = stable per-path version, NOT Date.now())
+api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder — same versioning)
 api.auditArtist(path)                      // GET  /api/library/audit/artist
 api.auditApply(changes)                    // POST /api/library/audit/apply
 api.genreBackfillStart()                   // POST /api/admin/genre-backfill

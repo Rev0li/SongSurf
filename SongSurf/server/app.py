@@ -616,6 +616,18 @@ def library_delete_folder():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# Les URLs d'images sont versionnées côté frontend (?t=<version>, incrémentée
+# uniquement à l'upload d'une pochette) : le navigateur peut donc mettre les
+# réponses en cache sans risque de servir une image périmée.
+_IMAGE_CACHE_CONTROL = 'private, max-age=86400'
+
+
+def _image_response(path_or_buffer, mime):
+    resp = send_file(path_or_buffer, mimetype=mime)
+    resp.headers['Cache-Control'] = _IMAGE_CACHE_CONTROL
+    return resp
+
+
 @app.route('/api/library/folder-cover')
 @auth_required
 def library_folder_cover():
@@ -641,7 +653,7 @@ def library_folder_cover():
         ):
             p = folder / name
             if p.exists():
-                return send_file(p, mimetype=mime)
+                return _image_response(p, mime)
 
         mp3s = sorted(folder.rglob('*.mp3'), key=lambda p: p.name.lower())
         if not mp3s:
@@ -652,7 +664,21 @@ def library_folder_cover():
         if tags:
             for frame in tags.values():
                 if isinstance(frame, APIC) and getattr(frame, 'data', None):
-                    return send_file(io.BytesIO(frame.data), mimetype=frame.mime or 'image/jpeg')
+                    # Persiste l'extraction en cover.jpg (dossier album uniquement,
+                    # pas un dossier artiste) : les requêtes suivantes servent le
+                    # fichier au lieu de re-parser le MP3 à chaque affichage.
+                    if mp3s[0].parent == folder:
+                        jpeg = MusicOrganizer(music_dir)._convert_image_bytes_to_jpeg(frame.data)
+                        if jpeg:
+                            try:
+                                cover = folder / 'cover.jpg'
+                                tmp   = folder / f'.cover-{secrets.token_hex(4)}.tmp'
+                                tmp.write_bytes(jpeg)
+                                tmp.replace(cover)  # rename atomique : jamais de fichier tronqué servi
+                                return _image_response(cover, 'image/jpeg')
+                            except OSError:
+                                pass
+                    return _image_response(io.BytesIO(frame.data), frame.mime or 'image/jpeg')
         return '', 204
     except Exception as e:
         logger.error(f"❌ /api/library/folder-cover: {e}")
@@ -680,7 +706,7 @@ def library_artist_picture():
         ):
             p = folder / name
             if p.exists():
-                return send_file(p, mimetype=mime)
+                return _image_response(p, mime)
         return '', 204
     except Exception:
         return '', 204

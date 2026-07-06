@@ -151,6 +151,7 @@ Key flows:
 
 - **UrlQueue** submits every item to the server at once (the server owns ordering and drains album by album), then reflects progress via the `workerBusy` store (`/api/status` polling); persists across navigation.
 - **Extension intake**: server-side fire-and-forget — the extension posts straight to `/api/queue-direct`, which extracts and enqueues without involving the page.
+- **`/metadata` navigation state + image caching**: expanded tree, sidebar, selection, scroll and the library tree itself (stale-while-revalidate) persist in localStorage (`ssf.meta.*`), so switching tabs and coming back restores the view without a cold reload. Cover/artist image URLs carry a stable per-path version (`?t=<n>`, stored in `ssf.meta.imgv`) bumped only when a cover is uploaded — combined with the backend's `Cache-Control` headers, the browser serves all images from cache across navigations instead of re-downloading them.
 - Design tokens come from the MyCss design system (CSS custom properties, light/dark via `html.dark`).
 
 ---
