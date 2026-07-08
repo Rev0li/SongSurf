@@ -239,6 +239,10 @@ def _candidate_target_urls():
 
 
 def _start_songsurf():
+    # Reset d'abord : sans ça, idle reste au-dessus du seuil pendant le boot
+    # et le tick d'inactivité peut re-stopper le conteneur avant la première
+    # requête proxifiée (l'appelant est toujours une requête authentifiée).
+    _update_activity()
     c = _get_container()
     if c is None:
         return
@@ -276,6 +280,24 @@ def _songsurf_ready(timeout=2):
     return False
 
 
+def _songsurf_busy():
+    """True si SongSurf a un téléchargement en cours ou des titres en file.
+    Statut injoignable → False (on n'empêche pas l'arrêt sur un service muet)."""
+    for base_url in _candidate_target_urls():
+        try:
+            r = req_lib.get(
+                f"{base_url}/api/status",
+                headers={'X-Watcher-Token': WATCHER_SECRET},
+                timeout=2,
+            )
+            if r.ok:
+                data = r.json()
+                return bool(data.get('in_progress')) or _safe_int(data.get('queue_size')) > 0
+        except Exception:
+            continue
+    return False
+
+
 # ── Thread d'inactivité ───────────────────────────────────────────────────────
 
 def _update_activity():
@@ -286,21 +308,46 @@ def _update_activity():
         warning_since   = 0.0
 
 
-def _inactivity_watcher():
+def _inactivity_tick():
+    """Un passage de la boucle d'inactivité (extrait pour être testable)."""
     global warning_emitted, warning_since
-    while True:
-        time.sleep(60)
-        with activity_lock:
-            idle = time.time() - last_activity
+    with activity_lock:
+        idle   = time.time() - last_activity
+        warned = warning_emitted
 
-        if idle >= INACTIVITY_WARN_TIMEOUT and not warning_emitted:
+    if idle < INACTIVITY_WARN_TIMEOUT:
+        # Un keepalive a pu arriver entre la pose du warning et maintenant :
+        # on efface le warning périmé pour ne pas laisser la bannière fantôme.
+        if warned:
+            with activity_lock:
+                warning_emitted = False
+                warning_since   = 0.0
+        return
+
+    running = _songsurf_running()
+
+    # Un téléchargement en cours compte comme de l'activité : l'extension
+    # queue en fire-and-forget et le batch doit finir même page fermée.
+    # Le reset repousse le prochain check busy d'un cycle WARN complet.
+    if running and _songsurf_busy():
+        logger.info("⏳ Inactivité HTTP mais téléchargement en cours — arrêt reporté")
+        _update_activity()
+        return
+
+    if not warned:
+        with activity_lock:
             warning_emitted = True
             warning_since   = time.time()
-            logger.warning("⌛ Inactivité détectée (%ss). Arrêt dans %ss.", INACTIVITY_WARN_TIMEOUT, INACTIVITY_GRACE_TIMEOUT)
+        logger.warning("⌛ Inactivité détectée (%ss). Arrêt dans %ss.", INACTIVITY_WARN_TIMEOUT, INACTIVITY_GRACE_TIMEOUT)
 
-        if idle >= (INACTIVITY_WARN_TIMEOUT + INACTIVITY_GRACE_TIMEOUT):
-            if _songsurf_running():
-                _stop_songsurf()
+    if idle >= (INACTIVITY_WARN_TIMEOUT + INACTIVITY_GRACE_TIMEOUT) and running:
+        _stop_songsurf()
+
+
+def _inactivity_watcher():
+    while True:
+        time.sleep(60)
+        _inactivity_tick()
 
 
 def _inactivity_snapshot():
@@ -469,21 +516,7 @@ def add_cors(response):
 @app.route('/logout', methods=['GET', 'POST'])
 def logout():
     """Clear session cookie, stop SongSurf if idle, redirect to auth login."""
-    active = False
-    if _songsurf_running():
-        try:
-            for base_url in _candidate_target_urls():
-                r = req_lib.get(
-                    f"{base_url}/api/status",
-                    headers={'X-Watcher-Token': WATCHER_SECRET},
-                    timeout=2,
-                )
-                if r.ok:
-                    data   = r.json()
-                    active = data.get('in_progress', False) or (data.get('queue_size', 0) > 0)
-                    break
-        except Exception:
-            pass
+    active = _songsurf_running() and _songsurf_busy()
 
     if active:
         logger.info("ℹ️  Logout — SongSurf maintenu (téléchargement actif)")

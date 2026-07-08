@@ -125,6 +125,8 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 | I-3 | Keepalive resets timer | POST `/watcher/keepalive` | `idle_seconds` resets, `warned: false` |
 | I-4 | Keepalive requires auth | POST `/watcher/keepalive` without cookie | 401 |
 | I-5 | `/api/status` is passive | Poll `/api/status` only | Timer not reset (passive path) |
+| I-6 | Busy download defers stop | Queue a long batch, close everything, wait past the timeouts | Container keeps running until the batch drains (busy = activity) |
+| I-7 | No stop during boot window | Return after a long idle (container stopped) | `_start_songsurf` resets the timer; the container is not re-stopped while booting |
 
 ---
 

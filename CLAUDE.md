@@ -36,7 +36,7 @@ make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
 make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without rev0auth)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 
-# Tests (221 pytest tests, no linter configured; the two test_watcher_* files need PyJWT)
+# Tests (238 pytest tests, no linter configured; the three test_watcher_* files need PyJWT + docker SDK)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -104,7 +104,7 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 - Main Flask thread: HTTP, validation, enqueue. The queue is **job-level** (`job_queue`, `queue.Queue` of jobs, max `MAX_PENDING_JOBS=100`): one album = one job, a single track = a one-song job (`_enqueue_job`). Daily limit `DAILY_DOWNLOAD_LIMIT`. `_pending_songs` (under `queue_lock`) = songs queued but not yet started, exposed as `queue_size` in `/api/status`. The frontend submits everything at once; the server owns ordering, so queuing several albums no longer overflows a flat queue and the batch keeps draining even if the page is closed.
 - One download worker thread: pulls a job, processes its songs sequentially via `_process_song`, then takes the next job; updates `download_status` under `queue_lock`.
 - Extension queueing is server-side fire-and-forget: `/api/queue-direct` spawns a daemon thread (`_queue_direct_async`) that extracts metadata then `_enqueue_job`, and returns immediately. No `extension_pending`/visual-queue round-trip anymore — the NAS downloads even with no SongSurf tab open.
-- Watcher side: inactivity thread (warn after `INACTIVITY_WARN_TIMEOUT`, stop container after `+ INACTIVITY_GRACE_TIMEOUT`).
+- Watcher side: inactivity thread (`_inactivity_tick` every 60 s: warn after `INACTIVITY_WARN_TIMEOUT`, stop container after `+ INACTIVITY_GRACE_TIMEOUT`). A busy SongSurf (`in_progress` or `queue_size > 0` via `_songsurf_busy()`) counts as activity — never stopped mid-batch; `_start_songsurf()` resets the idle timer (boot-window race). Same busy check on `/logout`.
 
 ## Environment variables
 
