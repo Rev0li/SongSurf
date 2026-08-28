@@ -3,6 +3,7 @@
 	import Header from '$lib/components/Header.svelte';
 	import DownloadPanel from '$lib/components/DownloadPanel.svelte';
 	import ProgressZone from '$lib/components/ProgressZone.svelte';
+	import UpcomingQueue from '$lib/components/UpcomingQueue.svelte';
 	import UrlQueue from '$lib/components/UrlQueue.svelte';
 	import LibraryTree from '$lib/components/LibraryTree.svelte';
 
@@ -30,6 +31,7 @@
 
 <div class="page-body">
 	<ProgressZone />
+	<UpcomingQueue />
 	<UrlQueue bind:this={queueRef} />
 	<LibraryTree bind:this={libraryRef} />
 </div>

@@ -14,6 +14,7 @@ export const downloadStatus = writable({
 	batch_done: 0,
 	batch_percent: 0,
 	is_mine: true,
+	pending: [],
 });
 
 export const workerBusy = derived(

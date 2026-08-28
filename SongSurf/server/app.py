@@ -138,6 +138,8 @@ queue_lock  = threading.Lock()
 cancel_flag = threading.Event()
 
 _pending_songs = 0   # titres empilés mais pas encore démarrés (accès sous queue_lock)
+_pending_queue = []  # aperçu léger des titres en attente, dans l'ordre de passage :
+                     # [{'user_sub','artist','title','album'}, ...] (accès sous queue_lock)
 
 download_status = {
     'in_progress': False,
@@ -206,6 +208,14 @@ def _enqueue_job(songs):
     job_queue.put_nowait({'songs': list(songs), 'added_at': datetime.now().isoformat()})
     with queue_lock:
         _pending_songs += len(songs)
+        for s in songs:
+            meta = s.get('metadata') or {}
+            _pending_queue.append({
+                'user_sub': s.get('user_sub', ''),
+                'artist':   meta.get('artist', ''),
+                'title':    meta.get('title', ''),
+                'album':    meta.get('album', ''),
+            })
     _start_or_extend_batch(len(songs))
     return len(songs)
 
@@ -395,6 +405,7 @@ def get_status():
     with queue_lock:
         status = download_status.copy()
         status['queue_size'] = _pending_songs
+        pending_snapshot = list(_pending_queue)
         current_pct = 0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
@@ -426,6 +437,13 @@ def get_status():
         not current_dl or
         current_dl.get('user_sub') == (current_user or {}).get('sub')
     )
+    # Détail "à venir" limité aux titres de l'utilisateur courant — jamais la file
+    # d'un autre membre (même logique de confidentialité que is_mine ci-dessus).
+    my_sub = (current_user or {}).get('sub')
+    status['pending'] = [
+        {'artist': p['artist'], 'title': p['title'], 'album': p['album']}
+        for p in pending_snapshot if p['user_sub'] == my_sub
+    ][:200]
     # Diagnostic cookies (vidéos restreintes par âge) — exposé pour l'UI/debug.
     try:
         status['cookies_present'] = _COOKIES_FILE.is_file()
@@ -1871,6 +1889,8 @@ def _process_song(item):
     with queue_lock:
         if _pending_songs > 0:
             _pending_songs -= 1
+        if _pending_queue:
+            _pending_queue.pop(0)
         download_status.update({
             'in_progress':      True,
             'current_download': {
