@@ -14,6 +14,8 @@
         return list.startsWith('OLAK5uy_') ? 'album' : 'playlist';
       }
       if (u.pathname.startsWith('/channel/') || u.pathname.startsWith('/artist/') || u.pathname.startsWith('/@')) return 'artist';
+      // Page "Tout afficher" (discographie complète) d'un artiste : /browse/MPAD<channelId>
+      if (u.pathname.startsWith('/browse/MPAD')) return 'artist';
     } catch {}
     return null;
   }
@@ -233,12 +235,8 @@
     const artistName = document.title.replace(/\s*[-–]\s*YouTube Music\s*$/i, '').trim() || '';
     const matches    = SHELF_MATCHERS[kind];
 
-    const shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer');
-    for (const shelf of shelves) {
-      const heading = shelf.querySelector('yt-formatted-string.title');
-      if (!heading || !matches(heading.textContent.trim().toLowerCase())) continue;
-
-      shelf.querySelectorAll('a[href*="browse/MPREb_"]').forEach(link => {
+    function collectFrom(container) {
+      container.querySelectorAll('a[href*="browse/MPREb_"]').forEach(link => {
         try {
           const href = link.getAttribute('href');
           const m = href.match(/browse\/(MPREb_[^/?&#]+)/);
@@ -256,6 +254,18 @@
         } catch {}
       });
     }
+
+    let matchedShelf = false;
+    document.querySelectorAll('ytmusic-carousel-shelf-renderer').forEach(shelf => {
+      const heading = shelf.querySelector('yt-formatted-string.title');
+      if (!heading || !matches(heading.textContent.trim().toLowerCase())) return;
+      matchedShelf = true;
+      collectFrom(shelf);
+    });
+
+    // Page "Tout afficher" (grille /browse/MPAD…) : pas de shelves titrés, la
+    // page est déjà filtrée par le bouton Albums/Singles actif côté YouTube Music.
+    if (!matchedShelf) collectFrom(document);
 
     return items;
   }
