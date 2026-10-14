@@ -253,3 +253,76 @@ class TestOrganizeFilePlacement:
             })
 
         assert not src.exists()
+
+
+# ── Recalage casse/accents (évite les doublons d'artiste/album côté Jellyfin) ──
+
+class TestCanonicalNaming:
+    def _make_mp3(self, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'\xff\xfb\x90\x00' + b'\x00' * 128)
+
+    def _organize(self, organizer, tmp_path, name, metadata):
+        src = tmp_path / f'{name}.mp3'
+        self._make_mp3(src)
+        with patch.object(organizer, '_update_tags') as mock_tags, \
+             patch.object(organizer, '_ensure_album_cover'), \
+             patch.object(organizer, '_find_thumbnail', return_value=None):
+            result = organizer.organize(str(src), metadata)
+        return result, mock_tags
+
+    def test_artist_casing_reuses_existing_folder(self, organizer, tmp_path):
+        # Premier téléchargement : crée le dossier "Drake".
+        self._organize(organizer, tmp_path, 's1', {
+            'artist': 'Drake', 'album': 'Alb', 'title': 'First', 'year': '',
+        })
+        # Deuxième téléchargement, même artiste mais casse différente venant
+        # de yt-dlp : doit atterrir dans le dossier "Drake" existant, pas "drake".
+        result, mock_tags = self._organize(organizer, tmp_path, 's2', {
+            'artist': 'drake', 'album': 'Alb', 'title': 'Second', 'year': '',
+        })
+        assert result['success']
+        assert (organizer.music_dir / 'Drake' / 'Alb' / 'Second.mp3').exists()
+        assert not (organizer.music_dir / 'drake').exists()
+        assert mock_tags.call_args[0][1]['artist'] == 'Drake'
+
+    def test_artist_accents_reuse_existing_folder(self, organizer, tmp_path):
+        self._organize(organizer, tmp_path, 's1', {
+            'artist': 'Stromae', 'album': 'Alb', 'title': 'First', 'year': '',
+        })
+        result, _ = self._organize(organizer, tmp_path, 's2', {
+            'artist': 'Strômae', 'album': 'Alb', 'title': 'Second', 'year': '',
+        })
+        assert result['success']
+        assert (organizer.music_dir / 'Stromae' / 'Alb' / 'Second.mp3').exists()
+
+    def test_album_casing_reuses_existing_folder_within_artist(self, organizer, tmp_path):
+        self._organize(organizer, tmp_path, 's1', {
+            'artist': 'Artist', 'album': 'Greatest Hits', 'title': 'First', 'year': '',
+        })
+        result, _ = self._organize(organizer, tmp_path, 's2', {
+            'artist': 'Artist', 'album': 'greatest hits', 'title': 'Second', 'year': '',
+        })
+        assert result['success']
+        assert (organizer.music_dir / 'Artist' / 'Greatest Hits' / 'Second.mp3').exists()
+
+    def test_no_existing_match_keeps_candidate_as_is(self, organizer, tmp_path):
+        result, mock_tags = self._organize(organizer, tmp_path, 's1', {
+            'artist': 'NewArtist', 'album': 'NewAlbum', 'title': 'Song', 'year': '',
+        })
+        assert result['success']
+        assert (organizer.music_dir / 'NewArtist' / 'NewAlbum' / 'Song.mp3').exists()
+        assert mock_tags.call_args[0][1]['artist'] == 'NewArtist'
+
+    def test_featuring_artist_canonicalized_against_existing_folder(self, organizer, tmp_path):
+        # "Travis Scott" a déjà son propre dossier (téléchargement précédent en
+        # tant qu'artiste principal).
+        self._organize(organizer, tmp_path, 's1', {
+            'artist': 'Travis Scott', 'album': 'Solo', 'title': 'Song', 'year': '',
+        })
+        # Featuring avec une casse différente dans le titre du deuxième morceau.
+        result, mock_tags = self._organize(organizer, tmp_path, 's2', {
+            'artist': 'Drake', 'album': 'Alb', 'title': 'Collab (feat. travis scott)', 'year': '',
+        })
+        assert result['success']
+        assert mock_tags.call_args[0][1]['artists'] == ['Drake', 'Travis Scott']

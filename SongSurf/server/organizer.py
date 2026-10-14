@@ -15,6 +15,7 @@ from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCON, APIC
 import re
 import shutil
 import subprocess
+import unicodedata
 from datetime import datetime
 import mimetypes
 from PIL import Image
@@ -77,9 +78,12 @@ class MusicOrganizer:
         }
 
     def compute_target(self, metadata):
-        """Calcule (album_dir, final_path, feat_info) attendus pour ce metadata,
-        sans rien écrire. Reproduit exactement le nommage de organize() (featuring
-        inclus) afin de détecter les doublons avant ET après téléchargement."""
+        """Calcule (album_dir, final_path, feat_info, artist, album) attendus pour
+        ce metadata, sans rien écrire. Reproduit exactement le nommage de
+        organize() (featuring inclus) afin de détecter les doublons avant ET
+        après téléchargement. Artiste et album sont recalés sur un dossier
+        existant proche (casse/accents) pour éviter que Jellyfin ne scinde un
+        même artiste/album en deux entités (ex: 'Drake' vs 'drake')."""
         raw_artist = metadata.get('artist', 'Unknown Artist')
         album      = metadata.get('album',  'Unknown Album')
         raw_title  = metadata.get('title',  'Unknown Title')
@@ -94,14 +98,17 @@ class MusicOrganizer:
         album  = self._clean_filename(album)
         title  = self._clean_filename(title)
 
+        artist = self._canonical_name(artist, self._existing_dir_names(self.music_dir))
+        album  = self._canonical_name(album, self._existing_dir_names(self.music_dir / artist))
+
         album_dir = self.music_dir / artist / album
-        return album_dir, album_dir / f"{title}.mp3", feat_info
+        return album_dir, album_dir / f"{title}.mp3", feat_info, artist, album
 
     def target_exists(self, metadata):
         """True si le titre est déjà présent en bibliothèque (mêmes Artist/Album/
         Title). Sert à court-circuiter le téléchargement d'un doublon."""
         try:
-            _, final_path, _ = self.compute_target(metadata)
+            _, final_path, _, _, _ = self.compute_target(metadata)
             return final_path.exists()
         except Exception:
             return False
@@ -128,22 +135,24 @@ class MusicOrganizer:
 
             year = metadata.get('year', '')
 
-            album_dir, final_path, feat_info = self.compute_target(metadata)
-            artist = self._clean_filename(feat_info['main_artist'])
-            album  = self._clean_filename(metadata.get('album', 'Unknown Album'))
-            title  = final_path.stem
+            album_dir, final_path, feat_info, artist, album = self.compute_target(metadata)
+            title = final_path.stem
 
             if feat_info['has_feat']:
                 logger.info(f"   🎭 Featuring détecté: {', '.join(feat_info['feat_artists'])} → artiste principal: {artist}")
 
             # TPE1 multi-valeurs : artistes extraits + featurings du titre.
             # L'artiste principal reste en première position (dossier + TPE2 fallback).
+            # Chaque nom est recalé sur un artiste déjà connu en bibliothèque
+            # (casse/accents) pour rester cohérent avec le dossier ci-dessus.
+            existing_artists = self._existing_dir_names(self.music_dir)
             tag_artists = [str(a).strip() for a in (metadata.get('artists') or []) if str(a).strip()]
             if not tag_artists:
                 tag_artists = [artist]
             for fa in feat_info['feat_artists']:
                 if fa not in tag_artists:
                     tag_artists.append(fa)
+            tag_artists = [self._canonical_name(a, existing_artists) for a in tag_artists]
 
             logger.info(f"   🎤 {artist} / 💿 {album} / 🎵 {title} ({year})")
 
@@ -207,6 +216,33 @@ class MusicOrganizer:
         for char in forbidden:
             name = name.replace(char, '')
         return name.strip()
+
+    def _existing_dir_names(self, parent_dir):
+        """Noms des sous-dossiers directs de parent_dir (liste vide si absent)."""
+        try:
+            if not parent_dir.exists():
+                return []
+            return [p.name for p in parent_dir.iterdir() if p.is_dir()]
+        except Exception:
+            return []
+
+    def _fold(self, name):
+        """Casse + accents neutralisés, pour comparer deux noms sans faux doublons."""
+        nfkd = unicodedata.normalize('NFKD', str(name or ''))
+        return ''.join(c for c in nfkd if not unicodedata.combining(c)).casefold().strip()
+
+    def _canonical_name(self, candidate, existing_names):
+        """Si `candidate` correspond (casse/accents près) à un nom déjà présent
+        en bibliothèque, réutilise ce nom existant — évite que Jellyfin scinde un
+        même artiste/album en deux entités à cause d'une variation de casse
+        entre deux téléchargements (ex: 'Drake' vs 'drake')."""
+        if not candidate:
+            return candidate
+        folded = self._fold(candidate)
+        for existing in existing_names:
+            if self._fold(existing) == folded:
+                return existing
+        return candidate
 
     def _find_thumbnail(self, mp3_path):
         """Cherche la pochette téléchargée par yt-dlp"""
