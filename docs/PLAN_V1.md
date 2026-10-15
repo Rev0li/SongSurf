@@ -3,6 +3,12 @@
 Basé sur `AUDIT_2026-10-15.md` (les codes S1, R3, M1… y renvoient).
 Principe : **une étape à la fois**. Chaque étape commence par ses questions de décision ; rien n'est codé tant que tu n'as pas tranché. Ma recommandation est indiquée par ⭐, elle ne t'engage pas.
 
+## Place dans le projet global
+
+Ce plan est **une partie** du méga-projet « Refonte → CDI », suivi dans `~/dev/Collapse/` (ordre global, avancement de chaque projet). Ordre décidé le 2026-10-16 :
+1. Plan du portfolio → 2. MyCss v1 + page Home du portfolio → 3. **Unification auth + SongSurf (ce plan, SSF-01 à SSF-08)**.
+Les tickets SSF ne démarrent qu'à la phase 3. Accès Jellyfin public mis de côté.
+
 ## La vision (validée le 2026-10-15)
 
 ```
@@ -137,7 +143,7 @@ Refonte graphique **par adaptation** (pas de refonte de zéro) : SongSurf adopte
 **Questions**
 1. Périmètre : variables MyCss seules (couleurs, espacements, arrondis, typo) ⭐ — ou aussi les composants MyCss (boutons, cards, modales) ?
 2. Comment MyCss arrive dans SongSurf : sous-module git (comme rev0auth) ⭐, paquet npm, ou copie des fichiers ?
-3. La passe UX : on fait d'abord une liste des irritants (parcours Téléchargement, Métadonnées, mobile) que tu valides ⭐, ou je propose directement des maquettes ?
+3. ~~La passe UX~~ → décidé le 2026-10-16 : d'abord une liste des irritants validée, puis une session maquettes (fonctionnalité ↔ agencement le plus user-friendly), les deux dans SSF-07.
 4. Le Header commun (93 px, « ← Mon espace ») : on l'aligne déjà sur celui de rev0auth, en prévision du site unifié ?
 
 **Fini quand** : plus aucune valeur de couleur/espacement en dur hors MyCss, clair et sombre OK, mobile OK, parcours validés par toi.
