@@ -52,7 +52,7 @@ Issued at login as an **HttpOnly cookie** named `access_token`.
 Set-Cookie: access_token=<JWT>; HttpOnly; Secure; SameSite=Lax; Path=/
 ```
 
-In production the cookie must be shared across subdomains (`COOKIE_DOMAIN=.<root-domain>`) so the browser sends it to the SongSurf host — see `REV0AUTH_INTEGRATION.md`.
+In production the cookie must be shared across subdomains (`COOKIE_DOMAIN=.<root-domain>`) so the browser sends it to the SongSurf host — see `DEPLOY.md` §7.
 
 ---
 

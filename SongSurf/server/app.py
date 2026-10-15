@@ -11,7 +11,7 @@ Auth model (Phase 2):
 
 Storage: /data/music/Artist/Album/  (flat, no user-sub prefix)
 
-Phase 3: see documentation/CONNECTOR.md
+Phase 3: see docs/CONNECTOR.md
 """
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response, abort

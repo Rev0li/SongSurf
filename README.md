@@ -22,7 +22,7 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 ## Requirements
 
 - Docker + Docker Compose
-- For production auth: any service that issues an HS256 JWT in an `access_token` cookie with `sub` / `role` / `email` / `token_type=access` claims (see `documentation/CONNECTOR.md`)
+- For production auth: any service that issues an HS256 JWT in an `access_token` cookie with `sub` / `role` / `email` / `token_type=access` claims (see `docs/CONNECTOR.md`)
 - For frontend development only: Node 20+
 
 ## Quick start (local)
@@ -77,7 +77,7 @@ make deploy-nas NAS_USER=<user> NAS_HOST=<ip> NAS_DIR=/volume1/docker/songsurf
 
 Typical topology: reverse proxy (Caddy/Nginx + TLS) on a VPS → Tailscale tunnel → NAS. Port 8081 (SongSurf itself) must never be exposed; only Watcher faces traffic.
 
-Guides: [`SongSurf/DEPLOY.md`](SongSurf/DEPLOY.md) (full setup) · [`deploy_action.md`](deploy_action.md) (one-command deploy) · [`deploy_troubleshooting.md`](deploy_troubleshooting.md) (Synology pitfalls).
+Guide: [`docs/DEPLOY.md`](docs/DEPLOY.md) (full setup, `make deploy-nas`, Synology pitfalls).
 
 ## Browser extension
 
@@ -101,11 +101,11 @@ SongSurf/SongSurf/            # the app (nested folder)
   tests/                      # pytest suite
   docker/compose-switch.sh    # merges base + local|nas compose files
 chrome-extension/             # MV3 extension
-documentation/                # architecture, API reference, auth contract
+docs/                         # architecture, API reference, auth contract, deploy, V1 plan
 ```
 
 ```bash
-python3 -m pytest             # run the test suite (110 tests) from SongSurf/SongSurf/
+python3 -m pytest             # run the test suite (238 tests) from SongSurf/SongSurf/
 make frontend-dev             # SvelteKit dev server with hot reload (port 5173)
 make frontend-build           # build the static bundle locally
 ```
@@ -116,11 +116,11 @@ Docs for contributors:
 
 | File | Contents |
 |---|---|
-| [`documentation/ARCHITECTURE.md`](documentation/ARCHITECTURE.md) | Components, request lifecycle, threading model, frontend |
-| [`documentation/API_OR_MODULES.md`](documentation/API_OR_MODULES.md) | Full HTTP API + module reference |
-| [`documentation/CONNECTOR.md`](documentation/CONNECTOR.md) | JWT contract with the auth service |
-| [`documentation/REV0AUTH_INTEGRATION.md`](documentation/REV0AUTH_INTEGRATION.md) | End-to-end integration walkthrough (French) |
-| [`documentation/TEST_PLAN.md`](documentation/TEST_PLAN.md) | Test matrix (automated + manual) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, request lifecycle, threading model, frontend |
+| [`docs/API_OR_MODULES.md`](docs/API_OR_MODULES.md) | Full HTTP API + module reference |
+| [`docs/CONNECTOR.md`](docs/CONNECTOR.md) | JWT contract with the auth service |
+| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Test matrix (automated + manual) |
+| [`docs/PLAN_V1.md`](docs/PLAN_V1.md) | Step-by-step plan to V1 (from the 2026-10-15 audit) |
 
 ## Security notes
 

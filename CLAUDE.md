@@ -72,7 +72,7 @@ There are no login forms, password auth, or guest sessions anymore (removed in P
 | `watcher/watcher.py` | JWT validation, header injection, reverse proxy, SongSurf container lifecycle (Docker SDK), inactivity shutdown, CORS for the extension |
 | `shared/events_client.py` | Activity-event push to rev0auth (stdlib-only, copied into both images): `emit()` fire-and-forget thread, JSONL spool in `logs/events-pending-<source>.jsonl` on failure, replay thread every 5 min |
 
-Full API reference: `documentation/API_OR_MODULES.md`.
+Full API reference: `docs/API_OR_MODULES.md`.
 
 ## Activity events (push to rev0auth)
 
@@ -124,15 +124,24 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 - Extension DOM scraping of music.youtube.com is fragile (virtual scrolling, selector drift) — see memory/project notes.
 - The zsh `chpwd` hook on this dev machine (eza tree) hangs non-interactive shells: use `git -C <path>` instead of `cd && git`.
 
+## Roadmap context
+
+- Work follows `docs/PLAN_V1.md` step by step: each ticket in `docs/tickets/` opens with questions the **user** answers before any code. Never decide them yourself.
+- Long-term vision: Auth (rev0auth) + SongSurf as two independent services under one unified site. V1 only prepares this (auth isolated behind one interface).
+- Frontend: SongSurf is **adapted** to the shared `MyCss` design system, never rebuilt from scratch.
+- The public showcase (SongSurf + Jellyfin demo) lives in the `portfolio` repo, not here. Ideas: `docs/VITRINE_IDEAS.md`.
+
 ## Documentation map
 
 | File | Contents |
 |---|---|
 | `README.md` | User/dev-facing overview, quick start, self-hosting |
-| `documentation/ARCHITECTURE.md` | Components, request lifecycle, threading, frontend |
-| `documentation/API_OR_MODULES.md` | Full HTTP API + module reference |
-| `documentation/CONNECTOR.md` | rev0auth ↔ SongSurf JWT contract (implemented) |
-| `documentation/REV0AUTH_INTEGRATION.md` | Local + prod integration walkthrough (FR) |
-| `documentation/TEST_PLAN.md` | Test matrix (automated + manual) |
-| `SongSurf/DEPLOY.md` | NAS deployment guide |
-| `deploy_action.md` / `deploy_troubleshooting.md` | `make deploy-nas` usage + Synology pitfalls |
+| `docs/ARCHITECTURE.md` | Components, request lifecycle, threading, frontend |
+| `docs/API_OR_MODULES.md` | Full HTTP API + module reference |
+| `docs/CONNECTOR.md` | rev0auth ↔ SongSurf JWT contract (implemented) |
+| `docs/TEST_PLAN.md` | Test matrix (automated + manual) |
+| `docs/DEPLOY.md` | NAS deployment guide, `make deploy-nas`, Synology pitfalls |
+| `docs/AUDIT_2026-10-15.md` | Audit findings (S/R/E/M/F codes) |
+| `docs/PLAN_V1.md` | Step-by-step plan to V1 — decisions are the user's, ask before coding each step |
+| `docs/VITRINE_IDEAS.md` | Public showcase ideas for the portfolio (handoff notes) |
+| `docs/tickets/` | One ticket per plan step (`ticket-handoff` workflow) |

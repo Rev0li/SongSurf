@@ -2,7 +2,7 @@
 
 Déploiement sur NAS Synology via Docker Compose, accessible depuis l'extérieur via Tailscale + reverse proxy VPS.
 
-> **Déploiement courant** : une fois la première installation faite, utilise `make deploy-nas` depuis la machine de dev (rsync + rebuild + restart en une commande) — voir [`../deploy_action.md`](../deploy_action.md) et [`../deploy_troubleshooting.md`](../deploy_troubleshooting.md) pour les pièges Synology.
+> **Déploiement courant** : une fois la première installation faite, utilise `make deploy-nas` depuis `SongSurf/SongSurf/` (rsync + rebuild + restart en une commande, `make deploy-nas-dry` pour prévisualiser). Les pièges Synology sont regroupés en [§11](#11-pièges-synology-make-deploy-nas).
 
 ---
 
@@ -85,7 +85,7 @@ make secrets
 
 Les deux sont chargés par Docker Compose via `env_file`. Ne jamais committer `.secrets`.
 
-**Pour la prod avec rev0auth :** copier la valeur `AUTH_JWT_SECRET` de rev0auth dans `.secrets` (identique octet par octet), renseigner `AUTH_SERVICE_LOGIN_URL` dans `.env` et vérifier `DEV_MODE=false`. Détails : [`../documentation/REV0AUTH_INTEGRATION.md`](../documentation/REV0AUTH_INTEGRATION.md).
+**Pour la prod avec rev0auth :** copier la valeur `AUTH_JWT_SECRET` de rev0auth dans `.secrets` (identique octet par octet), renseigner `AUTH_SERVICE_LOGIN_URL` dans `.env` et vérifier `DEV_MODE=false`. Contrat JWT : [`CONNECTOR.md`](CONNECTOR.md).
 
 **Événements d'activité (optionnel) :** le NAS pousse connexions/téléchargements vers le dashboard admin rev0auth (`/japprends/songsurf-activity`). Sur un NAS existant, ne pas relancer le wizard (il écraserait `.env`/`.secrets`) — ajouter à la main :
 
@@ -180,7 +180,7 @@ cat logs/downloads.log                       # journal des téléchargements (ps
 | 503 sans redirection | `AUTH_SERVICE_LOGIN_URL` vide dans `.env` |
 | Frontend pas à jour après deploy | Rebuild manquant : `--build` obligatoire (le frontend est compilé dans l'image) |
 
-Pièges spécifiques Synology (rsync, PATH ssh, sudo) : [`../deploy_troubleshooting.md`](../deploy_troubleshooting.md).
+Pièges spécifiques Synology (rsync, PATH ssh, socket Docker) : voir [§11](#11-pièges-synology-make-deploy-nas).
 
 ---
 
@@ -191,3 +191,139 @@ Pièges spécifiques Synology (rsync, PATH ssh, sudo) : [`../deploy_troubleshoot
 - URLs validées (HTTPS + domaines YouTube/YouTube Music uniquement)
 - Les containers tournent sous uid 1000 (non-root)
 - `restart: on-failure` pour ne pas redémarrer sur arrêt manuel
+
+---
+
+## 11. Pièges Synology (`make deploy-nas`)
+
+Problèmes réels rencontrés lors de la mise en place de `make deploy-nas` sur Synology DSM. Le `Makefile` (section `deploy-nas`) intègre déjà tous ces correctifs.
+
+### 11.1 rsync — Permission denied (auth)
+
+**Symptôme**
+```
+Permission denied, please try again.
+rsync: connection unexpectedly closed (code 12)
+```
+
+**Cause** : Le dossier `~/.ssh/` n'existait pas sur le NAS — `ssh-copy-id` avait échoué silencieusement.
+
+**Solution**
+```bash
+# Créer le dossier .ssh sur le NAS
+ssh -p 22 rev0li08@192.168.1.45 "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+
+# Copier la clé publique
+cat ~/.ssh/nas_songsurf.pub | ssh -p 22 rev0li08@192.168.1.45 \
+  "cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+---
+
+### 11.2 rsync — Permission denied (service Synology)
+
+**Symptôme** : SSH avec clé fonctionne (`ssh nas-songsurf "echo ok"` = ok) mais rsync échoue quand même avec "Permission denied".
+
+**Cause** : Synology patche son binaire rsync pour vérifier que le service rsync DSM est activé, même en mode SSH.
+
+**Solution** : DSM → Panneau de configuration → Services de fichiers → onglet **rsync** → cocher "Activer le service rsync" (port 22) → Apply.
+
+---
+
+### 11.3 docker-compose introuvable (PATH SSH non-interactif)
+
+**Symptôme**
+```
+[compose-switch] Aucun moteur Compose trouvé.
+```
+
+**Cause** : `/usr/local/bin` n'est pas dans le PATH des sessions SSH non-interactives sur Synology. `docker-compose` est pourtant bien à `/usr/local/bin/docker-compose`.
+
+**Solution** : Préfixer le PATH dans la commande SSH du Makefile :
+```bash
+PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$PATH
+```
+
+---
+
+### 11.4 Variables secrets non interpolées (docker-compose V1)
+
+**Symptôme**
+```
+Missing mandatory value for "environment" option: WATCHER_FLASK_SECRET_KEY is required
+```
+
+**Cause** : Docker-compose V1 (`1.28.5`) ne charge pas `env_file` pour l'interpolation des variables dans `docker-compose.yml` — seulement pour les env vars du container. Le `${VAR:?message}` dans `environment:` nécessite que la variable soit dans le shell.
+
+**Solution** : Sourcer `.env` et `.secrets` avant docker-compose avec `set -a` :
+```bash
+set -a && . ./.env && . ./.secrets && set +a && docker-compose ...
+```
+`set -a` exporte automatiquement toutes les variables sourcées vers les sous-processus.
+
+---
+
+### 11.5 docker introuvable (PATH SSH non-interactif)
+
+**Symptôme**
+```
+sh: docker: command not found
+```
+
+**Cause** : Docker (installé via le package DSM "Docker") est dans `/var/packages/Docker/target/usr/bin/`, absent du PATH SSH.
+
+**Solution** : Inclus dans le PATH du Makefile :
+```bash
+PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$PATH
+```
+
+Vérification : `ssh nas-songsurf "PATH=/var/packages/Docker/target/usr/bin:\$PATH docker ps"`
+
+---
+
+### 11.6 Permission refusée sur le socket Docker
+
+**Symptôme**
+```
+PermissionError: [Errno 13] Permission denied
+docker.errors.DockerException: Error while fetching server API version
+```
+
+**Cause** : `/var/run/docker.sock` appartient à `root:root` (660). `rev0li08` n'est pas dans le groupe root.
+
+**Solution** : Tâche planifiée DSM exécutée au démarrage en tant que `root` :
+
+DSM → Panneau de configuration → Planificateur de tâches → Créer → Tâche déclenchée → Script défini par l'utilisateur
+
+- **Utilisateur** : `root`
+- **Événement** : Démarrage
+- **Script** :
+```bash
+chown root:administrators /var/run/docker.sock
+chmod 660 /var/run/docker.sock
+```
+
+`rev0li08` est dans le groupe `administrators` (gid=101) — ce changement lui donne accès au socket.
+Exécuter la tâche manuellement après création pour l'appliquer sans reboot.
+
+> Cette tâche est nécessaire à chaque redémarrage du NAS car `/var/run/` est recréé au boot.
+
+### Récapitulatif de la configuration NAS actuelle
+
+| Élément | Valeur |
+|---|---|
+| Host | `192.168.1.45` |
+| User | `rev0li08` |
+| Port SSH | `22` |
+| Clé SSH | `~/.ssh/nas_songsurf` |
+| Alias SSH | `nas-songsurf` (dans `~/.ssh/config`) |
+| Dossier deploy | `/volume1/docker/songsurf/` |
+| docker-compose | `/usr/local/bin/docker-compose` (v1.28.5) |
+| docker | `/var/packages/Docker/target/usr/bin/docker` |
+| `.env` / `.secrets` | Sur le NAS uniquement — jamais dans git, exclus du rsync, copiés une fois via `scp` |
+
+---
+
+## 12. Plus tard — CI/CD automatique
+
+Piste : un runner GitHub Actions auto-hébergé sur le NAS (connexion **sortante** vers GitHub, aucun port entrant). Sur `git push main`, le runner exécute `make deploy-nas` localement.
