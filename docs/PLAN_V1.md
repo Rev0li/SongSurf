@@ -27,8 +27,8 @@ rev0auth ──JWT──► SongSurf           SongSurf propre, auth = un       
 
 ## Workflow
 
-- Un ticket par étape dans `docs/tickets/SSF-0X.md` (format `ticket-handoff` : code → test → refactor → valide, une branche `feat/ssf-0x` par ticket).
-- Au début de chaque ticket : on répond d'abord aux **Questions** du ticket, les réponses sont notées dans le ticket, puis on code.
+- Un ticket par étape = une **issue GitHub** `[SSF-0X]` (#2 → #9), rattachée à une User Story (#10 → #13). Branche `feat/ssf-0x`, PR avec `Closes #n`, merge après validation. Passage de main (code → test → refactor → valide) : un commentaire par rôle dans l'issue.
+- Au début de chaque ticket : on répond d'abord aux **Questions** de l'issue, les réponses sont reportées dans l'issue, puis on code.
 
 ---
 
@@ -39,7 +39,7 @@ Décisions prises :
 - Supprimés : `RELEASE_NOTES.md` (mode guest obsolète, remplacé par un `CHANGELOG.md` à la V1), `REV0AUTH_INTEGRATION.md` (backend Rust supprimé ; `CONNECTOR.md` reste le seul contrat), `KNOWN_ISSUES.md` (détails repris dans l'audit, R1 et R2).
 - Fusionnés : `SongSurf/DEPLOY.md` + `deploy_action.md` + `deploy_troubleshooting.md` → `docs/DEPLOY.md` (§11 = pièges Synology).
 - Liens mis à jour dans `README.md`, `CLAUDE.md`, `CONNECTOR.md`, `server/app.py`.
-- Tickets SSF-01 à SSF-08 créés dans `docs/tickets/` (SSF-07 = polish UI/UX ajouté le 2026-10-15).
+- Tickets SSF-01 à SSF-08 créés dans `docs/tickets/` (SSF-07 = polish UI/UX ajouté le 2026-10-15), puis migrés en issues GitHub le 2026-10-16.
 
 Docs restantes : `README.md`, `CLAUDE.md`, `docs/{ARCHITECTURE, API_OR_MODULES, CONNECTOR, DEPLOY, TEST_PLAN, AUDIT_2026-10-15, PLAN_V1}.md`. `TEST_PLAN.md` mentionne encore le téléchargement playlist (supprimé) : à remettre à jour à l'étape 6.
 
