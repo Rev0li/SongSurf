@@ -126,7 +126,7 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 
 ## Roadmap context
 
-- Work follows `docs/PLAN_V1.md` step by step: each ticket in `docs/tickets/` opens with questions the **user** answers before any code. Never decide them yourself.
+- Work follows `docs/PLAN_V1.md` step by step: each ticket is a GitHub issue `[SSF-0X]` that opens with questions the **user** answers before any code. Never decide them yourself.
 - Long-term vision: Auth (rev0auth) + SongSurf as two independent services under one unified site. V1 only prepares this (auth isolated behind one interface).
 - Frontend: SongSurf is **adapted** to the shared `MyCss` design system, never rebuilt from scratch.
 - The public showcase (SongSurf + Jellyfin demo) lives in the `portfolio` repo, not here. Ideas: `docs/VITRINE_IDEAS.md`.
@@ -144,4 +144,4 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 | `docs/AUDIT_2026-10-15.md` | Audit findings (S/R/E/M/F codes) |
 | `docs/PLAN_V1.md` | Step-by-step plan to V1 — decisions are the user's, ask before coding each step |
 | `docs/VITRINE_IDEAS.md` | Public showcase ideas for the portfolio (handoff notes) |
-| `docs/tickets/` | One ticket per plan step (`ticket-handoff` workflow) |
+| GitHub issues `[SSF-0X]` | One ticket per plan step; handoff = one comment per role (`ticket-handoff` workflow) |
