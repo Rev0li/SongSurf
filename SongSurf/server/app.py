@@ -49,6 +49,10 @@ import events_client
 
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
+# Taille max d'une requête entrante (pochettes, cookies, JSON) — limite technique,
+# volontairement non paramétrable. Les téléchargements sortants ne sont pas concernés.
+MAX_REQUEST_MB = 20
+app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_MB * 1024 * 1024
 
 WATCHER_SECRET = os.getenv('WATCHER_SECRET', '')
 DEV_MODE       = os.getenv('DEV_MODE', 'false').lower() == 'true'
@@ -63,13 +67,19 @@ if Path(__file__).parent == Path('/app'):
     BASE_MUSIC_DIR = Path('/data/music')
     TEMP_DIR       = Path('/data/temp')
     LOG_DIR        = Path('/app/logs')
+    _cookies_dflt  = Path('/data/cookies')
 else:
     _base          = Path(__file__).parent.parent
     BASE_MUSIC_DIR = _base / 'music'
     TEMP_DIR       = _base / 'temp'
     LOG_DIR        = _base / 'logs'
+    _cookies_dflt  = _base / 'data' / 'cookies'
 
-for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR]:
+# Cookies YouTube par utilisateur (<pseudo>.txt), hors bibliothèque : l'export ZIP
+# membre (qui supprime la bibliothèque) ne les emporte pas.
+COOKIES_DIR = Path(os.environ.get('YTDLP_COOKIES_DIR') or _cookies_dflt)
+
+for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR, COOKIES_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # Push d'événements d'activité vers rev0auth (no-op si AUTH_EVENTS_URL absent)
@@ -144,8 +154,6 @@ _pending_queue = []  # aperçu léger des titres en attente, dans l'ordre de pas
 download_status = {
     'in_progress': False,
     'current_download': None,
-    'last_completed': None,
-    'last_error': None,
     'progress': None,
     'queue_size': 0,
     'batch_active': False,
@@ -153,6 +161,11 @@ download_status = {
     'batch_done': 0,
     'batch_percent': 0,
 }
+
+# Dernier succès / dernière erreur, rangés par user_sub : /api/status ne renvoie que
+# ceux de l'appelant (jamais le titre ou le chemin d'un autre membre). Sous queue_lock.
+_last_completed_by_user = {}
+_last_error_by_user     = {}
 
 # ── Daily download counter ─────────────────────────────────────────────────────
 _daily_lock  = threading.Lock()
@@ -335,6 +348,20 @@ def auth_required(f):
     return decorated
 
 
+@app.before_request
+def reject_oversized_request():
+    # Refus avant la route : leurs try/except génériques transformeraient le 413
+    # levé par request.get_json() en 500.
+    if (request.content_length or 0) > app.config['MAX_CONTENT_LENGTH']:
+        return request_too_large(None)
+
+
+@app.errorhandler(413)
+def request_too_large(_e):
+    return jsonify({'success': False,
+                    'error': f'Requête trop volumineuse (max {MAX_REQUEST_MB} Mo).'}), 413
+
+
 # ── SPA ───────────────────────────────────────────────────────────────────────
 
 # In Docker: FRONTEND_BUILD_PATH=/app/frontend/build (set in Dockerfile).
@@ -432,23 +459,27 @@ def get_status():
         status['daily_count'] = _daily_count
     status['daily_limit'] = DAILY_DOWNLOAD_LIMIT
     current_user = _get_current_user()
+    my_sub = (current_user or {}).get('sub')
+    with queue_lock:
+        status['last_completed'] = _last_completed_by_user.get(my_sub)
+        status['last_error']     = _last_error_by_user.get(my_sub)
     current_dl = status.get('current_download') or {}
-    status['is_mine'] = (
-        not current_dl or
-        current_dl.get('user_sub') == (current_user or {}).get('sub')
-    )
+    status['is_mine'] = not current_dl or current_dl.get('user_sub') == my_sub
+    # Titre en cours d'un autre membre : on dit seulement que le worker est occupé.
+    if not status['is_mine']:
+        status['current_download'] = None
     # Détail "à venir" limité aux titres de l'utilisateur courant — jamais la file
     # d'un autre membre (même logique de confidentialité que is_mine ci-dessus).
-    my_sub = (current_user or {}).get('sub')
     status['pending'] = [
         {'artist': p['artist'], 'title': p['title'], 'album': p['album']}
         for p in pending_snapshot if p['user_sub'] == my_sub
     ][:200]
-    # Diagnostic cookies (vidéos restreintes par âge) — exposé pour l'UI/debug.
+    # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
     try:
-        status['cookies_present'] = _COOKIES_FILE.is_file()
+        cookies_file = _user_cookies_file(current_user)
+        status['cookies_present'] = cookies_file.is_file()
         status['cookies_age_days'] = (
-            round((time.time() - _COOKIES_FILE.stat().st_mtime) / 86400, 1)
+            round((time.time() - cookies_file.stat().st_mtime) / 86400, 1)
             if status['cookies_present'] else None
         )
     except Exception:
@@ -914,20 +945,24 @@ def upload_album_cover():
 @auth_required
 def extract_metadata():
     try:
+        user = _get_current_user()
         data = request.get_json()
         url  = (data.get('url') or '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide. Collez un lien YouTube Music valide.'}), 400
+        if (resp := _cookies_missing_response(user)) is not None:
+            return resp
+        cookiefile = str(_user_cookies_file(user))
 
         is_playlist = downloader._detect_type(url) == 'playlist'
         if is_playlist:
-            result = downloader.extract_playlist_metadata(url)
+            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
             if result.get('success'):
                 result['is_playlist'] = True
         else:
-            result = downloader.extract_metadata(url)
+            result = downloader.extract_metadata(url, cookiefile=cookiefile)
             if result.get('success') and 'metadata' in result:
                 meta = result.pop('metadata')
                 result.update(meta)
@@ -949,6 +984,8 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide.'}), 400
+        if (resp := _cookies_missing_response(user)) is not None:
+            return resp
         # Le serveur draine la file séquentiellement, indépendamment de la page :
         # le titre est empilé comme un job d'une piste. 429 seulement si trop de
         # jobs sont déjà en attente.
@@ -990,6 +1027,8 @@ def download_playlist():
         songs    = playlist.get('songs', [])
         if not songs:
             return jsonify({'success': False, 'error': 'Données manquantes'}), 400
+        if (resp := _cookies_missing_response(user)) is not None:
+            return resp
         # L'album entier est empilé comme un seul job : le worker le draine d'une
         # traite avant de passer au prochain album. Plusieurs albums ne se marchent
         # donc plus dessus, et l'enchaînement continue même si on quitte la page.
@@ -1298,24 +1337,84 @@ def admin_genre_backfill_status():
         return jsonify({'success': True, **_backfill_state})
 
 
-# ── Extension Chrome — cookies sync ───────────────────────────────────────────
+# ── Extension Chrome — cookies sync (par utilisateur) ──────────────────────────
 
-_COOKIES_FILE = Path(os.environ.get('YTDLP_COOKIES', '/data/cookies.txt'))
+# Ancien fichier global (avant SSF-01) : migré vers les cookies de l'admin au boot.
+_LEGACY_COOKIES_FILE = Path(os.environ.get('YTDLP_COOKIES', '/data/cookies.txt'))
+
+COOKIES_MISSING_MSG = ("Cookies YouTube manquants pour ton compte : connecte-toi à YouTube, "
+                       "puis clique « Sync cookies YouTube » dans l'extension SongSurf Clip.")
+
+
+def _user_cookies_file(user: dict | None) -> Path:
+    """Fichier cookies Netscape de l'utilisateur : COOKIES_DIR/<pseudo>.txt."""
+    pseudo = _user_pseudo(user or {})
+    f = (COOKIES_DIR / f'{pseudo}.txt').resolve()
+    if not f.is_relative_to(COOKIES_DIR.resolve()):
+        raise ValueError(f"Invalid pseudo — path escapes cookies dir: {pseudo!r}")
+    return f
+
+
+def _cookies_missing_response(user: dict | None):
+    """403 + message clair si l'utilisateur n'a pas synchronisé ses cookies, sinon None.
+
+    Pas de repli sur les cookies d'un autre compte (décision SSF-01).
+    """
+    if _user_cookies_file(user).is_file():
+        return None
+    return jsonify({'success': False, 'error': COOKIES_MISSING_MSG,
+                    'code': 'cookies_missing'}), 403
+
+
+def _is_netscape_cookies(content: str) -> bool:
+    """Format Netscape attendu par yt-dlp : commentaires (#) ou lignes à 7 champs tabulés."""
+    entries = 0
+    for line in content.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith('#') and not line.startswith('#HttpOnly_'):
+            continue
+        if len(line.split('\t')) != 7:
+            return False
+        entries += 1
+    return entries > 0
+
+
+def _migrate_legacy_cookies() -> None:
+    """Déplace l'ancien /data/cookies.txt global vers les cookies de l'admin (une fois)."""
+    try:
+        target = _user_cookies_file({'role': 'admin'})
+        if _LEGACY_COOKIES_FILE.is_file() and not target.exists():
+            target.write_bytes(_LEGACY_COOKIES_FILE.read_bytes())
+            target.chmod(0o600)
+            _LEGACY_COOKIES_FILE.unlink()
+            logger.info(f"🍪 Cookies globaux migrés vers {target.name}")
+    except Exception as e:
+        logger.warning(f"⚠️ Migration cookies globaux échouée: {e}")
+
 
 @app.route('/api/cookies/update', methods=['POST'])
 @auth_required
 def update_cookies():
-    """Extension Chrome — reçoit les cookies YouTube et les écrit pour yt-dlp."""
+    """Extension Chrome — reçoit les cookies YouTube de l'utilisateur courant pour yt-dlp."""
     try:
+        user    = _get_current_user()
         data    = request.get_json(silent=True) or {}
         content = (data.get('cookies') or '').strip()
         if not content:
             return jsonify({'success': False, 'error': 'Cookies manquants'}), 400
-        _COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _COOKIES_FILE.write_text(content, encoding='utf-8')
-        count = sum(1 for l in content.splitlines() if l and not l.startswith('#'))
-        logger.info(f"🍪 Cookies mis à jour depuis l'extension Chrome ({count} entrées)")
-        return jsonify({'success': True, 'count': count})
+        if not _is_netscape_cookies(content):
+            return jsonify({'success': False, 'error': 'Format de cookies invalide (Netscape attendu)'}), 400
+        target = _user_cookies_file(user)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix('.tmp')
+        tmp.write_text(content + '\n', encoding='utf-8')
+        tmp.chmod(0o600)
+        tmp.replace(target)
+        count  = sum(1 for l in content.splitlines() if l and not l.startswith('#'))
+        pseudo = _user_pseudo(user)
+        logger.info(f"🍪 Cookies mis à jour depuis l'extension Chrome ({count} entrées) [{pseudo}]")
+        return jsonify({'success': True, 'count': count, 'pseudo': pseudo})
     except Exception as e:
         logger.error(f"❌ /api/cookies/update: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1350,17 +1449,21 @@ def preview_metadata():
     Utilisé pour la mini-analyse avant confirmation.
     """
     try:
+        user     = _get_current_user()
         data     = request.get_json(silent=True) or {}
         url      = (data.get('url') or '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide'}), 400
+        if (resp := _cookies_missing_response(user)) is not None:
+            return resp
 
-        url_mode = _detect_url_mode(url)
+        url_mode   = _detect_url_mode(url)
+        cookiefile = str(_user_cookies_file(user))
 
         if url_mode == 'song':
-            result = downloader.extract_metadata(url)
+            result = downloader.extract_metadata(url, cookiefile=cookiefile)
             if not result.get('success'):
                 return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
             meta = result.get('metadata', {})
@@ -1374,7 +1477,7 @@ def preview_metadata():
                 'thumbnail': meta.get('thumbnail_url', ''),
             })
         else:
-            result = downloader.extract_playlist_metadata(url)
+            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
             if not result.get('success'):
                 return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
             return jsonify({
@@ -1393,6 +1496,7 @@ def preview_metadata():
 
 def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | None = None):
     """Daemon thread — extrait les métadonnées (sauf si override fourni) puis enqueue."""
+    cookiefile = str(_user_cookies_file(user))
     try:
         if url_mode == 'song':
             if override and override.get('title'):
@@ -1403,7 +1507,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':   override.get('year',   ''),
                 }
             else:
-                result = downloader.extract_metadata(url)
+                result = downloader.extract_metadata(url, cookiefile=cookiefile)
                 if not result.get('success'):
                     logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
                     return
@@ -1431,7 +1535,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
             except queue.Full:
                 logger.warning("⚠️ queue-direct (song): file pleine")
         else:
-            result = downloader.extract_playlist_metadata(url)
+            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
             if not result.get('success'):
                 logger.warning(f"⚠️ queue-direct playlist extract failed: {result.get('error')}")
                 return
@@ -1481,6 +1585,8 @@ def queue_direct():
             return jsonify({'success': False, 'error': 'URL manquante'}), 400
         if not _is_valid_youtube_url(url):
             return jsonify({'success': False, 'error': 'URL invalide'}), 400
+        if (resp := _cookies_missing_response(user)) is not None:
+            return resp
         if job_queue.full():
             return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
 
@@ -1842,13 +1948,13 @@ def _is_cookie_error(msg: str) -> bool:
     return any(marker in m for marker in _AGE_COOKIE_MARKERS)
 
 
-def _cookies_diagnostic() -> str:
+def _cookies_diagnostic(cookies_file: Path) -> str:
     """État du fichier cookies pour les logs : présence + nb d'entrées + âge."""
     try:
-        if not _COOKIES_FILE.is_file():
-            return f"cookies ABSENTS ({_COOKIES_FILE})"
-        age_days = (time.time() - _COOKIES_FILE.stat().st_mtime) / 86400
-        n = sum(1 for l in _COOKIES_FILE.read_text(encoding='utf-8', errors='ignore').splitlines()
+        if not cookies_file.is_file():
+            return f"cookies ABSENTS ({cookies_file.name})"
+        age_days = (time.time() - cookies_file.stat().st_mtime) / 86400
+        n = sum(1 for l in cookies_file.read_text(encoding='utf-8', errors='ignore').splitlines()
                 if l and not l.startswith('#'))
         return f"cookies présents ({n} entrées, {age_days:.1f} j)"
     except Exception as e:
@@ -1884,6 +1990,8 @@ def _process_song(item):
     metadata    = item['metadata']
     user_sub    = item.get('user_sub', 'dev-user-local')
     user_pseudo = item.get('user_pseudo', '')
+    cookies_file = _user_cookies_file({'sub': user_sub, '_pseudo': user_pseudo,
+                                       'role': item.get('user_role', 'member')})
     cancel_flag.clear()
 
     with queue_lock:
@@ -1898,8 +2006,8 @@ def _process_song(item):
                 'user_sub': user_sub,
                 'started_at': datetime.now().isoformat()
             },
-            'last_error': None,
         })
+        _last_error_by_user.pop(user_sub, None)
 
     logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_sub[:8]}]")
 
@@ -1913,7 +2021,10 @@ def _process_song(item):
             logger.info(f"⏭️ Doublon ignoré (pas de download): {metadata.get('artist')} - {metadata.get('title')}")
             org_result = {'success': True, 'skipped': True, 'final_path': ''}
         else:
-            result = downloader.download(url, metadata)
+            # Cookies supprimés entre la mise en file et le téléchargement.
+            if not cookies_file.is_file():
+                raise Exception(COOKIES_MISSING_MSG)
+            result = downloader.download(url, metadata, cookiefile=str(cookies_file))
 
             if cancel_flag.is_set():
                 raise Exception("Annulé par l'utilisateur")
@@ -1939,7 +2050,7 @@ def _process_song(item):
         with queue_lock:
             download_status['in_progress']    = False
             download_status['current_download'] = None
-            download_status['last_completed'] = {
+            _last_completed_by_user[user_sub] = {
                 'success':   True,
                 'skipped':   _skipped,
                 'file_path': org_result.get('final_path', ''),
@@ -1969,12 +2080,12 @@ def _process_song(item):
         err_msg  = str(e)
         friendly = _friendly_download_error(err_msg)
         if _is_cookie_error(err_msg):
-            logger.warning(f"🍪 Échec lié aux cookies/âge — {_cookies_diagnostic()}")
+            logger.warning(f"🍪 Échec lié aux cookies/âge — {_cookies_diagnostic(cookies_file)}")
         logger.error(f"❌ {err_msg}")
         with queue_lock:
             download_status['in_progress']    = False
             download_status['current_download'] = None
-            download_status['last_error']     = {
+            _last_error_by_user[user_sub] = {
                 'error': friendly, 'metadata': metadata,
                 'timestamp': datetime.now().isoformat(),
             }
@@ -2022,5 +2133,6 @@ if __name__ == '__main__':
 
     logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={BASE_MUSIC_DIR}")
     events_client.start_replay_thread()
+    _migrate_legacy_cookies()
     threading.Thread(target=queue_worker, daemon=True).start()
     app.run(host='0.0.0.0', port=flask_port, debug=False, use_reloader=False)

@@ -18,10 +18,12 @@ def flask_setup(tmp_path_factory):
     music = tmp_path_factory.mktemp('music')
     temp  = tmp_path_factory.mktemp('temp')
     logs  = tmp_path_factory.mktemp('logs')
+    cookies = tmp_path_factory.mktemp('cookies')
     env_patch = {
-        'WATCHER_SECRET':   WATCHER_SECRET,
-        'DEV_MODE':         'false',
-        'FLASK_SECRET_KEY': 'test-key',
+        'WATCHER_SECRET':    WATCHER_SECRET,
+        'DEV_MODE':          'false',
+        'FLASK_SECRET_KEY':  'test-key',
+        'YTDLP_COOKIES_DIR': str(cookies),
     }
 
     with patch.dict(os.environ, env_patch):
@@ -31,6 +33,7 @@ def flask_setup(tmp_path_factory):
             app_mod.BASE_MUSIC_DIR = music
             app_mod.TEMP_DIR       = temp
             app_mod.LOG_DIR        = logs
+            app_mod.COOKIES_DIR    = cookies
             app_mod.app.config['TESTING'] = True
 
             with app_mod.app.test_client() as c:
@@ -49,6 +52,17 @@ def auth_headers(role='member', sub='user-abc', email='user@test.com'):
 
 def admin_headers(sub='admin-xyz'):
     return auth_headers(role='admin', sub=sub, email='admin@test.com')
+
+
+_NETSCAPE = ('# Netscape HTTP Cookie File\n'
+             '.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tvalue\n')
+
+
+def give_cookies(app_mod, pseudo='user'):
+    """Écrit un fichier cookies pour <pseudo> (par défaut auth_headers() → 'user')."""
+    f = app_mod.COOKIES_DIR / f'{pseudo}.txt'
+    f.write_text(_NETSCAPE)
+    return f
 
 
 # ── S-1: No X-Watcher-Token → rejected ───────────────────────────────────────
@@ -247,6 +261,7 @@ def test_a1_admin_can_call_extract_covers(flask_setup):
 
 def test_d9_accepts_download_while_in_progress(flask_setup):
     c, _, _, app_mod = flask_setup
+    give_cookies(app_mod)
     original = app_mod.download_status['in_progress']
     try:
         app_mod.download_status['in_progress'] = True
@@ -270,6 +285,7 @@ def test_d9_accepts_download_while_in_progress(flask_setup):
 
 def test_d9_rejects_when_queue_full(flask_setup):
     c, _, _, app_mod = flask_setup
+    give_cookies(app_mod)
     import queue as _q
     try:
         # Sature la file de jobs jusqu'à maxsize
@@ -641,3 +657,144 @@ def test_artist_picture_served_with_cache_header(flask_setup):
               headers=auth_headers())
     assert r.status_code == 200
     assert r.headers['Cache-Control'] == 'private, max-age=86400'
+
+
+# ── SSF-01 : cookies par utilisateur, taille max, cloisonnement /api/status ───
+
+def _drain_queue(app_mod):
+    try:
+        while True:
+            app_mod.job_queue.get_nowait()
+    except Exception:
+        pass
+    app_mod._pending_songs = 0
+    app_mod._pending_queue.clear()
+
+
+def test_ssf01_download_blocked_without_cookies(flask_setup):
+    c, *_ = flask_setup
+    for path, body in [
+        ('/api/download', {'url': 'https://www.youtube.com/watch?v=abc', 'title': 'T'}),
+        ('/api/download-playlist', {'playlist_metadata': {'songs': [{'url': 'u', 'title': 't'}]}}),
+        ('/api/queue-direct', {'url': 'https://music.youtube.com/watch?v=abc'}),
+        ('/api/preview', {'url': 'https://music.youtube.com/watch?v=abc'}),
+        ('/api/extract', {'url': 'https://music.youtube.com/watch?v=abc'}),
+    ]:
+        r = c.post(path, json=body, headers=auth_headers(sub='nocookie', email='nocookie@test.com'))
+        assert r.status_code == 403, path
+        data = r.get_json()
+        assert data['code'] == 'cookies_missing'
+        assert 'extension' in data['error']
+
+
+def test_ssf01_no_fallback_on_admin_cookies(flask_setup):
+    c, _, _, app_mod = flask_setup
+    give_cookies(app_mod, pseudo=app_mod.ADMIN_PSEUDO)
+    r = c.post('/api/download', json={'url': 'https://www.youtube.com/watch?v=abc'},
+               headers=auth_headers(sub='member2', email='member2@test.com'))
+    assert r.status_code == 403
+
+
+def test_ssf01_cookies_update_is_per_user(flask_setup):
+    c, _, _, app_mod = flask_setup
+    r = c.post('/api/cookies/update', json={'cookies': _NETSCAPE},
+               headers=auth_headers(sub='alice', email='alice@test.com'))
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data['pseudo'] == 'alice' and data['count'] == 1
+    f = app_mod.COOKIES_DIR / 'alice.txt'
+    assert f.is_file()
+    assert (f.stat().st_mode & 0o777) == 0o600
+    # Un autre membre n'en profite pas
+    assert not (app_mod.COOKIES_DIR / 'bob.txt').exists()
+    r = c.get('/api/status', headers=auth_headers(sub='bob', email='bob@test.com'))
+    assert r.get_json()['cookies_present'] is False
+    r = c.get('/api/status', headers=auth_headers(sub='alice', email='alice@test.com'))
+    assert r.get_json()['cookies_present'] is True
+
+
+def test_ssf01_cookies_update_rejects_bad_format(flask_setup):
+    c, *_ = flask_setup
+    r = c.post('/api/cookies/update', json={'cookies': 'not a cookie file'},
+               headers=auth_headers(sub='carol', email='carol@test.com'))
+    assert r.status_code == 400
+
+
+def test_ssf01_netscape_validation():
+    import app as app_mod
+    assert app_mod._is_netscape_cookies(_NETSCAPE)
+    assert app_mod._is_netscape_cookies('#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tA\tb')
+    assert not app_mod._is_netscape_cookies('# only comments\n')
+    assert not app_mod._is_netscape_cookies('a\tb\tc')
+
+
+def test_ssf01_request_too_large(flask_setup):
+    c, _, _, app_mod = flask_setup
+    big = 'x' * (app_mod.MAX_REQUEST_MB * 1024 * 1024 + 1)
+    r = c.post('/api/cookies/update', data=big, headers={**auth_headers(), 'Content-Type': 'application/json'})
+    assert r.status_code == 413
+    assert '20 Mo' in r.get_json()['error']
+
+
+def test_ssf01_status_isolated_between_members(flask_setup):
+    c, _, _, app_mod = flask_setup
+    with app_mod.queue_lock:
+        app_mod._last_completed_by_user['alice'] = {'file_path': '/secret/alice.mp3', 'timestamp': 't1'}
+        app_mod._last_error_by_user['alice'] = {'error': 'boom', 'timestamp': 't2'}
+        app_mod.download_status['current_download'] = {
+            'url': 'u', 'metadata': {'title': 'Secret'}, 'user_sub': 'alice'}
+    try:
+        bob = c.get('/api/status', headers=auth_headers(sub='bob', email='bob@test.com')).get_json()
+        assert bob['last_completed'] is None
+        assert bob['last_error'] is None
+        assert bob['current_download'] is None
+        assert bob['is_mine'] is False
+
+        alice = c.get('/api/status', headers=auth_headers(sub='alice', email='alice@test.com')).get_json()
+        assert alice['last_completed']['file_path'] == '/secret/alice.mp3'
+        assert alice['last_error']['error'] == 'boom'
+        assert alice['current_download']['metadata']['title'] == 'Secret'
+        assert alice['is_mine'] is True
+    finally:
+        with app_mod.queue_lock:
+            app_mod._last_completed_by_user.clear()
+            app_mod._last_error_by_user.clear()
+            app_mod.download_status['current_download'] = None
+
+
+def test_ssf01_worker_uses_owner_cookies(flask_setup):
+    _, music, _, app_mod = flask_setup
+    f = give_cookies(app_mod, pseudo='dave')
+    item = {'url': 'https://www.youtube.com/watch?v=abc',
+            'metadata': {'artist': 'A', 'album': 'B', 'title': 'T'},
+            'user_sub': 'dave-sub', 'user_pseudo': 'dave', 'user_role': 'member'}
+    with patch.object(app_mod.downloader, 'download',
+                      return_value={'success': False, 'error': 'x'}) as dl:
+        app_mod._process_song(item)
+    assert dl.call_args.kwargs['cookiefile'] == str(f.resolve())
+    assert app_mod._last_error_by_user['dave-sub']['error'] == 'x'
+    app_mod._last_error_by_user.clear()
+
+
+def test_ssf01_worker_fails_cleanly_when_cookies_removed(flask_setup):
+    _, _, _, app_mod = flask_setup
+    item = {'url': 'https://www.youtube.com/watch?v=abc',
+            'metadata': {'artist': 'A', 'album': 'B', 'title': 'T'},
+            'user_sub': 'erin-sub', 'user_pseudo': 'erin', 'user_role': 'member'}
+    with patch.object(app_mod.downloader, 'download') as dl:
+        app_mod._process_song(item)
+    dl.assert_not_called()
+    assert 'Cookies YouTube manquants' in app_mod._last_error_by_user['erin-sub']['error']
+    app_mod._last_error_by_user.clear()
+
+
+def test_ssf01_legacy_cookies_migrated_to_admin(flask_setup, tmp_path):
+    _, _, _, app_mod = flask_setup
+    legacy = tmp_path / 'cookies.txt'
+    legacy.write_text(_NETSCAPE)
+    target = app_mod.COOKIES_DIR / f'{app_mod.ADMIN_PSEUDO}.txt'
+    target.unlink(missing_ok=True)
+    with patch.object(app_mod, '_LEGACY_COOKIES_FILE', legacy):
+        app_mod._migrate_legacy_cookies()
+    assert target.read_text() == _NETSCAPE
+    assert not legacy.exists()
