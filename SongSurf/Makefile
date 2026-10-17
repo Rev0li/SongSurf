@@ -105,6 +105,19 @@ shell:                            ## Open a shell in the running songsurf contai
 token:                            ## Génère un JWT de test pour accéder en mode prod (ROLE=admin|guest, TTL=24)
 	@ROLE=$(or $(ROLE),admin) TTL=$(or $(TTL),24) bash scripts/gen_test_token.sh
 
+# ── yt-dlp (version épinglée) ─────────────────────────────────────────────────
+
+.PHONY: bump-ytdlp
+bump-ytdlp:                       ## Épingle la dernière version de yt-dlp (VERSION=… pour forcer), puis rebuild/deploy
+	@v="$(VERSION)"; \
+	if [ -z "$$v" ]; then \
+	  v=$$(curl -fsS https://pypi.org/pypi/yt-dlp/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'); \
+	fi; \
+	[ -n "$$v" ] || { echo "Version introuvable"; exit 1; }; \
+	old=$$(sed -n 's/^yt-dlp==//p' server/requirements.txt); \
+	sed -i "s/^yt-dlp==.*/yt-dlp==$$v/" server/requirements.txt; \
+	echo "[ok] yt-dlp $$old → $$v (server/requirements.txt). Ensuite : make up --build / make deploy-nas"
+
 # ── Local dev (no Docker) ─────────────────────────────────────────────────────
 
 .PHONY: dev

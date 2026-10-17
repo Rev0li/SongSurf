@@ -175,7 +175,7 @@ cat logs/downloads.log                       # journal des téléchargements (ps
 |---|---|
 | Port non accessible | Vérifier `WATCHER_PORT` dans `.env` + firewall NAS + `make ps` |
 | `Permission denied: /app/logs/…` | `chmod 777 data/music data/temp logs` (uid container ≠ uid host) |
-| `yt-dlp` échoue (403, throttling) | Synchroniser les cookies YouTube via l'extension navigateur, ou `docker compose restart` pour forcer la mise à jour de yt-dlp |
+| `yt-dlp` échoue (403, throttling) | Synchroniser les cookies YouTube via l'extension navigateur, ou monter yt-dlp : `make bump-ytdlp` puis `make deploy-nas` (version épinglée, plus de mise à jour au boot) |
 | Boucle de redirection vers le login | `AUTH_JWT_SECRET` différent entre rev0auth et SongSurf — vérifier caractère par caractère |
 | 503 sans redirection | `AUTH_SERVICE_LOGIN_URL` vide dans `.env` |
 | Frontend pas à jour après deploy | Rebuild manquant : `--build` obligatoire (le frontend est compilé dans l'image) |

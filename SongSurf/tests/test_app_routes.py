@@ -798,3 +798,41 @@ def test_ssf01_legacy_cookies_migrated_to_admin(flask_setup, tmp_path):
         app_mod._migrate_legacy_cookies()
     assert target.read_text() == _NETSCAPE
     assert not legacy.exists()
+
+
+# ── SSF-02 : arrêt propre ─────────────────────────────────────────────────────
+
+def test_ssf02_cleanup_temp_leftovers(flask_setup, tmp_path):
+    _, _, _, app_mod = flask_setup
+    for name in ('a.part', 'b.ytdl', 'c.temp.mp3', 'd.webm.part-Frag3', 'done.mp3'):
+        (tmp_path / name).touch()
+    with patch.object(app_mod.downloader, 'temp_dir', tmp_path):
+        app_mod._cleanup_temp_leftovers()
+    assert sorted(f.name for f in tmp_path.iterdir()) == ['done.mp3']
+
+
+def test_ssf02_sigterm_removes_current_song_files_and_exits_0(flask_setup, tmp_path):
+    _, _, _, app_mod = flask_setup
+    meta = {'artist': 'Art', 'title': 'Song'}
+    prefix = app_mod.downloader._temp_filename_from_metadata(meta)
+    (tmp_path / f'{prefix}.webm.part').touch()
+    (tmp_path / f'{prefix}.temp.mp3').touch()
+    (tmp_path / 'Other - Track.mp3').touch()
+    with app_mod.queue_lock:
+        app_mod.download_status['current_download'] = {'metadata': meta, 'user_sub': 'x'}
+    try:
+        with patch.object(app_mod.downloader, 'temp_dir', tmp_path):
+            with pytest.raises(SystemExit) as exc:
+                app_mod._on_sigterm(15, None)
+        assert exc.value.code == 0
+        assert [f.name for f in tmp_path.iterdir()] == ['Other - Track.mp3']
+    finally:
+        with app_mod.queue_lock:
+            app_mod.download_status['current_download'] = None
+
+
+def test_ssf02_sigterm_idle_exits_0(flask_setup):
+    _, _, _, app_mod = flask_setup
+    with pytest.raises(SystemExit) as exc:
+        app_mod._on_sigterm(15, None)
+    assert exc.value.code == 0
