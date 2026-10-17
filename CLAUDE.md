@@ -35,8 +35,9 @@ make dev             # Flask backend without Docker (DEV_MODE=true, port 8081)
 make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
 make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without rev0auth)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
+make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
-# Tests (258 pytest tests, no linter configured; the three test_watcher_* files need PyJWT + docker SDK)
+# Tests (261 pytest tests, no linter configured; the three test_watcher_* files need PyJWT + docker SDK)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -122,7 +123,10 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 - Request bodies are capped at 20 MB (`MAX_REQUEST_MB`, rejected in `before_request` — route-level `try/except` would turn Flask's 413 into a 500).
 - `/api/status` only returns the caller's `last_completed` / `last_error` (`_last_*_by_user`); `current_download` is `null` when it belongs to someone else.
 - Frontend changes require a rebuild: Docker multi-stage builds it (`make up --build` / `make deploy-nas`); for local no-Docker dev use `make frontend-dev`.
-- `cancel_flag` in `app.py` is checked by the worker but **no route sets it** — download cancellation is currently not wired.
+- Download cancellation does not exist (dead `cancel_flag` removed in SSF-02); it will come back with feature F2.
+- yt-dlp is **pinned** in `server/requirements.txt` (no update at boot): when YouTube breaks extraction, `make bump-ytdlp` (or `VERSION=…`) then rebuild/`make deploy-nas`.
+- Both services run under **waitress** (single process, multi-thread — never gunicorn multi-process: queue/status state is process-global) with `init: true` (tini). SIGTERM → clean exit 0 (SongSurf deletes the current song's temp files; incomplete `*.part`/`*.temp.*` are also purged at boot).
+- Healthcheck uses `$${FLASK_PORT}` (resolved inside the container) — `${…}` would be resolved from the host `.env` and hit the wrong port.
 - Path containment checks use `Path.is_relative_to()` everywhere (migrated 2026-06); never reintroduce `str.startswith()` (prefix-match flaw: `/music/user` matches `/music/user2`).
 - Extension DOM scraping of music.youtube.com is fragile (virtual scrolling, selector drift) — see memory/project notes.
 - The zsh `chpwd` hook on this dev machine (eza tree) hangs non-interactive shells: use `git -C <path>` instead of `cd && git`.
