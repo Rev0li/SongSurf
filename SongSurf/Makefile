@@ -40,6 +40,7 @@ secrets:                          ## Interactive wizard: creates .env + .secrets
 init-dirs:                        ## Create host data/logs directories
 	@mkdir -p data/music data/music_guest data/temp logs
 	@chmod 777 data/music data/music_guest data/temp logs
+	@mkdir -p data/cookies && chmod 700 data/cookies   # cookies YouTube par utilisateur (SSF-01)
 	@echo "[ok] Data directories ready."
 
 # ── Frontend (local, no Docker) ───────────────────────────────────────────────
