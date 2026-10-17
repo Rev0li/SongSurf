@@ -84,6 +84,7 @@ services:
     volumes:
       - ./data/music:/data/music
       - ./data/temp:/data/temp
+      - ./data/cookies:/data/cookies   # cookies YouTube par utilisateur (<pseudo>.txt)
       - ./logs:/app/logs
 
     healthcheck:

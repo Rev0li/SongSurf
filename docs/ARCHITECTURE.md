@@ -29,7 +29,7 @@ Always running (~15 MB RAM). Responsibilities:
 - **Header injection** — every proxied request carries `X-Watcher-Token: <WATCHER_SECRET>` plus `X-User-Id` / `X-User-Role` (lowercased) / `X-User-Email` from the claims.
 - **Container lifecycle** — starts the `songsurf` container on first authenticated request (Docker SDK via mounted `docker.sock`), serves a loading page while polling `/ping`.
 - **Inactivity monitor** — warns after `INACTIVITY_WARN_TIMEOUT` idle seconds, stops the container after `+ INACTIVITY_GRACE_TIMEOUT`. `/watcher/keepalive` resets the timer; `/api/status` polling is passive (does not reset it). A download in progress or a non-empty queue (`_songsurf_busy()`, checked once the warn threshold is crossed) counts as activity — the container is never stopped mid-batch. `_start_songsurf()` also resets the timer so a stale idle counter can't kill the container during its boot window.
-- **CORS** — allows the browser extension origin to call the API.
+- **CORS** — allows only the SongSurf Clip extension origin (fixed ID from the manifest `key`); `null` and other extensions are refused.
 
 ### SongSurf (`server/app.py`)
 
@@ -50,7 +50,7 @@ Wraps yt-dlp:
 - `extract_playlist_metadata(url)` — album/playlist via `extract_flat`: playlist title/artist/year/thumbnail + per-song `{title, artist, artists, url, id, duration, track_number}` (track number = `playlist_index` or position).
 - `download(url, metadata)` — bestaudio → MP3 (FFmpeg, best VBR quality), staged in `/data/temp`, cached by filename (reuses an existing temp file).
 - Artist normalization: yt-dlp `artists` list preferred; string fallback split on `&`, `,`, `et`, `and`, `/`; ` - Topic` suffix stripped. The primary artist (first) names the folder.
-- Cookies: if `/data/cookies.txt` exists (synced by the extension), yt-dlp uses it.
+- Cookies: per user, `/data/cookies/<pseudo>.txt` (synced by the extension). Extraction and download use the job owner's file; without it the request is refused (`cookies_missing`).
 
 ### Organizer (`server/organizer.py`)
 

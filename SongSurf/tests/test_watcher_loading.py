@@ -68,3 +68,37 @@ def test_loading_breaks_redirect_loop_after_10_retries(client):
     body = client.get('/watcher/loading?next=/&_r=12').get_data(as_text=True)
     assert "show('error');\n" in body
     assert '\n    poll();\n' not in body
+
+
+# ── SSF-01 : CORS limité à l'extension SongSurf Clip ──────────────────────────
+
+_EXT_ORIGIN = f'chrome-extension://{watcher.SONGSURF_EXTENSION_ID}'
+
+
+def test_cors_extension_id_matches_manifest():
+    import base64, hashlib, json
+    manifest = os.path.join(os.path.dirname(__file__), '..', '..', 'chrome-extension', 'manifest.json')
+    with open(manifest, encoding='utf-8') as f:
+        key = base64.b64decode(json.load(f)['key'])
+    ext_id = ''.join(chr(ord('a') + int(c, 16)) for c in hashlib.sha256(key).hexdigest()[:32])
+    assert ext_id == watcher.SONGSURF_EXTENSION_ID
+
+
+def test_cors_preflight_allows_songsurf_extension(client):
+    r = client.options('/api/queue-direct', headers={'Origin': _EXT_ORIGIN})
+    assert r.status_code == 204
+    assert r.headers['Access-Control-Allow-Origin'] == _EXT_ORIGIN
+    assert r.headers['Access-Control-Allow-Credentials'] == 'true'
+
+
+@pytest.mark.parametrize('origin', [
+    'null',
+    'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'https://evil.com',
+])
+def test_cors_rejects_other_origins(client, origin):
+    r = client.options('/api/queue-direct', headers={'Origin': origin})
+    assert r.status_code == 403
+    assert 'Access-Control-Allow-Origin' not in r.headers
+    r = client.get('/ping', headers={'Origin': origin})
+    assert 'Access-Control-Allow-Origin' not in r.headers

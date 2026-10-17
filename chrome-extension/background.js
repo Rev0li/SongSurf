@@ -162,7 +162,9 @@ async function getCookiesAndSend() {
     if (r.ok && data.success) {
       setStatus('online');
       lastCookieSyncAt = Date.now();
-      return { success: true, count: all.length };
+      // Les cookies sont rangés par compte SongSurf : on retient lequel pour le popup.
+      await chrome.storage.local.set({ last_cookie_sync: { pseudo: data.pseudo || '', at: lastCookieSyncAt } });
+      return { success: true, count: all.length, pseudo: data.pseudo || '' };
     }
     if (r.status === 401 || r.status === 503) return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
     return { success: false, error: data.error || `Erreur ${r.status}` };
