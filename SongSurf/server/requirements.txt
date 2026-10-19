@@ -1,4 +1,6 @@
 flask==3.0.0
-yt-dlp>=2026.6.9
+# Version épinglée : mise à jour volontaire via `make bump-ytdlp` (SSF-02)
+yt-dlp==2026.8.19
 mutagen==1.47.0
 Pillow>=10.0.0
+waitress==3.0.2

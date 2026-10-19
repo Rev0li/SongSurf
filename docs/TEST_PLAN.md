@@ -81,7 +81,7 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 | D-7 | Download completes | Wait for worker, check `GET /api/status` | `last_completed.success = true`, file in `/data/music/<sub>/` |
 | D-8 | File organized correctly | Check output path | `Artist/Album/Title.mp3` |
 | D-9 | Reject while busy | POST `/api/download` when one is in progress | 429 — download en cours |
-| D-10 | ~~Cancel in-progress~~ | — | **Not implemented**: no cancel route exists (`cancel_flag` is never set) |
+| D-10 | ~~Cancel in-progress~~ | — | **Not implemented** (dead `cancel_flag` removed in SSF-02; comes back with F2) |
 
 ### 3.3 Playlist download
 
@@ -163,6 +163,8 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 | H-6 | Request size cap | Body > 20 MB | 413 JSON "max 20 Mo" (not 500) |
 | H-7 | `/api/status` isolation | Two members | Other member's `last_completed` / `last_error` / `current_download` never returned |
 | H-8 | Legacy cookies migration | Boot with `/data/cookies.txt` | Moved to `/data/cookies/<ADMIN_PSEUDO>.txt` |
+| H-10 | Clean stop (SSF-02) | `docker stop songsurf` on the NAS (`time`, then `docker inspect -f '{{.State.ExitCode}}'`) | < 2 s, exit 0; `test_ssf02_*` cover temp cleanup |
+| H-11 | Healthcheck (SSF-02) | `docker inspect -f '{{.State.Health.Status}}' songsurf` on the NAS | `healthy` |
 | H-9 | **Manual, real extension on the NAS** | Reload the unpacked extension (new fixed ID → re-enter the SongSurf URL in options), Sync cookies, queue a song | Popup shows "Cookies synchronisés pour <pseudo>"; download OK; a member without sync sees the blocking message |
 
 ---

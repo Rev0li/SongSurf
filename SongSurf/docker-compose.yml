@@ -25,6 +25,8 @@ services:
       dockerfile: watcher/Dockerfile
     image: watcher:latest
     restart: unless-stopped
+    # tini en PID 1 : relaie SIGTERM et ramasse les processus zombies
+    init: true
     # Root needed for Docker socket access (starts/stops songsurf container)
     user: root
 
@@ -67,6 +69,8 @@ services:
       dockerfile: Dockerfile
     image: songsurf:latest
     restart: on-failure
+    # tini en PID 1 : relaie SIGTERM (arrêt propre) et ramasse les ffmpeg zombies
+    init: true
 
     env_file:
       - .env
@@ -88,7 +92,8 @@ services:
       - ./logs:/app/logs
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:${FLASK_PORT:-8081}/ping"]
+      # $$ : FLASK_PORT est lu dans le conteneur, pas dans le .env du host (R2)
+      test: ["CMD-SHELL", "curl -f http://localhost:$${FLASK_PORT:-8081}/ping"]
       interval: 10s
       timeout: 5s
       retries: 3

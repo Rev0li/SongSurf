@@ -105,6 +105,19 @@ shell:                            ## Open a shell in the running songsurf contai
 token:                            ## Génère un JWT de test pour accéder en mode prod (ROLE=admin|guest, TTL=24)
 	@ROLE=$(or $(ROLE),admin) TTL=$(or $(TTL),24) bash scripts/gen_test_token.sh
 
+# ── yt-dlp (version épinglée) ─────────────────────────────────────────────────
+
+.PHONY: bump-ytdlp
+bump-ytdlp:                       ## Épingle la dernière version de yt-dlp (VERSION=… pour forcer), puis rebuild/deploy
+	@v="$(VERSION)"; \
+	if [ -z "$$v" ]; then \
+	  v=$$(curl -fsS https://pypi.org/pypi/yt-dlp/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'); \
+	fi; \
+	[ -n "$$v" ] || { echo "Version introuvable"; exit 1; }; \
+	old=$$(sed -n 's/^yt-dlp==//p' server/requirements.txt); \
+	sed -i "s/^yt-dlp==.*/yt-dlp==$$v/" server/requirements.txt; \
+	echo "[ok] yt-dlp $$old → $$v (server/requirements.txt). Ensuite : make up --build / make deploy-nas"
+
 # ── Local dev (no Docker) ─────────────────────────────────────────────────────
 
 .PHONY: dev
@@ -129,7 +142,8 @@ reset: down clean up              ## Full wipe: stop → clean → start fresh
 # ── Deploy NAS (manuel, depuis la machine de dev) ────────────────────────────
 
 NAS_USER ?= rev0li08
-NAS_HOST ?= 192.168.1.45
+# alias ~/.ssh/config → IP Tailscale du NAS (pas d'IP dans le repo public)
+NAS_HOST ?= nas-songsurf
 NAS_PORT ?= 22
 NAS_KEY  ?= $(HOME)/.ssh/nas_songsurf
 NAS_DIR  ?= /volume1/docker/songsurf
@@ -148,7 +162,7 @@ deploy-nas:                       ## rsync + restart watcher/songsurf sur le NAS
 	  --exclude='.secrets' \
 	  ./ $(NAS_USER)@$(NAS_HOST):$(NAS_DIR)/
 	$(NAS_SSH) $(NAS_USER)@$(NAS_HOST) \
-	  "cd $(NAS_DIR) && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
+	  "cd $(NAS_DIR) && mkdir -p data/cookies && chmod 700 data/cookies && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
 
 .PHONY: deploy-nas-dry
 deploy-nas-dry:                   ## dry-run rsync (aperçu sans envoyer)

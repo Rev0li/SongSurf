@@ -21,6 +21,7 @@ from functools import wraps
 from mutagen.mp3 import MP3
 from mutagen.id3 import APIC
 import hmac
+import signal
 import threading
 import time
 import queue
@@ -33,7 +34,9 @@ import re
 import json
 import io
 import sys
+import glob
 
+from waitress import serve
 from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
 from genre_lookup import lookup_genres
@@ -145,7 +148,6 @@ downloader = YouTubeDownloader(TEMP_DIR, BASE_MUSIC_DIR)
 MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente
 job_queue   = queue.Queue(maxsize=MAX_PENDING_JOBS)
 queue_lock  = threading.Lock()
-cancel_flag = threading.Event()
 
 _pending_songs = 0   # titres empilés mais pas encore démarrés (accès sous queue_lock)
 _pending_queue = []  # aperçu léger des titres en attente, dans l'ordre de passage :
@@ -1992,7 +1994,6 @@ def _process_song(item):
     user_pseudo = item.get('user_pseudo', '')
     cookies_file = _user_cookies_file({'sub': user_sub, '_pseudo': user_pseudo,
                                        'role': item.get('user_role', 'member')})
-    cancel_flag.clear()
 
     with queue_lock:
         if _pending_songs > 0:
@@ -2026,8 +2027,6 @@ def _process_song(item):
                 raise Exception(COOKIES_MISSING_MSG)
             result = downloader.download(url, metadata, cookiefile=str(cookies_file))
 
-            if cancel_flag.is_set():
-                raise Exception("Annulé par l'utilisateur")
             if not result['success']:
                 raise Exception(result.get('error', 'Erreur inconnue'))
 
@@ -2120,6 +2119,43 @@ def queue_worker():
             time.sleep(1)
 
 
+# ── Arrêt propre ───────────────────────────────────────────────────────────────
+
+# Fichiers intermédiaires yt-dlp/ffmpeg laissés par un arrêt brutal (jamais un MP3 fini).
+_TEMP_LEFTOVER_PATTERNS = ('*.part', '*.ytdl', '*.temp.*', '*.part-Frag*')
+
+
+def _cleanup_temp_leftovers() -> None:
+    """Au boot : supprime les restes d'un téléchargement interrompu dans TEMP_DIR."""
+    removed = 0
+    for pattern in _TEMP_LEFTOVER_PATTERNS:
+        for f in downloader.temp_dir.glob(pattern):
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        logger.info(f"🧹 {removed} fichier(s) temporaire(s) incomplet(s) supprimé(s)")
+
+
+def _on_sigterm(signum, _frame):
+    """docker stop : supprime les fichiers du titre en cours (incomplets) puis exit 0.
+
+    Le watcher n'arrête jamais un SongSurf occupé (_songsurf_busy) : en pratique ce
+    cas ne se présente que sur un stop manuel ou un redéploiement.
+    """
+    with queue_lock:
+        current = download_status.get('current_download')
+    if current:
+        prefix = downloader._temp_filename_from_metadata(current.get('metadata') or {})
+        for f in downloader.temp_dir.glob(f'{glob.escape(prefix)}*'):
+            f.unlink(missing_ok=True)
+        logger.warning(f"🛑 Arrêt pendant un téléchargement — fichiers temporaires de « {prefix} » supprimés")
+    logger.info(f"🛑 Signal {signum} reçu — arrêt propre")
+    sys.exit(0)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -2135,4 +2171,8 @@ if __name__ == '__main__':
     events_client.start_replay_thread()
     _migrate_legacy_cookies()
     threading.Thread(target=queue_worker, daemon=True).start()
-    app.run(host='0.0.0.0', port=flask_port, debug=False, use_reloader=False)
+    _cleanup_temp_leftovers()
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    signal.signal(signal.SIGINT, _on_sigterm)
+    # waitress : serveur de prod multi-thread, un seul process (l'état est global au process)
+    serve(app, host='0.0.0.0', port=flask_port, threads=8)

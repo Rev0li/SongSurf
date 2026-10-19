@@ -26,6 +26,7 @@ from flask import (Flask, request, redirect,
                    render_template, Response, stream_with_context, jsonify)
 from datetime import datetime
 import hmac
+import signal
 import re
 import sys
 import threading
@@ -36,6 +37,7 @@ import logging
 import requests as req_lib
 import docker as docker_sdk
 import jwt as pyjwt
+from waitress import serve
 from urllib.parse import urlparse
 
 # En Docker, events_client.py est copié à côté de watcher.py ;
@@ -582,4 +584,11 @@ if __name__ == '__main__':
         mode = "PRODUCTION (AUTH_JWT_SECRET absent → service verrouillé)"
     logger.info(f"🚀 Watcher démarré — mode={mode}, target={TARGET_URL}")
     events_client.start_replay_thread()
-    app.run(host='0.0.0.0', port=int(os.getenv('WATCHER_PORT', '8080')), debug=False)
+
+    def _on_sigterm(signum, _frame):
+        logger.info(f"🛑 Signal {signum} reçu — arrêt du watcher")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    signal.signal(signal.SIGINT, _on_sigterm)
+    # waitress : serveur de prod multi-thread (polling /api/status + proxy en streaming)
+    serve(app, host='0.0.0.0', port=int(os.getenv('WATCHER_PORT', '8080')), threads=16)

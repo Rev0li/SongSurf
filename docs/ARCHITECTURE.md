@@ -105,7 +105,7 @@ sequenceDiagram
 | queue-direct daemon | SongSurf | Per extension request: extracts metadata then enqueues server-side (fire-and-forget) |
 | Inactivity watcher | Watcher | Idle tracking → warn → stop container |
 
-Shared state (`download_status`, `_pending_songs`, daily counter) is lock-protected. Note: `cancel_flag` is checked by the worker but no route currently sets it (cancellation not wired).
+Shared state (`download_status`, `_pending_songs`, daily counter) is lock-protected. Both services are served by waitress (one process, several threads) and exit cleanly on SIGTERM (tini as PID 1 via `init: true`).
 
 ---
 
