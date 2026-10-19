@@ -47,8 +47,8 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/prepare-zip` | POST | Zips the user's whole library → `{count, size_mb, download_url}` |
-| `/api/download-zip` | GET | Streams the ZIP. **Member libraries are deleted after the stream completes; the admin library is never deleted** |
+| `/api/prepare-zip` | POST | Zips the user's whole library → `{count, size_mb, download_url}`. Admin library: 403 `{code: 'zip_disabled'}` (SSF-10) |
+| `/api/download-zip` | GET | Streams the ZIP. **Member libraries are deleted after the stream completes.** Admin library: 403 `zip_disabled`, never exported nor deleted (role and folder checked) |
 
 ### Library
 

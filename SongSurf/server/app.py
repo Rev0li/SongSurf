@@ -1065,12 +1065,29 @@ def download_playlist():
 
 # ── ZIP ────────────────────────────────────────────────────────────────────────
 
+ZIP_DISABLED_MSG = "Export ZIP désactivé pour cette bibliothèque."
+
+
+def _zip_forbidden(user: dict, music_dir: Path) -> bool:
+    """Export ZIP refusé pour la bibliothèque admin, qui est permanente (décision SSF-10).
+
+    Vérifié sur le rôle ET sur le dossier : l'export vide la bibliothèque après le
+    téléchargement, il ne doit jamais viser le dossier admin ni la racine musique.
+    """
+    if user.get('role') == 'admin':
+        return True
+    protected = {BASE_MUSIC_DIR.resolve(), (BASE_MUSIC_DIR / ADMIN_PSEUDO).resolve()}
+    return music_dir.resolve() in protected
+
+
 @app.route('/api/prepare-zip', methods=['POST'])
 @auth_required
 def prepare_zip():
     try:
         user      = _get_current_user()
         music_dir = _user_music_dir(user)
+        if _zip_forbidden(user, music_dir):
+            return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
         files = sorted([p for p in music_dir.rglob('*.mp3') if p.is_file()],
                        key=lambda p: p.stat().st_mtime, reverse=True)
         if not files:
@@ -1107,7 +1124,10 @@ def prepare_zip():
 @app.route('/api/download-zip')
 @auth_required
 def download_zip():
-    user = _get_current_user()
+    user      = _get_current_user()
+    music_dir = _user_music_dir(user)
+    if _zip_forbidden(user, music_dir):
+        return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
     with user_zip_lock:
         state = user_zip_state.get(user['sub'])
     if not state:
@@ -1118,11 +1138,9 @@ def download_zip():
         return jsonify({'success': False, 'error': 'ZIP introuvable'}), 404
 
     _sub      = user['sub']
-    _is_admin = user.get('role') == 'admin'
     _pseudo   = _user_pseudo(user)
     _role     = user.get('role', '')
     _zip_meta = {'count': state.get('count', 0), 'size_mb': state.get('size_mb', 0)}
-    music_dir = _user_music_dir(user)
     file_size = zip_path.stat().st_size
 
     def _stream_and_cleanup():
@@ -1139,16 +1157,17 @@ def download_zip():
                 zip_path.unlink(missing_ok=True)
                 with user_zip_lock:
                     user_zip_state.pop(_sub, None)
-                # Bibliothèque membre = temporaire, supprimée après export.
-                # La bibliothèque admin est persistante : jamais supprimée.
-                if not _is_admin and music_dir != BASE_MUSIC_DIR and music_dir.exists():
+                # Bibliothèque membre = temporaire, supprimée après export. Jamais le
+                # dossier admin ni la racine : refusés en amont, revérifiés ici (SSF-10).
+                purged = not _zip_forbidden(user, music_dir) and music_dir.exists()
+                if purged:
                     shutil.rmtree(music_dir, ignore_errors=True)
                     logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
                 events_client.emit(
                     'zip_export',
                     pseudo=_pseudo,
                     role=_role,
-                    detail={**_zip_meta, 'library_purged': not _is_admin},
+                    detail={**_zip_meta, 'library_purged': purged},
                 )
             except Exception as e:
                 logger.warning(f"⚠️ Post-download cleanup: {e}")

@@ -38,7 +38,7 @@ Started on demand. Responsibilities:
 - **Auth guard** — `WATCHER_SECRET` set → require matching `X-Watcher-Token` header (constant-time compare), then trust the `X-User-*` headers; `DEV_MODE` → injected dev user; otherwise locked.
 - **Per-user storage** — `/data/music/<pseudo>/` where `pseudo` is derived from the email local part; admin role always maps to `ADMIN_PSEUDO`. `DEV_MODE` uses a flat `/data/music/`.
 - **Download orchestration** — single `queue.Queue` (max 50), one worker thread, optional daily quota (`DAILY_DOWNLOAD_LIMIT`), batch progress for albums.
-- **ZIP export** — members can export and download their library as ZIP; the member library is deleted after the download completes (temporary-library model). The admin library is never deleted.
+- **ZIP export** — members can export and download their library as ZIP; the member library is deleted after the download completes (temporary-library model). The admin library is permanent: never exported nor deleted (SSF-10 — no ZIP button for the admin, the API answers 403 `zip_disabled`).
 - **Metadata editor API** — read/write any ID3 frame of a library file, upload covers.
 - **Extension endpoints** — `/api/queue-direct` (held in a pending list consumed by the frontend), `/api/preview`, `/api/cookies/update`.
 

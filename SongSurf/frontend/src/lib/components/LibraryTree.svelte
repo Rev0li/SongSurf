@@ -97,6 +97,8 @@
 
 	// ── ZIP download ──────────────────────────────────────────────────────────
 	let zipping = false;
+	// Bibliothèque admin permanente : pas d'export ZIP (SSF-10, refusé aussi côté API).
+	$: isAdmin = $user?.role === 'admin';
 
 	async function downloadZip() {
 		const ok = await confirmAction({
@@ -161,9 +163,11 @@
 <div class="card">
 	<div class="lib-header">
 		<h2 class="card-title" style="margin:0">📚 Bibliothèque</h2>
-		<button class="btn btn-success btn-sm" on:click={downloadZip} disabled={zipping}>
-			{zipping ? '⏳ Préparation…' : '📥 Télécharger ZIP'}
-		</button>
+		{#if !isAdmin}
+			<button class="btn btn-success btn-sm" on:click={downloadZip} disabled={zipping}>
+				{zipping ? '⏳ Préparation…' : '📥 Télécharger ZIP'}
+			</button>
+		{/if}
 	</div>
 
 	<div class="lib-toolbar" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">

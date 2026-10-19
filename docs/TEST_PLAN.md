@@ -11,10 +11,10 @@ Automated coverage:
 - S-1 → S-4 (Watcher-token auth, header injection, role normalization)
 - D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
 - ST-3, ST-4 (user isolation, path traversal)
-- Z-3 (ZIP without prepare)
+- Z-3 (ZIP without prepare), Z-5 + ST-1/ST-2 (SSF-10: admin ZIP disabled, member library purged)
 - A-1 (admin-only route)
 
-Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→5, P-1→5 (require Docker + yt-dlp network).
+Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
 
 ---
 
@@ -98,8 +98,8 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| ST-1 | Admin files not deleted after ZIP | Download as Admin, GET `/api/download-zip` | Files remain in `/data/music/<sub>/` after 60s |
-| ST-2 | Member files deleted after ZIP | Download as Member, GET `/api/download-zip` | Files removed from `/data/music/<sub>/` after 60s |
+| ST-1 | Admin library never exported nor deleted | `test_ssf10_admin_zip_disabled`: POST `/api/prepare-zip` / GET `/api/download-zip` as Admin | 403 `zip_disabled`, files untouched |
+| ST-2 | Member files deleted after ZIP | `test_ssf10_member_zip_still_purges_member_library`: prepare then download as Member | `/data/music/<pseudo>/` removed once the stream completes |
 | ST-3 | Per-user isolation | Two users (different `sub`) download | Each has their own `/data/music/<sub>/` folder, no cross-access |
 | ST-4 | Path traversal blocked | Library endpoints with `../` in paths | 400 — chemin invalide |
 
@@ -113,6 +113,8 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 | Z-2 | ZIP download | GET `/api/download-zip` after prepare | File downloaded, `Content-Disposition: attachment` |
 | Z-3 | ZIP not ready | GET `/api/download-zip` without prepare | 404 |
 | Z-4 | ZIP contains all files | Inspect ZIP | All `.mp3` from user's music dir are present |
+| Z-5 | ZIP refused on the admin folder, whatever the role | `test_ssf10_zip_refused_on_admin_dir_whatever_the_role` | 403, admin folder untouched even with a ZIP already prepared |
+| Z-6 | **Manual (NAS)** — no ZIP button for the admin | Open SongSurf as admin, then as a member | Admin: no « 📥 Télécharger ZIP » button; member: button present |
 
 ---
 
