@@ -26,9 +26,11 @@ Reference generated from the current code (`server/app.py`, `server/downloader.p
   "batch_active": true, "batch_total": 12, "batch_done": 4, "batch_percent": 38.5,
   "daily_count": 7, "daily_limit": 0,
   "is_mine": true,
-  "last_completed": {…}, "last_error": null
+  "last_completed": {…}, "last_error": null,
+  "cookies_present": true, "cookies_age_days": 0.4
 }
 ```
+`last_completed` / `last_error` / `cookies_*` are the **caller's own**; `current_download` is `null` when the worker is busy with another member's song (`is_mine: false`).
 Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (90) → `completed` (100).
 
 ### Extraction & download
@@ -90,7 +92,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → fire-and-forget: spawns a thread that extracts metadata then enqueues server-side (`_queue_direct_async`). Returns immediately; downloads even with no SongSurf tab open |
 | `/api/preview` | POST | `{url}` → lightweight metadata (no side-effect) for the extension's confirmation UI |
-| `/api/cookies/update` | POST | `{cookies}` (Netscape format) → written to `/data/cookies.txt` for yt-dlp |
+| `/api/cookies/update` | POST | `{cookies}` (Netscape format, validated) → written to `/data/cookies/<pseudo>.txt` (chmod 600) → `{success, count, pseudo}` |
 
 ---
 
@@ -105,7 +107,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/watcher/keepalive` | POST | Resets the inactivity timer (requires auth) |
 | `/logout` | GET/POST | Clears the auth cookie, redirects to `REVAUTH_HOME_URL` / login |
 | `/<any>` | ANY | Catch-all: validate JWT → start container if needed → proxy with injected headers. API callers get JSON 503 `{retry: true}` while SongSurf boots |
-| `OPTIONS *` | OPTIONS | CORS preflight for the extension |
+| `OPTIONS *` | OPTIONS | CORS preflight — only the SongSurf Clip extension origin (`chrome-extension://<SONGSURF_EXTENSION_ID>`), 403 otherwise |
 
 ---
 
@@ -122,7 +124,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `_artist_list(info_artists, fallback)` / `_split_artists(s)` | Artist list normalization (yt-dlp list preferred; split on `&`/`,`/`et`/`and`/`/`; strips ` - Topic`; deduped) |
 | `_primary_artist(s)` | First artist of the list (names the folder) |
 | `_detect_type(url)` | `'song'` / `'playlist'` from URL shape (`v=`, `list=`, `/browse/`) |
-| `_cookies_opts()` | Adds `cookiefile` when `/data/cookies.txt` exists |
+| `_cookies_opts(cookiefile)` | Adds the owner's `cookiefile` when it exists (passed by `extract_metadata` / `extract_playlist_metadata` / `download`) |
 
 `DownloadProgress` — percent/speed/eta/phase updated by the yt-dlp progress hook.
 

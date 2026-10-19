@@ -56,21 +56,11 @@ AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
 AUTH_SERVICE_LOGIN_URL = os.getenv('AUTH_SERVICE_LOGIN_URL', '')
 REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', AUTH_SERVICE_LOGIN_URL)
 
-# Allowed CORS origins: Chrome extensions + auth portal origin + optional extras
-def _build_cors_origins() -> set:
-    origins = {'null'}  # some browsers send "null" for extensions
-    # Auto-allow the auth portal origin so the profile page can fetch dl-logs
-    if AUTH_SERVICE_LOGIN_URL:
-        parsed = urlparse(AUTH_SERVICE_LOGIN_URL)
-        if parsed.scheme and parsed.netloc:
-            origins.add(f"{parsed.scheme}://{parsed.netloc}")
-    for o in os.getenv('CORS_EXTRA_ORIGINS', '').split(','):
-        o = o.strip()
-        if o:
-            origins.add(o)
-    return origins
-
-_CORS_ORIGINS = _build_cors_origins()
+# CORS : seule l'extension SongSurf Clip est autorisée (requêtes avec credentials).
+# ID fixe, dérivé de la clé "key" de chrome-extension/manifest.json — il ne change
+# pas selon le dossier de chargement. Jamais "null" ni chrome-extension://* (S1).
+SONGSURF_EXTENSION_ID = 'ojhafabhkjjlganipbadmpifkikhnadf'
+_CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
 
 TARGET_CONTAINER         = os.getenv('TARGET_CONTAINER', 'songsurf')
 TARGET_URL               = os.getenv('TARGET_URL', 'http://songsurf:8081').rstrip('/')
@@ -478,11 +468,8 @@ def ping():
 # ── CORS for Chrome extension ─────────────────────────────────────────────────
 
 def _cors_headers(origin: str) -> dict:
-    """Returns CORS headers when the request comes from a Chrome extension."""
-    if not origin:
-        return {}
-    is_extension = origin.startswith('chrome-extension://') or origin == 'null'
-    if not is_extension and origin not in _CORS_ORIGINS:
+    """Returns CORS headers only for the SongSurf Clip extension origin."""
+    if origin not in _CORS_ORIGINS:
         return {}
     return {
         'Access-Control-Allow-Origin':      origin,
@@ -570,7 +557,7 @@ def proxy(path):
     user = _get_user_from_request()
     if not user:
         origin = request.headers.get('Origin', '')
-        if origin.startswith('chrome-extension://') or origin == 'null':
+        if origin in _CORS_ORIGINS:
             # Extension can't follow cross-origin redirects — return JSON 401 with CORS headers
             return jsonify({'ok': False, 'error': 'unauthenticated', 'login_url': AUTH_SERVICE_LOGIN_URL}), 401
         if AUTH_SERVICE_LOGIN_URL:

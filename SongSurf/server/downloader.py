@@ -94,14 +94,16 @@ class YouTubeDownloader:
             f"{metadata.get('artist', 'Unknown')} - {metadata.get('title', 'Unknown')}"
         )
 
-    def _cookies_opts(self):
-        """Returns yt-dlp cookiefile option if /data/cookies.txt exists."""
-        path = os.getenv('YTDLP_COOKIES', '/data/cookies.txt')
-        if path and Path(path).is_file():
-            return {'cookiefile': path}
+    def _cookies_opts(self, cookiefile=None):
+        """Option yt-dlp cookiefile si le fichier cookies de l'utilisateur existe.
+
+        Pas de fichier global : chaque appel passe les cookies du propriétaire.
+        """
+        if cookiefile and Path(cookiefile).is_file():
+            return {'cookiefile': str(cookiefile)}
         return {}
 
-    def _download_to_temp(self, url, temp_filename, progress_hook=None):
+    def _download_to_temp(self, url, temp_filename, progress_hook=None, cookiefile=None):
         ydl_opts = {
             'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best',
             'postprocessors': [{
@@ -120,7 +122,7 @@ class YouTubeDownloader:
             # deno (image Docker) + composants EJS distants restaurent les formats audio.
             'remote_components': ['ejs:github'],
         }
-        ydl_opts.update(self._cookies_opts())
+        ydl_opts.update(self._cookies_opts(cookiefile))
         if progress_hook is not None:
             ydl_opts['progress_hooks'] = [progress_hook]
         if self.ffmpeg_location:
@@ -129,7 +131,7 @@ class YouTubeDownloader:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(url, download=True)
 
-    def download(self, url, metadata):
+    def download(self, url, metadata, cookiefile=None):
         """
         Télécharge une vidéo YouTube en MP3.
 
@@ -168,7 +170,8 @@ class YouTubeDownloader:
             # Sous verrou : évite deux yt-dlp concurrents sur le même outtmpl.
             with self._temp_lock:
                 if not downloaded_file.exists():
-                    self._download_to_temp(url, temp_filename, progress_hook=self.progress.update)
+                    self._download_to_temp(url, temp_filename, progress_hook=self.progress.update,
+                                            cookiefile=cookiefile)
 
             if not downloaded_file.exists():
                 raise FileNotFoundError(f"Fichier MP3 introuvable après conversion: {downloaded_file}")
@@ -202,7 +205,7 @@ class YouTubeDownloader:
     # Extraction de métadonnées
     # ──────────────────────────────────────────────────────────────
 
-    def extract_metadata(self, url):
+    def extract_metadata(self, url, cookiefile=None):
         """
         Extrait les métadonnées d'une vidéo YouTube sans la télécharger.
 
@@ -223,7 +226,7 @@ class YouTubeDownloader:
                 # challenges JS (signature/n) : cf. _download_to_temp
                 'remote_components': ['ejs:github'],
             }
-            ydl_opts.update(self._cookies_opts())
+            ydl_opts.update(self._cookies_opts(cookiefile))
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -286,7 +289,7 @@ class YouTubeDownloader:
             logger.error(f"❌ Extraction métadonnées: {e}")
             return {'success': False, 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def extract_playlist_metadata(self, url):
+    def extract_playlist_metadata(self, url, cookiefile=None):
         """
         Extrait les métadonnées d'un album ou playlist YouTube Music.
 
@@ -304,7 +307,7 @@ class YouTubeDownloader:
                 'skip_download':  True,
                 'extract_flat':   'in_playlist',
             }
-            ydl_opts.update(self._cookies_opts())
+            ydl_opts.update(self._cookies_opts(cookiefile))
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)

@@ -151,6 +151,22 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, ST-1/2, Z-1/2/4, I-1→
 
 ---
 
+## 9. SSF-01 hardening (CORS, per-user cookies, request size, status isolation)
+
+| # | Test | How | Expected |
+|---|------|-----|----------|
+| H-1 | CORS only for SongSurf Clip | `OPTIONS` with `Origin: null` / other `chrome-extension://…` / `https://evil.com` (`test_cors_*`) | 403, no `Access-Control-Allow-Origin` |
+| H-2 | Extension ID pinned | `test_cors_extension_id_matches_manifest` | ID derived from manifest `key` = `SONGSURF_EXTENSION_ID` |
+| H-3 | No cookies → blocked | `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct` without `<pseudo>.txt` | 403 `cookies_missing` + message pointing to the extension; no fallback on admin cookies |
+| H-4 | Cookies stored per user | `/api/cookies/update` | `/data/cookies/<pseudo>.txt`, chmod 600, response carries `pseudo`; bad format → 400 |
+| H-5 | Worker uses owner cookies | `test_ssf01_worker_*` | `cookiefile` = owner's file; file removed after queueing → clean error |
+| H-6 | Request size cap | Body > 20 MB | 413 JSON "max 20 Mo" (not 500) |
+| H-7 | `/api/status` isolation | Two members | Other member's `last_completed` / `last_error` / `current_download` never returned |
+| H-8 | Legacy cookies migration | Boot with `/data/cookies.txt` | Moved to `/data/cookies/<ADMIN_PSEUDO>.txt` |
+| H-9 | **Manual, real extension on the NAS** | Reload the unpacked extension (new fixed ID → re-enter the SongSurf URL in options), Sync cookies, queue a song | Popup shows "Cookies synchronisés pour <pseudo>"; download OK; a member without sync sees the blocking message |
+
+---
+
 ## Integration checklist (pre-deploy to prod)
 
 - [ ] W-1 through W-9 all pass with real auth-selfhost-rust JWT

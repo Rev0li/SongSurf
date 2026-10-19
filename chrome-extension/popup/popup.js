@@ -54,6 +54,18 @@ function showSyncStatus(msg, isError = false) {
   setTimeout(() => { syncStatus.style.display = 'none'; }, 4000);
 }
 
+// Compte SongSurf de la dernière synchro (les cookies sont rangés par utilisateur).
+const syncAccount = document.getElementById('sync-account');
+
+async function showSyncAccount() {
+  const { last_cookie_sync: last } = await chrome.storage.local.get('last_cookie_sync');
+  if (!syncAccount || !last?.pseudo) return;
+  const when = new Date(last.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+  syncAccount.textContent   = `🍪 Cookies synchronisés pour ${last.pseudo} · ${when}`;
+  syncAccount.style.display = 'block';
+}
+showSyncAccount();
+
 syncBtn?.addEventListener('click', async () => {
   syncBtn.disabled    = true;
   syncBtn.textContent = '⏳ Synchronisation…';
@@ -62,7 +74,8 @@ syncBtn?.addEventListener('click', async () => {
     syncBtn.disabled    = false;
     syncBtn.textContent = '🍪 Sync cookies YouTube';
     if (res && res.success) {
-      showSyncStatus(`✓ ${res.count} cookies envoyés`);
+      showSyncStatus(`✓ ${res.count} cookies envoyés${res.pseudo ? ` pour ${res.pseudo}` : ''}`);
+      showSyncAccount();
     } else {
       showSyncStatus(res?.error || 'Erreur inconnue', true);
     }
