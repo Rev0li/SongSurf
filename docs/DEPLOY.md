@@ -48,6 +48,9 @@ cd /volume1/docker/songsurf
 # Dossiers de données avec les bons droits (uid container = 1000)
 mkdir -p data/music data/temp logs
 chmod 777 data/music data/temp logs
+
+# Cookies YouTube par utilisateur (make deploy-nas le crée aussi s'il manque)
+mkdir -p data/cookies && chmod 700 data/cookies
 ```
 
 > ⚠️ Le `chmod 777` est requis si l'uid NAS diffère de 1000 (uid du container `songsurf`). `make init-dirs` le fait automatiquement.
@@ -59,10 +62,13 @@ chmod 777 data/music data/temp logs
 Depuis la machine de dev, la commande tout-en-un :
 
 ```bash
+make deploy-nas                     # NAS_HOST par défaut = alias SSH nas-songsurf
 make deploy-nas NAS_USER=<user> NAS_HOST=<ip> NAS_DIR=/volume1/docker/songsurf
 ```
 
-Elle rsync le projet (en excluant `data/`, `logs/`, `.env`, `.secrets`) puis rebuild et relance les containers. `.env` et `.secrets` restent sur le NAS entre les déploiements — les copier une seule fois :
+`NAS_HOST` vaut par défaut `nas-songsurf`, l'alias de `~/.ssh/config` : son `HostName` pointe sur l'**IP Tailscale** du NAS, stable et joignable hors LAN (l'IP LAN change avec le DHCP). Aucune IP n'est écrite dans le repo, qui est public.
+
+Elle rsync le projet (en excluant `data/`, `logs/`, `.env`, `.secrets`), crée `data/cookies` s'il manque, puis rebuild et relance les containers. `.env` et `.secrets` restent sur le NAS entre les déploiements — les copier une seule fois :
 
 ```bash
 scp .env .secrets <user>@<nas>:/volume1/docker/songsurf/
@@ -211,10 +217,10 @@ rsync: connection unexpectedly closed (code 12)
 **Solution**
 ```bash
 # Créer le dossier .ssh sur le NAS
-ssh -p 22 rev0li08@192.168.1.45 "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+ssh -p 22 rev0li08@<ip-du-nas> "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
 
 # Copier la clé publique
-cat ~/.ssh/nas_songsurf.pub | ssh -p 22 rev0li08@192.168.1.45 \
+cat ~/.ssh/nas_songsurf.pub | ssh -p 22 rev0li08@<ip-du-nas> \
   "cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
@@ -312,11 +318,10 @@ Exécuter la tâche manuellement après création pour l'appliquer sans reboot.
 
 | Élément | Valeur |
 |---|---|
-| Host | `192.168.1.45` |
+| Host (`NAS_HOST`) | alias SSH `nas-songsurf` (dans `~/.ssh/config`, `HostName` = IP Tailscale du NAS) |
 | User | `rev0li08` |
 | Port SSH | `22` |
 | Clé SSH | `~/.ssh/nas_songsurf` |
-| Alias SSH | `nas-songsurf` (dans `~/.ssh/config`) |
 | Dossier deploy | `/volume1/docker/songsurf/` |
 | docker-compose | `/usr/local/bin/docker-compose` (v1.28.5) |
 | docker | `/var/packages/Docker/target/usr/bin/docker` |

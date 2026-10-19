@@ -142,7 +142,8 @@ reset: down clean up              ## Full wipe: stop → clean → start fresh
 # ── Deploy NAS (manuel, depuis la machine de dev) ────────────────────────────
 
 NAS_USER ?= rev0li08
-NAS_HOST ?= 192.168.1.45
+# alias ~/.ssh/config → IP Tailscale du NAS (pas d'IP dans le repo public)
+NAS_HOST ?= nas-songsurf
 NAS_PORT ?= 22
 NAS_KEY  ?= $(HOME)/.ssh/nas_songsurf
 NAS_DIR  ?= /volume1/docker/songsurf
