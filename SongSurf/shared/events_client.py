@@ -13,7 +13,6 @@ SONGSURF_EVENTS_SECRET est vide, tout est no-op.
 import json
 import logging
 import os
-import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -48,20 +47,6 @@ def init(source: str, pending_file: str) -> None:
     global _source, _pending_file
     _source = source
     _pending_file = pending_file
-
-
-def derive_pseudo(claims: dict) -> str:
-    """Réplique de app.py::_user_pseudo pour les claims JWT (sub/role/email)."""
-    admin_pseudo = os.getenv('ADMIN_PSEUDO', 'rev0admin')
-    if claims.get('role') == 'admin' and admin_pseudo:
-        return admin_pseudo
-    email = (claims.get('email') or '').strip().lower()
-    if email and '@' in email:
-        raw = email.split('@')[0]
-    else:
-        raw = (claims.get('sub') or 'user')
-    pseudo = re.sub(r'[^a-z0-9._-]', '_', raw)
-    return pseudo.strip('._-') or 'user'
 
 
 def emit(event_type: str, *, pseudo='', role='', artist='', album='', title='',

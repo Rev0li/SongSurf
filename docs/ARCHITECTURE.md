@@ -6,8 +6,9 @@ SongSurf is a two-tier application: a lightweight authentication proxy (**Watche
 
 ```mermaid
 graph TD
-    User((Browser)) -->|JWT cookie| W[Watcher :8080]
-    Ext[Browser extension] -->|JWT cookie + CORS| W
+    User((Browser)) -->|portal session| C[Caddy forward_auth]
+    Ext[Browser extension] -->|portal session| C
+    C -->|X-User-* + X-Proxy-Token| W[Watcher :8080]
     W -->|X-Watcher-Token + X-User-* headers| SS[SongSurf :8081]
     W -->|Docker SDK| D[Docker Engine]
     D -->|start / stop| SS
@@ -25,8 +26,7 @@ graph TD
 
 Always running (~15 MB RAM). Responsibilities:
 
-- **Portal gate (AUTH-09, SSF-11)** — when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET`, trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role`, `X-User-Id`); otherwise those headers are ignored and the JWT path below applies. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded to SongSurf.
-- **JWT validation** (removed in SSF-12) — reads the `access_token` HttpOnly cookie, validates HS256 locally with `AUTH_JWT_SECRET` (claims: `sub`, `role`, `email`, `token_type=access`, `exp`). No cookie/invalid → redirect to `AUTH_SERVICE_LOGIN_URL` (or 503 if unset). `DEV_MODE=true` bypasses with a local admin user.
+- **Portal gate (AUTH-09)** — when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET`, trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role`, `X-User-Id`); otherwise those headers are ignored → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). Empty secret → locked. `DEV_MODE=true` bypasses with a local admin user. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded to SongSurf.
 - **Header injection** — every proxied request carries `X-Watcher-Token: <WATCHER_SECRET>` plus `X-User-Id` / `X-User-Role` (lowercased) / `X-User-Email` from the claims.
 - **Container lifecycle** — starts the `songsurf` container on first authenticated request (Docker SDK via mounted `docker.sock`), serves a loading page while polling `/ping`.
 - **Inactivity monitor** — warns after `INACTIVITY_WARN_TIMEOUT` idle seconds, stops the container after `+ INACTIVITY_GRACE_TIMEOUT`. `/watcher/keepalive` resets the timer; `/api/status` polling is passive (does not reset it). A download in progress or a non-empty queue (`_songsurf_busy()`, checked once the warn threshold is crossed) counts as activity — the container is never stopped mid-batch. `_start_songsurf()` also resets the timer so a stale idle counter can't kill the container during its boot window.
@@ -72,13 +72,15 @@ sequenceDiagram
     participant W as Watcher
     participant S as SongSurf
     participant Q as Queue worker
+    participant C as Caddy + portal
 
-    B->>W: GET / (no cookie)
-    W->>B: 302 AUTH_SERVICE_LOGIN_URL
-    Note over B: login on auth service → access_token cookie
+    B->>C: GET / (no portal session)
+    C->>B: 302 portal login
+    Note over B: login on the portal → session cookie
 
-    B->>W: GET / (cookie)
-    W->>W: validate JWT
+    B->>C: GET / (session)
+    C->>W: + X-User-Name / Role / Id + X-Proxy-Token
+    W->>W: check X-Proxy-Token
     W->>S: start container if needed, proxy + X-User-* headers
     S-->>B: SvelteKit dashboard
 
@@ -168,4 +170,4 @@ Key flows:
 | Images | Pillow (cover crop/resize → JPEG) |
 | Frontend | SvelteKit, adapter-static |
 | Containers | Docker Compose overlays + Docker SDK (lifecycle) |
-| Auth | HS256 JWT (rev0auth) validated by Watcher |
+| Auth | Portal gate (Caddy `forward_auth` + rev0auth), proof checked by Watcher |

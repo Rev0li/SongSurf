@@ -7,49 +7,29 @@ Run: `cd SongSurf && python3 -m pytest`
 New coverage since 2026-05: track number (TRCK) pass-through, multi-artist TPE1 list, album artist TPE2, artist string splitting (`_split_artists` / `_artist_list`).
 
 Automated coverage:
-- W-1 → W-9, W-10/11 (JWT validation, DEV_MODE, secret, claims, tamper)
-- W-14 → W-19 (SSF-11 portal gate: proof, ignored headers, double acceptance, forwarded headers)
+- W-14 → W-19, W-22 → W-24 (portal gate: proof, ignored headers, forwarded headers, anonymous page/401, locked without secret, logout)
 - S-1 → S-4 (Watcher-token auth, header injection, role normalization)
 - D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
 - ST-3, ST-4 (user isolation, path traversal)
 - Z-3 (ZIP without prepare), Z-5 + ST-1/ST-2 (SSF-10: admin ZIP disabled, member library purged)
 - A-1 (admin-only route)
 
-Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
+Remaining manual tests: W-10/11, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
 
 ---
 
 ## 1. Auth / Security — Watcher
 
-### 1.1 JWT validation
+_W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) were removed with the JWT in SSF-12._
+
+### 1.1 DEV_MODE bypass
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| W-1 | Valid JWT accepted | Send request with `access_token` cookie containing valid HS256 JWT (`sub`, `role`, `email`, `token_type=access`, non-expired `exp`) | 200 — proxied to SongSurf |
-| W-2 | Expired JWT rejected | Same as W-1 but `exp` in the past | Redirect to `AUTH_SERVICE_LOGIN_URL` (or 503) |
-| W-3 | Wrong algorithm rejected | JWT signed with RS256 | Redirect / 503 |
-| W-4 | Wrong secret rejected | JWT signed with a different secret | Redirect / 503 |
-| W-5 | Missing `token_type` claim | JWT without `token_type=access` (e.g. refresh token) | Redirect / 503 |
-| W-6 | Missing `sub` or `role` claim | JWT without required claims | Redirect / 503 |
-| W-7 | No cookie at all | Request with no `access_token` cookie | Redirect to `AUTH_SERVICE_LOGIN_URL` if set, else 503 |
-| W-8 | Tampered JWT payload | Modify base64 payload without re-signing | Redirect / 503 |
-| W-9 | `JWT_SECRET` empty | Start Watcher without `JWT_SECRET` set | Every request → 503 (not crash), warning in logs |
+| W-10 | DEV_MODE=true bypasses auth | No headers, `DEV_MODE=true` | 200 — user is `dev-user-local`, role `admin` |
+| W-11 | DEV_MODE=false requires the gate | No proof, `DEV_MODE=false` | 401 |
 
-### 1.2 DEV_MODE bypass
-
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| W-10 | DEV_MODE=true bypasses JWT | No cookie, `DEV_MODE=true` | 200 — user is `dev-user-local`, role `admin` |
-| W-11 | DEV_MODE=false requires JWT | No cookie, `DEV_MODE=false` | Redirect / 503 |
-
-### 1.3 AUTH_SERVICE_LOGIN_URL redirect
-
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| W-12 | Redirect when configured | Set `AUTH_SERVICE_LOGIN_URL`, send unauthenticated request | 302 redirect to `AUTH_SERVICE_LOGIN_URL` |
-| W-13 | 503 fallback | Unset `AUTH_SERVICE_LOGIN_URL`, send unauthenticated request | 503 + `unavailable.html` |
-
-### 1.4 Portal gate — AUTH-09 (SSF-11, `tests/test_watcher_proxy_gate.py`)
+### 1.2 Portal gate — AUTH-09 (SSF-11/12, `tests/test_watcher_proxy_gate.py`)
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
@@ -57,10 +37,13 @@ Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, 
 | W-15 | Missing / wrong proof | Same headers, proof absent, empty, wrong or non-ASCII | Identity headers ignored; wrong proof logged |
 | W-16 | Secret not configured | `SONGSURF_PROXY_SECRET` empty | Headers never trusted, whatever the proof |
 | W-17 | Incomplete identity | Valid proof without `X-User-Name` or `X-User-Role` (or blank name) | Rejected |
-| W-18 | Double acceptance | JWT cookie without proof; both present; forged headers without proof on `/` and `/watcher/*` | JWT still accepted; gate wins; forged → redirect to login / 401 |
+| W-18 | No proof → anonymous | Old `access_token` cookie; forged headers without proof on `/watcher/*` | Ignored; 401 |
 | W-19 | Forwarded headers | Proxied request with forged `X-User-Email` / `X-Watcher-Token` | SongSurf gets the Watcher's own values + `X-User-Portal-Id`, never `X-Proxy-Token` / `X-User-Name` |
 | W-20 | **Manual (NAS, after step 3)** — through the gate | Open `https://songsurf.rev0li.duckdns.org` logged in / logged out of the portal | Logged in: library of the right account; logged out: portal login |
 | W-21 | **Manual (extension)** — portal session | Queue a song logged in, then logged out of the portal | Logged in: queued (the portal cookie is sent); logged out: clickable « Non connecté » toast that opens SongSurf |
+| W-22 | Anonymous request | No proof: browser page; JSON / extension call; old `?token=` link | 401 « Passe par le portail » page (link to `REVAUTH_HOME_URL`); 401 `{ok: false, error: 'unauthenticated'}`; no cookie set |
+| W-23 | Service locked | `SONGSURF_PROXY_SECRET` empty, valid-looking headers | 401 |
+| W-24 | Logout | GET `/logout` | 302 → `REVAUTH_HOME_URL`, no `Set-Cookie` |
 
 ---
 
@@ -70,8 +53,8 @@ Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, 
 |---|------|-----|----------|
 | S-1 | `X-Watcher-Token` required | Send request directly to SongSurf `:8081` without header | 401 or 503 |
 | S-2 | Wrong `X-Watcher-Token` | Send request to SongSurf with wrong token value | 401 |
-| S-3 | Headers injected correctly | Authenticate via Watcher, check SongSurf receives `X-User-Id`, `X-User-Role`, `X-User-Email` | Headers match JWT claims |
-| S-4 | Role lowercase | JWT has `role: "Admin"` (capitalized) | SongSurf receives `x-user-role: admin` |
+| S-3 | Headers injected correctly | Authenticate via Watcher, check SongSurf receives `X-User-Id`, `X-User-Role`, `X-User-Email` | Headers match the gate identity |
+| S-4 | Role lowercase | Gate sends `X-User-Role: Admin` (capitalized) | SongSurf receives `x-user-role: admin` |
 
 ---
 
@@ -162,8 +145,8 @@ Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, 
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| A-1 | `/api/admin/extract-covers` requires admin | Call with Member JWT | 403 — Admin requis |
-| A-2 | Admin can call it | Call with Admin JWT | 200 — covers extracted |
+| A-1 | `/api/admin/extract-covers` requires admin | Call as Member | 403 — Admin requis |
+| A-2 | Admin can call it | Call as Admin | 200 — covers extracted |
 
 ---
 
@@ -187,9 +170,9 @@ Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, 
 
 ## Integration checklist (pre-deploy to prod)
 
-- [ ] W-1 through W-9 all pass with real auth-selfhost-rust JWT
+- [ ] W-20 / W-21 pass through the real portal gate
 - [ ] `DEV_MODE=false` in `.env`
-- [ ] `JWT_SECRET` same value in Watcher `.env` and auth-selfhost-rust `.env`
-- [ ] `AUTH_SERVICE_LOGIN_URL` points to live auth login page
+- [ ] `SONGSURF_PROXY_SECRET` same value in `.secrets` and in the secret Caddy reads on the VPS
+- [ ] `REVAUTH_HOME_URL` points to the portal member space
 - [ ] NAS firewall blocks port 8081 from WAN
 - [ ] SongSurf port NOT published in `docker-compose.local.yml` (already done)

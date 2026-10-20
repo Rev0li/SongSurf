@@ -17,12 +17,12 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 - **Web UI** (SvelteKit): URL queue with metadata preview/edit, library tree with drag-and-drop, full **ID3 metadata editor** (multi-value support with `;`), cover upload
 - **Browser extension** (Chrome/Firefox): one-click queue from music.youtube.com pages, batch an artist's full discography, YouTube cookie sync for yt-dlp
 - **On-demand lifecycle**: automatic container shutdown after inactivity (warn → grace → stop)
-- **JWT auth** via an external HS256 issuer ([rev0auth](https://github.com/Rev0li) or your own), or `DEV_MODE` for local use
+- **Auth delegated to a reverse proxy**: a gate (e.g. Caddy `forward_auth` + [rev0auth](https://github.com/Rev0li)) authenticates users and passes their identity with a shared proof, or `DEV_MODE` for local use
 
 ## Requirements
 
 - Docker + Docker Compose
-- For production auth: any service that issues an HS256 JWT in an `access_token` cookie with `sub` / `role` / `email` / `token_type=access` claims (see `docs/CONNECTOR.md`)
+- For production auth: a reverse proxy that authenticates users and sends `X-User-Name` / `X-User-Role` / `X-User-Id` plus `X-Proxy-Token` (see `docs/CONNECTOR.md`)
 - For frontend development only: Node 20+
 
 ## Quick start (local)
@@ -45,7 +45,6 @@ make down         # stop
 make restart      # down → up
 make config       # preview resolved compose config
 make dev          # Flask backend only, no Docker (port 8081)
-make token        # generate a test JWT (test prod-mode auth without an auth service)
 ```
 
 ## Configuration
@@ -56,21 +55,20 @@ make token        # generate a test JWT (test prod-mode auth without an auth ser
 |---|---|---|
 | `DEPLOY_TARGET` | `local` | `local` (bridge, published ports) or `nas` (host network) |
 | `WATCHER_PORT` | `8080` | Public port — the only one that should face traffic |
-| `DEV_MODE` | `false` | `true` bypasses JWT auth — never in production |
-| `AUTH_SERVICE_LOGIN_URL` | _(empty)_ | Login page to redirect unauthenticated users to |
-| `REVAUTH_HOME_URL` | _(empty)_ | "Back to my space" link target after logout |
+| `DEV_MODE` | `false` | `true` bypasses auth — never in production |
+| `REVAUTH_HOME_URL` | _(empty)_ | Portal member space: target after logout, link on the « use the portal » page |
 | `DAILY_DOWNLOAD_LIMIT` | `0` | Downloads per day, `0` = unlimited |
 | `MAX_DURATION_SECONDS` | `9000` | Reject videos longer than this (2h30 allows DJ mixes) |
 | `INACTIVITY_WARN_TIMEOUT` | `3600` | Idle seconds before shutdown warning |
 | `INACTIVITY_GRACE_TIMEOUT` | `900` | Extra idle seconds before container stop |
 | `ADMIN_PSEUDO` | `rev0admin` | Folder name for the admin library |
 
-`.secrets` (chmod 600, never committed): `AUTH_JWT_SECRET` (shared with your auth service), `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token` when it authenticates users itself; empty = disabled), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
+`.secrets` (chmod 600, never committed): `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token`; empty = service locked), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
 
 ## Production deployment (NAS)
 
 ```bash
-make up-nas              # on the NAS: host network, JWT auth required
+make up-nas              # on the NAS: host network, portal gate required
 # or, from your dev machine (rsync + remote rebuild):
 make deploy-nas NAS_USER=<user> NAS_HOST=<ip> NAS_DIR=/volume1/docker/songsurf
 ```
@@ -118,7 +116,7 @@ Docs for contributors:
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, request lifecycle, threading model, frontend |
 | [`docs/API_OR_MODULES.md`](docs/API_OR_MODULES.md) | Full HTTP API + module reference |
-| [`docs/CONNECTOR.md`](docs/CONNECTOR.md) | JWT contract with the auth service |
+| [`docs/CONNECTOR.md`](docs/CONNECTOR.md) | Portal-gate contract with the auth service |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Test matrix (automated + manual) |
 | [`docs/PLAN_V1.md`](docs/PLAN_V1.md) | Step-by-step plan to V1 (from the 2026-10-15 audit) |
 

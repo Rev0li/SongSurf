@@ -1,18 +1,15 @@
 """
-Tests SSF-11 — porte du portail (AUTH-09) : identité posée par Caddy avec la
-preuve X-Proxy-Token, acceptée en plus du JWT pendant la bascule.
-Covers: W-14 → W-19.
+Tests porte du portail (AUTH-09) : identité posée par Caddy avec la preuve
+X-Proxy-Token (SSF-11), seul mode d'accès en prod depuis le retrait du JWT (SSF-12).
+Covers: W-14 → W-19, W-22 → W-24.
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'watcher'))
 
-import time
-import jwt as pyjwt
 import pytest
 import watcher
 
 _PROXY_SECRET = 'proxy-secret-for-tests'
-_JWT_SECRET   = 'jwt-secret-for-tests-long-enough-256'
 
 
 def _gate_headers(**overrides):
@@ -30,8 +27,7 @@ def _gate_headers(**overrides):
 def gate(monkeypatch):
     monkeypatch.setattr(watcher, 'DEV_MODE', False)
     monkeypatch.setattr(watcher, 'SONGSURF_PROXY_SECRET', _PROXY_SECRET)
-    monkeypatch.setattr(watcher, 'AUTH_JWT_SECRET', _JWT_SECRET)
-    monkeypatch.setattr(watcher, 'AUTH_SERVICE_LOGIN_URL', 'https://auth.example/login')
+    monkeypatch.setattr(watcher, 'REVAUTH_HOME_URL', 'https://portal.example/home/friend')
     return monkeypatch
 
 
@@ -48,7 +44,7 @@ def _user_for(headers=None, cookies=None):
 def test_w14_valid_proof_gives_portal_identity(gate):
     user = _user_for(_gate_headers())
     assert user == {
-        'sub':   'Revo',            # pseudo exact : identité SongSurf, comme le sub du JWT
+        'sub':   'Revo',            # pseudo exact : identité SongSurf (dossiers, événements)
         'role':  'admin',           # minuscules
         'email': '',
         'uid':   '4fac893e-0000-4000-8000-000000000001',
@@ -86,28 +82,17 @@ def test_w17_blank_name_rejected(gate):
     assert _user_for(_gate_headers(**{'X-User-Name': '   '})) is None
 
 
-# ── W-18 : double acceptation — le JWT marche toujours ────────────────────────
+# ── W-18 : sans preuve → anonyme (le JWT n'existe plus, SSF-12) ──────────────
 
-def test_w18_jwt_cookie_still_accepted_without_proof(gate):
-    token = pyjwt.encode({'sub': 'Max', 'role': 'member', 'token_type': 'access',
-                          'exp': int(time.time()) + 600}, _JWT_SECRET, algorithm='HS256')
-    user = _user_for(cookies={'access_token': token})
-    assert user['sub'] == 'Max' and user['role'] == 'member'
-
-
-def test_w18_valid_proof_wins_over_jwt(gate):
-    token = pyjwt.encode({'sub': 'Max', 'role': 'member', 'token_type': 'access',
-                          'exp': int(time.time()) + 600}, _JWT_SECRET, algorithm='HS256')
-    user = _user_for(_gate_headers(), cookies={'access_token': token})
-    assert user['sub'] == 'Revo'
+def test_w18_old_jwt_cookie_is_ignored(gate):
+    assert _user_for(cookies={'access_token': 'eyJhbGciOiJIUzI1NiJ9.e30.x'}) is None
 
 
 def test_w18_forged_headers_without_proof_are_anonymous_on_routes(gate):
     c = watcher.app.test_client()
-    r = c.get('/', headers=_gate_headers(**{'X-Proxy-Token': None}))
-    assert r.status_code == 302
-    assert r.headers['Location'] == 'https://auth.example/login'
     r = c.get('/watcher/inactivity-status', headers=_gate_headers(**{'X-Proxy-Token': 'nope'}))
+    assert r.status_code == 401
+    r = c.post('/watcher/keepalive', headers=_gate_headers(**{'X-Proxy-Token': None}))
     assert r.status_code == 401
 
 
@@ -144,3 +129,47 @@ def test_w19_proxy_forwards_own_identity_and_drops_client_ones(gate):
     lowered = {k.lower() for k in sent}
     assert 'x-proxy-token' not in lowered          # la preuve reste au Watcher
     assert 'x-user-name' not in lowered
+
+
+# ── W-22 : requête anonyme → jamais de redirection (c'est le rôle de Caddy) ───
+
+def test_w22_anonymous_page_says_use_the_portal(gate):
+    r = watcher.app.test_client().get('/', headers=_gate_headers(**{'X-Proxy-Token': None}))
+    assert r.status_code == 401
+    body = r.get_data(as_text=True)
+    assert 'Passe par le portail' in body
+    assert 'https://portal.example/home/friend' in body
+
+
+@pytest.mark.parametrize('headers', [
+    {'Accept': 'application/json'},
+    {'Origin': f'chrome-extension://{watcher.SONGSURF_EXTENSION_ID}'},
+])
+def test_w22_anonymous_api_and_extension_get_json_401(gate, headers):
+    r = watcher.app.test_client().post('/api/queue-direct', headers=headers)
+    assert r.status_code == 401
+    assert r.get_json() == {'ok': False, 'error': 'unauthenticated'}
+
+
+def test_w22_token_handoff_is_gone(gate):
+    r = watcher.app.test_client().get('/?token=eyJhbGciOiJIUzI1NiJ9.e30.x')
+    assert r.status_code == 401
+    assert 'Set-Cookie' not in r.headers
+
+
+# ── W-23 : secret absent → service verrouillé ─────────────────────────────────
+
+def test_w23_no_secret_locks_the_service(gate):
+    gate.setattr(watcher, 'SONGSURF_PROXY_SECRET', '')
+    r = watcher.app.test_client().get('/', headers=_gate_headers())
+    assert r.status_code == 401
+
+
+# ── W-24 : /logout → espace membre du portail, sans cookie à effacer ──────────
+
+def test_w24_logout_redirects_to_portal_without_cookie(gate):
+    gate.setattr(watcher, '_songsurf_running', lambda: False)
+    r = watcher.app.test_client().get('/logout')
+    assert r.status_code == 302
+    assert r.headers['Location'] == 'https://portal.example/home/friend'
+    assert 'Set-Cookie' not in r.headers

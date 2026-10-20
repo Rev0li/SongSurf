@@ -5,7 +5,7 @@ SongSurf — music download server
 
 Auth model (Phase 2):
   - Watcher injects X-Watcher-Token + X-User-Id + X-User-Role + X-User-Email
-  - SongSurf trusts these headers (no JWT validation here)
+  - SongSurf trusts these headers (authentication is done upstream)
   - WATCHER_SECRET set   → require token match, then read user from headers
   - WATCHER_SECRET unset + DEV_MODE=true → inject dev user (standalone testing)
 

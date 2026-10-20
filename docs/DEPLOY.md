@@ -35,7 +35,7 @@ make down          # arrêter
 - NAS Synology avec Docker (DSM 7+), accès SSH
 - (Optionnel) Tailscale pour l'accès VPN
 - (Optionnel) VPS avec reverse proxy (Caddy/Nginx) + domaine pour l'accès public
-- Un service d'auth émettant un JWT HS256 (rev0auth) — ou `DEV_MODE=true` pour un usage local sans auth
+- Un reverse proxy qui authentifie (Caddy `forward_auth` + portail rev0auth) — ou `DEV_MODE=true` pour un usage local sans auth
 
 ---
 
@@ -87,13 +87,13 @@ make secrets
 | Fichier | Contenu | Permissions |
 |---------|---------|-------------|
 | `.env` | Config non-secrète (ports, timeouts, mode, `AUTH_EVENTS_URL`) | 644 |
-| `.secrets` | `AUTH_JWT_SECRET`, `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET`, `SONGSURF_PROXY_SECRET`, clés Flask | 600 |
+| `.secrets` | `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET`, `SONGSURF_PROXY_SECRET`, clés Flask | 600 |
 
 Les deux sont chargés par Docker Compose via `env_file`. Ne jamais committer `.secrets`.
 
-**Pour la prod avec rev0auth :** copier la valeur `AUTH_JWT_SECRET` de rev0auth dans `.secrets` (identique octet par octet), renseigner `AUTH_SERVICE_LOGIN_URL` dans `.env` et vérifier `DEV_MODE=false`. Contrat JWT : [`CONNECTOR.md`](CONNECTOR.md).
+**Pour la prod avec rev0auth (porte du portail) :** `SONGSURF_PROXY_SECRET` dans `.secrets` = la même valeur que le fichier secret lu par Caddy sur le VPS (`openssl rand -hex 32`, identique octet par octet), `REVAUTH_HOME_URL` dans `.env` = espace membre du portail, `DEV_MODE=false`. Sans secret, le service est verrouillé. Contrat : [`CONNECTOR.md`](CONNECTOR.md).
 
-**Porte du portail (AUTH-09) :** sur un NAS existant, ajouter à la main dans `.secrets` `SONGSURF_PROXY_SECRET=<valeur>` (`openssl rand -hex 32`), la même valeur que le fichier secret lu par Caddy sur le VPS, puis redéployer. Vide = porte ignorée, seul le JWT marche. Contrat et ordre de bascule : [`CONNECTOR.md`](CONNECTOR.md).
+**Depuis SSF-12 (JWT retiré) :** sur un NAS existant, retirer `AUTH_JWT_SECRET` de `.secrets` et `AUTH_SERVICE_LOGIN_URL` de `.env` (plus lus).
 
 **Événements d'activité (optionnel) :** le NAS pousse connexions/téléchargements vers le dashboard admin rev0auth (`/japprends/songsurf-activity`). Sur un NAS existant, ne pas relancer le wizard (il écraserait `.env`/`.secrets`) — ajouter à la main :
 
@@ -163,7 +163,7 @@ location / {
 }
 ```
 
-> Le cookie `access_token` doit être partagé entre le sous-domaine auth et le sous-domaine SongSurf (`COOKIE_DOMAIN=.mondomaine.tld` côté rev0auth).
+> La session est vérifiée par le reverse proxy (porte du portail) : le Watcher n'accepte une identité qu'avec la preuve `X-Proxy-Token` = `SONGSURF_PROXY_SECRET`.
 
 ---
 
@@ -184,8 +184,7 @@ cat logs/downloads.log                       # journal des téléchargements (ps
 | Port non accessible | Vérifier `WATCHER_PORT` dans `.env` + firewall NAS + `make ps` |
 | `Permission denied: /app/logs/…` | `chmod 777 data/music data/temp logs` (uid container ≠ uid host) |
 | `yt-dlp` échoue (403, throttling) | Synchroniser les cookies YouTube via l'extension navigateur, ou monter yt-dlp : `make bump-ytdlp` puis `make deploy-nas` (version épinglée, plus de mise à jour au boot) |
-| Boucle de redirection vers le login | `AUTH_JWT_SECRET` différent entre rev0auth et SongSurf — vérifier caractère par caractère |
-| 503 sans redirection | `AUTH_SERVICE_LOGIN_URL` vide dans `.env` |
+| Page « Passe par le portail » alors qu'on est connecté | `SONGSURF_PROXY_SECRET` différent entre `.secrets` et le secret de Caddy (log `X-Proxy-Token invalide`), ou secret absent (log au démarrage) — vérifier caractère par caractère |
 | Frontend pas à jour après deploy | Rebuild manquant : `--build` obligatoire (le frontend est compilé dans l'image) |
 
 Pièges spécifiques Synology (rsync, PATH ssh, socket Docker) : voir [§11](#11-pièges-synology-make-deploy-nas).

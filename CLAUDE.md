@@ -7,13 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SongSurf is a self-hosted YouTube Music downloader with a two-tier proxy architecture:
 
 ```
-Browser ──JWT cookie──► [Watcher :8080*] ──headers──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<pseudo>/Artist/Album/Title.mp3
+Browser ──portal session──► Caddy (forward_auth) ──identity + X-Proxy-Token──► [Watcher :8080*] ──headers──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<pseudo>/Artist/Album/Title.mp3
                             │                              ▲
                             └── Docker SDK (start/stop) ───┘
 ```
 *\*8080 by default (`WATCHER_PORT`); production NAS runs it on 9000.*
 
-- **Watcher** (`SongSurf/watcher/watcher.py`, always running): validates the `access_token` JWT cookie (HS256, secret shared with rev0auth), injects identity headers, starts/stops the SongSurf container on demand, monitors inactivity.
+- **Watcher** (`SongSurf/watcher/watcher.py`, always running): trusts the identity sent by Caddy only with a valid `X-Proxy-Token` (portal gate), injects identity headers, starts/stops the SongSurf container on demand, monitors inactivity.
 - **SongSurf** (`SongSurf/server/`, started on demand): Flask app — extraction, download queue, MP3 conversion, ID3 tagging, library management, metadata editor API.
 - **Frontend** (`SongSurf/frontend/`): SvelteKit (adapter-static), built into the Docker image and served by Flask. Both pages share `Header.svelte` (fixed 93px chrome: "← Mon espace" left, centered logo, pseudo + theme right, Téléchargement/Métadonnées tabs). `/metadata` persists navigation state (expanded tree, sidebar collapsed, selection) in localStorage under `ssf.meta.*`. Cover/artist image URLs are versioned (`?t=<n>` from `ssf.meta.imgv`, bumped only on cover upload — never `Date.now()`, which would defeat the browser cache); the image endpoints send `Cache-Control: private, max-age=86400`.
 - **Browser extension** (`chrome-extension/`): MV3, queues songs/albums/playlists from music.youtube.com into SongSurf, scrapes artist discographies, syncs YouTube cookies for yt-dlp.
@@ -27,17 +27,16 @@ All `make` commands run from `SongSurf/SongSurf/`:
 ```bash
 make secrets         # interactive wizard → .env + .secrets (first run)
 make up-local        # start in local mode (bridge network, localhost ports)
-make up-nas          # start in NAS mode (network_mode: host, JWT required)
+make up-nas          # start in NAS mode (network_mode: host, portal gate required)
 make logs            # stream all container logs (logs-watcher / logs-songsurf)
 make down / restart  # stop / full restart
 make config          # preview resolved compose config
 make dev             # Flask backend without Docker (DEV_MODE=true, port 8081)
 make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
-make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without rev0auth)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
-# Tests (280 pytest tests, no linter configured; the test_watcher_* files need PyJWT + docker SDK)
+# Tests (265 pytest tests, no linter configured; the test_watcher_* files need the docker SDK)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -46,17 +45,16 @@ Docker Compose files merge at runtime via `docker/compose-switch.sh` based on `D
 
 ## Authentication model
 
-**Transition AUTH-09 in progress** (SSF-11 = double acceptance, SSF-12 = JWT removal): Caddy on the VPS asks the portal before each request to `songsurf.` (`forward_auth`) and sends the identity as `X-User-Name` (exact pseudo) / `X-User-Role` / `X-User-Id` (portal UUID) with the proof `X-Proxy-Token`. The Watcher trusts those headers **only** if `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time); otherwise they are ignored and it falls back to the JWT below. `sub` = `X-User-Name` (same as the JWT `sub`, so folders/events are unchanged); the portal UUID goes to SongSurf as `X-User-Portal-Id` (not read yet). Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded to SongSurf. Contract: `docs/CONNECTOR.md`.
+Portal gate (AUTH-09, **implemented**: SSF-11 then SSF-12 removed the JWT):
 
-Legacy JWT path (Phase 3, removed in SSF-12):
+1. Caddy on the VPS asks the portal before each request to `songsurf.` (`forward_auth`). No session → Caddy itself redirects to the portal login (navigation) or answers 401 (API); no SongSurf access → 403. The Watcher never redirects to a login page.
+2. Access granted → Caddy sends `X-User-Name` (exact pseudo) / `X-User-Role` / `X-User-Id` (portal UUID) plus the proof `X-Proxy-Token`, after stripping client-sent `X-User-*` and the portal cookie.
+3. The Watcher trusts those headers **only** if `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time). Otherwise → 401 JSON (API / extension) or a « passe par le portail » page. Empty secret → locked.
+4. It proxies to SongSurf with `X-Watcher-Token: <WATCHER_SECRET>` + `X-User-Id` = pseudo (`sub`, folders/events derive from it) / `X-User-Role` / `X-User-Email` (empty) / `X-User-Portal-Id`. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded. SongSurf verifies `X-Watcher-Token` and performs no auth itself.
+5. `/logout` puts SongSurf to sleep and redirects to `REVAUTH_HOME_URL` (the session is the portal's, no cookie here).
+6. `DEV_MODE=true` bypasses everything with a local admin dev user — never in production.
 
-1. Watcher reads the `access_token` cookie and validates the HS256 JWT locally with `AUTH_JWT_SECRET` (must be byte-identical to the rev0auth side — see root `rev0Univers/CLAUDE.md` for rotation).
-2. On success it proxies to SongSurf, injecting `X-Watcher-Token: <WATCHER_SECRET>` plus `X-User-Id` / `X-User-Role` / `X-User-Email` from the JWT claims.
-3. SongSurf trusts those headers after verifying `X-Watcher-Token` (constant-time compare). It performs **no JWT validation** itself.
-4. No cookie → redirect to `AUTH_SERVICE_LOGIN_URL` (or 503 if unset).
-5. `DEV_MODE=true` bypasses everything with a local admin dev user — never in production.
-
-There are no login forms, password auth, or guest sessions anymore (removed in Phase 2/3 — older docs mentioning `/api/guest/*` are obsolete).
+There are no login forms, password auth, guest sessions or JWT anymore (`?token=`, `access_token`, `AUTH_JWT_SECRET`, `AUTH_SERVICE_LOGIN_URL`, `make token` removed in SSF-12). Contract: `docs/CONNECTOR.md`.
 
 ## Storage model
 
@@ -72,14 +70,14 @@ There are no login forms, password auth, or guest sessions anymore (removed in P
 | `server/app.py` | Flask routes, auth guard, download queue + worker thread, per-user dirs, ZIP export, metadata editor API, extension endpoints |
 | `server/downloader.py` | yt-dlp wrapper: metadata extraction (single + playlist/album), MP3 download to temp, progress tracking, artist list normalization |
 | `server/organizer.py` | File placement `Artist/Album/Title.mp3`, ID3 tags via Mutagen, featuring detection, album covers (`cover.jpg` + embedded APIC) |
-| `watcher/watcher.py` | JWT validation, header injection, reverse proxy, SongSurf container lifecycle (Docker SDK), inactivity shutdown, CORS for the extension |
+| `watcher/watcher.py` | Portal gate (`X-Proxy-Token`), header injection, reverse proxy, SongSurf container lifecycle (Docker SDK), inactivity shutdown, CORS for the extension |
 | `shared/events_client.py` | Activity-event push to rev0auth (stdlib-only, copied into both images): `emit()` fire-and-forget thread, JSONL spool in `logs/events-pending-<source>.jsonl` on failure, replay thread every 5 min |
 
 Full API reference: `docs/API_OR_MODULES.md`.
 
 ## Activity events (push to rev0auth)
 
-Watcher + SongSurf push activity events to the auth VPS (`POST $AUTH_EVENTS_URL`, header `X-Events-Secret: $SONGSURF_EVENTS_SECRET`), stored in PostgreSQL and displayed on the admin page `/japprends/songsurf-activity`. Event types: `login_success` / `login_rejected` (watcher, token handoff only — never anonymous requests), `download_success` / `download_failed` / `zip_export` (server worker + ZIP cleanup), `container_start` / `container_stop` (watcher Docker lifecycle). Empty `AUTH_EVENTS_URL` disables everything (no-op). Never blocking: 3 s timeout, failures go to the local spool. Deploy order: auth (VPS) first, then NAS.
+Watcher + SongSurf push activity events to the auth VPS (`POST $AUTH_EVENTS_URL`, header `X-Events-Secret: $SONGSURF_EVENTS_SECRET`), stored in PostgreSQL and displayed on the admin page `/japprends/songsurf-activity`. Event types: `download_success` / `download_failed` / `zip_export` (server worker + ZIP cleanup), `container_start` / `container_stop` (watcher Docker lifecycle). Empty `AUTH_EVENTS_URL` disables everything (no-op). Never blocking: 3 s timeout, failures go to the local spool. Deploy order: auth (VPS) first, then NAS.
 
 ## Metadata pipeline (ID3)
 
@@ -111,15 +109,15 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 
 ## Environment variables
 
-`.env` (non-secret): `DEPLOY_TARGET`, `WATCHER_PORT`, `SONGSURF_PORT`, `TARGET_URL(_NAS)`, `DAILY_DOWNLOAD_LIMIT`, `MAX_DURATION_SECONDS`, `INACTIVITY_WARN_TIMEOUT`, `INACTIVITY_GRACE_TIMEOUT`, `DEV_MODE`, `AUTH_SERVICE_LOGIN_URL`, `REVAUTH_HOME_URL`, `ADMIN_PSEUDO`, `AUTH_EVENTS_URL` (empty = activity tracking off).
+`.env` (non-secret): `DEPLOY_TARGET`, `WATCHER_PORT`, `SONGSURF_PORT`, `TARGET_URL(_NAS)`, `DAILY_DOWNLOAD_LIMIT`, `MAX_DURATION_SECONDS`, `INACTIVITY_WARN_TIMEOUT`, `INACTIVITY_GRACE_TIMEOUT`, `DEV_MODE`, `REVAUTH_HOME_URL`, `ADMIN_PSEUDO`, `AUTH_EVENTS_URL` (empty = activity tracking off).
 
-`.secrets` (chmod 600, never committed, generated by `make secrets`): `AUTH_JWT_SECRET`, `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET` (must match `auth/.secrets` on the VPS), `SONGSURF_PROXY_SECRET` (must match the secret file Caddy reads on the VPS; empty = portal gate ignored), Flask secret keys.
+`.secrets` (chmod 600, never committed, generated by `make secrets`): `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET` (must match `auth/.secrets` on the VPS), `SONGSURF_PROXY_SECRET` (must match the secret file Caddy reads on the VPS; empty = service locked), Flask secret keys.
 
 `YTDLP_COOKIES_DIR` (default `/data/cookies`, volume `./data/cookies`): **per-user** YouTube cookies `<pseudo>.txt` (chmod 600, Netscape format) written by the extension via `/api/cookies/update`. yt-dlp always uses the cookies of the job owner — no global file, no fallback on admin cookies: a user without cookies gets `403 {code: 'cookies_missing'}` on `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct`. The legacy global `/data/cookies.txt` (`YTDLP_COOKIES`) is migrated to the admin's file at boot.
 
 ## Gotchas
 
-- `AUTH_JWT_SECRET` must match `auth/.secrets` on the rev0auth side — rotating it requires restarting both stacks. Same constraint for `SONGSURF_EVENTS_SECRET` (activity-event push) and `SONGSURF_PROXY_SECRET` (Caddy proof).
+- `SONGSURF_PROXY_SECRET` must match the secret Caddy reads on the VPS — rotating it requires restarting both sides. Same constraint for `SONGSURF_EVENTS_SECRET` (activity-event push, `auth/.secrets`).
 - Port 8081 (SongSurf) must never be exposed to WAN; only Watcher faces traffic.
 - CORS (watcher) allows **only** `chrome-extension://<SONGSURF_EXTENSION_ID>`; the ID is pinned by the `key` field of `chrome-extension/manifest.json` (test `test_cors_extension_id_matches_manifest` keeps both in sync). Never re-add `null` or `chrome-extension://*`.
 - Request bodies are capped at 20 MB (`MAX_REQUEST_MB`, rejected in `before_request` — route-level `try/except` would turn Flask's 413 into a 500).
@@ -147,7 +145,7 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 | `README.md` | User/dev-facing overview, quick start, self-hosting |
 | `docs/ARCHITECTURE.md` | Components, request lifecycle, threading, frontend |
 | `docs/API_OR_MODULES.md` | Full HTTP API + module reference |
-| `docs/CONNECTOR.md` | rev0auth ↔ SongSurf JWT contract (implemented) |
+| `docs/CONNECTOR.md` | rev0auth ↔ SongSurf portal-gate contract (implemented) |
 | `docs/TEST_PLAN.md` | Test matrix (automated + manual) |
 | `docs/DEPLOY.md` | NAS deployment guide, `make deploy-nas`, Synology pitfalls |
 | `docs/AUDIT_2026-10-15.md` | Audit findings (S/R/E/M/F codes) |

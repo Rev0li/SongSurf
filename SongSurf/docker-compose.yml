@@ -46,8 +46,6 @@ services:
       - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
       - DEV_MODE=${DEV_MODE:-false}
       - SONGSURF_PROXY_SECRET=${SONGSURF_PROXY_SECRET:-}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
-      - AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL:-}
       - REVAUTH_HOME_URL=${REVAUTH_HOME_URL:-}
       - TARGET_CONTAINER=songsurf
       - TARGET_URL=${TARGET_URL:-http://songsurf:8081}
@@ -84,7 +82,6 @@ services:
       - FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY:?SONGSURF_FLASK_SECRET_KEY is required}
       - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
       - DEV_MODE=${DEV_MODE:-false}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
 
     volumes:
       - ./data/music:/data/music

@@ -3,22 +3,21 @@
 """
 SongSurf Watcher — Portail léger toujours actif
 
-Authentification (bascule AUTH-09, SSF-11 : les deux modes sont acceptés) :
+Authentification — porte du portail (AUTH-09) :
   - DEV_MODE=true  → utilisateur dev injecté automatiquement, accès libre
-  - Porte du portail : Caddy a déjà vérifié la session et envoie l'identité
-    (X-User-Name / X-User-Role / X-User-Id) avec la preuve X-Proxy-Token,
-    comparée à SONGSURF_PROXY_SECRET. Sans preuve valide, les X-User-* sont ignorés.
-  - Sinon → valide le cookie access_token (JWT HS256, retiré en SSF-12)
-  - Aucun des deux → redirect vers AUTH_SERVICE_LOGIN_URL (ou 503 si non configuré)
+  - Sinon : Caddy a déjà vérifié la session auprès du portail et envoie
+    l'identité (X-User-Name / X-User-Role / X-User-Id) avec la preuve
+    X-Proxy-Token, comparée à SONGSURF_PROXY_SECRET. Sans preuve valide, les
+    X-User-* sont ignorés : 401 (API) ou page « passe par le portail ».
+    La redirection vers la connexion est faite par Caddy, pas ici.
 
 Variables d'environnement:
   WATCHER_SECRET           Secret partagé avec SongSurf (OBLIGATOIRE)
   DEV_MODE                 'true' pour contourner l'auth en développement
-  SONGSURF_PROXY_SECRET    Preuve envoyée par Caddy dans X-Proxy-Token (vide = porte ignorée)
-  AUTH_JWT_SECRET          Clé HMAC partagée avec auth-selfhost-rust (OBLIGATOIRE en prod)
-  AUTH_SERVICE_LOGIN_URL   URL de la page de login auth-selfhost-rust (ex: http://auth:8000/login)
-  REVAUTH_HOME_URL         URL de l'espace membre rev0auth (ex: http://auth:8000/home/friend)
-                           → redirect après logout (défaut: AUTH_SERVICE_LOGIN_URL si absent)
+  SONGSURF_PROXY_SECRET    Preuve envoyée par Caddy dans X-Proxy-Token (OBLIGATOIRE en prod,
+                           vide = service verrouillé)
+  REVAUTH_HOME_URL         URL de l'espace membre du portail (ex: https://…/home/friend)
+                           → redirect après logout, lien de la page « passe par le portail »
   TARGET_CONTAINER         Nom du container SongSurf  (défaut: songsurf)
   TARGET_URL               URL interne de SongSurf    (défaut: http://songsurf:8081)
   INACTIVITY_WARN_TIMEOUT  Secondes sans activité avant avertissement (défaut: 3600)
@@ -31,7 +30,6 @@ from flask import (Flask, request, redirect,
 from datetime import datetime
 import hmac
 import signal
-import re
 import sys
 import threading
 import time
@@ -40,7 +38,6 @@ import secrets
 import logging
 import requests as req_lib
 import docker as docker_sdk
-import jwt as pyjwt
 from waitress import serve
 from urllib.parse import urlparse
 
@@ -59,9 +56,7 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 WATCHER_SECRET         = os.getenv('WATCHER_SECRET', secrets.token_hex(32))
 DEV_MODE               = os.getenv('DEV_MODE', 'false').lower() == 'true'
 SONGSURF_PROXY_SECRET  = os.getenv('SONGSURF_PROXY_SECRET', '')
-AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
-AUTH_SERVICE_LOGIN_URL = os.getenv('AUTH_SERVICE_LOGIN_URL', '')
-REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', AUTH_SERVICE_LOGIN_URL)
+REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', '')
 
 # CORS : seule l'extension SongSurf Clip est autorisée (requêtes avec credentials).
 # ID fixe, dérivé de la clé "key" de chrome-extension/manifest.json — il ne change
@@ -80,12 +75,6 @@ PROXY_READ_TIMEOUT       = float(os.getenv('PROXY_READ_TIMEOUT', '30'))
 events_client.init('watcher', os.getenv('EVENTS_PENDING_FILE', '/app/logs/events-pending-watcher.jsonl'))
 
 
-def _client_ip() -> str:
-    fwd = request.headers.get('X-Forwarded-For', '')
-    if fwd:
-        return fwd.split(',')[0].strip()
-    return request.remote_addr or ''
-
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -94,24 +83,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Redact ?token=<JWT> from Werkzeug access logs so JWTs never appear in plain text
-class _RedactTokenFilter(logging.Filter):
-    _pat = re.compile(r'token=[A-Za-z0-9._~+/=-]+')
-    def filter(self, record):
-        record.msg = self._pat.sub('token=[REDACTED]', str(record.msg))
-        return True
-
-logging.getLogger('werkzeug').addFilter(_RedactTokenFilter())
-
 if DEV_MODE:
     logger.warning("⚠️  DEV_MODE activé — authentification désactivée (dev only)")
-elif not (SONGSURF_PROXY_SECRET or AUTH_JWT_SECRET):
-    logger.warning("⚠️  SONGSURF_PROXY_SECRET et AUTH_JWT_SECRET absents — le service refusera toutes les connexions jusqu'à configuration")
+elif not SONGSURF_PROXY_SECRET:
+    logger.warning("⚠️  SONGSURF_PROXY_SECRET absent — le service refusera toutes les connexions jusqu'à configuration")
 else:
-    if SONGSURF_PROXY_SECRET:
-        logger.info("🔒 Mode production — porte du portail activée (X-Proxy-Token)")
-    if AUTH_JWT_SECRET:
-        logger.info("🔒 Mode production — JWT HS256 activé")
+    logger.info("🔒 Mode production — porte du portail (X-Proxy-Token)")
 
 # ── État global ───────────────────────────────────────────────────────────────
 
@@ -139,37 +116,13 @@ def _safe_int(value, default=0):
         return default
 
 
-def _validate_jwt(token: str) -> dict | None:
-    """Validates HS256 JWT from auth-selfhost-rust. Returns normalized claims or None."""
-    if not AUTH_JWT_SECRET:
-        return None
-    try:
-        claims = pyjwt.decode(
-            token,
-            AUTH_JWT_SECRET,
-            algorithms=['HS256'],
-            options={'require': ['sub', 'role', 'exp']},
-        )
-        # token_type is optional — if present it must be 'access'
-        token_type = claims.get('token_type')
-        if token_type is not None and token_type != 'access':
-            return None
-        return {
-            'sub':   claims['sub'],
-            'role':  claims['role'].lower(),
-            'email': claims.get('email', ''),
-        }
-    except pyjwt.PyJWTError:
-        return None
-
-
 def _user_from_proxy_headers() -> dict | None:
     """Identité posée par Caddy après vérification de la session par le portail.
 
     Fiable uniquement si X-Proxy-Token prouve que la requête vient de Caddy :
     le Watcher écoute sur le réseau local, n'importe quel appareil pourrait
-    sinon se déclarer admin. Le pseudo reste l'identité SongSurf (`sub`, comme
-    dans le JWT) : dossiers et événements inchangés.
+    sinon se déclarer admin. Le pseudo est l'identité SongSurf (`sub`) :
+    dossiers de bibliothèque et événements en dépendent.
     """
     if not SONGSURF_PROXY_SECRET:
         return None
@@ -192,27 +145,15 @@ def _user_from_proxy_headers() -> dict | None:
     }
 
 
-def _extract_jwt_from_request() -> str | None:
-    """Reads JWT from the access_token HttpOnly cookie."""
-    return request.cookies.get('access_token') or None
-
-
 def _get_user_from_request() -> dict | None:
     """
     Returns user claims or None if unauthenticated.
     - DEV_MODE=true → dev user, always authenticated
-    - Valid X-Proxy-Token → identity headers set by Caddy (portal gate)
-    - Otherwise     → validate access_token cookie (JWT HS256)
+    - Otherwise     → identity headers set by Caddy, if X-Proxy-Token is valid
     """
     if DEV_MODE:
         return _DEV_USER.copy()
-    user = _user_from_proxy_headers()
-    if user:
-        return user
-    token = _extract_jwt_from_request()
-    if token:
-        return _validate_jwt(token)
-    return None
+    return _user_from_proxy_headers()
 
 
 # ── Helpers : contrôle Docker ─────────────────────────────────────────────────
@@ -556,7 +497,7 @@ def add_cors(response):
 
 @app.route('/logout', methods=['GET', 'POST'])
 def logout():
-    """Clear session cookie, stop SongSurf if idle, redirect to auth login."""
+    """Stop SongSurf if idle, then back to the portal (its session, its logout)."""
     active = _songsurf_running() and _songsurf_busy()
 
     if active:
@@ -565,10 +506,7 @@ def logout():
         logger.info("💤 Logout — mise en veille de SongSurf")
         threading.Thread(target=_stop_songsurf, daemon=True).start()
 
-    target = REVAUTH_HOME_URL or AUTH_SERVICE_LOGIN_URL or '/'
-    resp = redirect(target)
-    resp.delete_cookie('access_token', path='/', samesite='None', secure=True)
-    return resp
+    return redirect(REVAUTH_HOME_URL or '/')
 
 
 # ── Catch-all proxy ───────────────────────────────────────────────────────────
@@ -579,44 +517,15 @@ def proxy(path):
     if path == 'favicon.ico':
         return Response(status=204)
 
-    # Token handoff from auth service via ?token=<JWT>
-    # Rev0auth redirects to http://songsurf:PORT/?token=JWT after login.
-    # Watcher validates it, sets the HttpOnly cookie, then redirects to clean URL.
-    url_token = request.args.get('token')
-    if url_token:
-        user = _validate_jwt(url_token)
-        if user:
-            clean_url = '/' + path if path else '/'
-            resp = redirect(clean_url)
-            resp.set_cookie(
-                'access_token', url_token,
-                httponly=True, samesite='None', secure=True, path='/',
-                max_age=60 * 60 * 24,
-            )
-            logger.info(f"✅ Token handoff — user={user['sub']} role={user['role']}, cookie posé")
-            events_client.emit(
-                'login_success',
-                pseudo=events_client.derive_pseudo(user),
-                role=user['role'],
-                ip=_client_ip(),
-                detail={'sub': user['sub']},
-            )
-            return resp
-        logger.warning("⚠️  Token handoff échoué (JWT invalide dans ?token=)")
-        # Émis uniquement quand un token a été présenté et rejeté — jamais sur
-        # une simple requête anonyme (bruit des scans internet).
-        events_client.emit('login_rejected', ip=_client_ip(),
-                           detail={'reason': 'invalid_handoff_token'})
-
     user = _get_user_from_request()
     if not user:
-        origin = request.headers.get('Origin', '')
-        if origin in _CORS_ORIGINS:
-            # Extension can't follow cross-origin redirects — return JSON 401 with CORS headers
-            return jsonify({'ok': False, 'error': 'unauthenticated', 'login_url': AUTH_SERVICE_LOGIN_URL}), 401
-        if AUTH_SERVICE_LOGIN_URL:
-            return redirect(AUTH_SERVICE_LOGIN_URL)
-        return render_template('pages/unavailable.html'), 503
+        # Requête arrivée sans passer par Caddy (accès direct au NAS, ou porte
+        # mal configurée) : pas de redirection vers la connexion, c'est le rôle
+        # de Caddy. API / extension → 401 JSON, navigateur → page explicative.
+        if (request.headers.get('Origin', '') in _CORS_ORIGINS or request.is_json
+                or 'application/json' in request.headers.get('Accept', '')):
+            return jsonify({'ok': False, 'error': 'unauthenticated'}), 401
+        return render_template('pages/use_portal.html', portal_url=REVAUTH_HOME_URL), 401
 
     if not _songsurf_running():
         _start_songsurf()
@@ -629,12 +538,11 @@ def proxy(path):
 
 if __name__ == '__main__':
     if DEV_MODE:
-        mode = "DEV (bypass JWT)"
-    elif SONGSURF_PROXY_SECRET or AUTH_JWT_SECRET:
-        gates = [g for g, on in (('porte du portail', SONGSURF_PROXY_SECRET), ('JWT HS256', AUTH_JWT_SECRET)) if on]
-        mode = f"PRODUCTION ({' + '.join(gates)}, login={AUTH_SERVICE_LOGIN_URL or 'non configuré → 503'})"
+        mode = "DEV (sans authentification)"
+    elif SONGSURF_PROXY_SECRET:
+        mode = "PRODUCTION (porte du portail)"
     else:
-        mode = "PRODUCTION (SONGSURF_PROXY_SECRET et AUTH_JWT_SECRET absents → service verrouillé)"
+        mode = "PRODUCTION (SONGSURF_PROXY_SECRET absent → service verrouillé)"
     logger.info(f"🚀 Watcher démarré — mode={mode}, target={TARGET_URL}")
     events_client.start_replay_thread()
 

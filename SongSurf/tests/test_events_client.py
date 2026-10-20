@@ -167,33 +167,3 @@ class TestReplay:
         # Les plus récents sont conservés, les plus anciens droppés
         assert lines[-1]['n'] == 99
         assert lines[0]['n'] > 0
-
-
-class TestDerivePseudo:
-    """Parité avec server/app.py::_user_pseudo (hors override _pseudo)."""
-
-    def test_admin_maps_to_admin_pseudo(self, monkeypatch):
-        monkeypatch.setenv('ADMIN_PSEUDO', 'rev0admin')
-        assert events_client.derive_pseudo(
-            {'sub': 'x', 'role': 'admin', 'email': 'boss@example.com'}) == 'rev0admin'
-
-    def test_email_local_part(self):
-        assert events_client.derive_pseudo(
-            {'sub': 'x', 'role': 'member', 'email': 'Kientzler.Oliver@gmail.com'}) == 'kientzler.oliver'
-
-    def test_special_chars_sanitized(self):
-        assert events_client.derive_pseudo(
-            {'sub': 'x', 'role': 'member', 'email': 'jean+test!@ex.fr'}) == 'jean_test'
-
-    def test_fallback_on_sub(self):
-        assert events_client.derive_pseudo({'sub': 'abc-123', 'role': 'member', 'email': ''}) == 'abc-123'
-
-    def test_parity_with_app_user_pseudo(self):
-        import app as songsurf_app
-        for user in [
-            {'sub': 'u1', 'role': 'member', 'email': 'foo.bar@ex.com'},
-            {'sub': 'u2', 'role': 'member', 'email': 'WEIRD__char$@ex.com'},
-            {'sub': 'u3', 'role': 'admin', 'email': 'admin@ex.com'},
-            {'sub': 'u4', 'role': 'member', 'email': ''},
-        ]:
-            assert events_client.derive_pseudo(user) == songsurf_app._user_pseudo(user)
