@@ -65,7 +65,7 @@ make token        # generate a test JWT (test prod-mode auth without an auth ser
 | `INACTIVITY_GRACE_TIMEOUT` | `900` | Extra idle seconds before container stop |
 | `ADMIN_PSEUDO` | `rev0admin` | Folder name for the admin library |
 
-`.secrets` (chmod 600, never committed): `AUTH_JWT_SECRET` (shared with your auth service), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
+`.secrets` (chmod 600, never committed): `AUTH_JWT_SECRET` (shared with your auth service), `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token` when it authenticates users itself; empty = disabled), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
 
 ## Production deployment (NAS)
 

@@ -25,7 +25,8 @@ graph TD
 
 Always running (~15 MB RAM). Responsibilities:
 
-- **JWT validation** — reads the `access_token` HttpOnly cookie, validates HS256 locally with `AUTH_JWT_SECRET` (claims: `sub`, `role`, `email`, `token_type=access`, `exp`). No cookie/invalid → redirect to `AUTH_SERVICE_LOGIN_URL` (or 503 if unset). `DEV_MODE=true` bypasses with a local admin user.
+- **Portal gate (AUTH-09, SSF-11)** — when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET`, trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role`, `X-User-Id`); otherwise those headers are ignored and the JWT path below applies. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded to SongSurf.
+- **JWT validation** (removed in SSF-12) — reads the `access_token` HttpOnly cookie, validates HS256 locally with `AUTH_JWT_SECRET` (claims: `sub`, `role`, `email`, `token_type=access`, `exp`). No cookie/invalid → redirect to `AUTH_SERVICE_LOGIN_URL` (or 503 if unset). `DEV_MODE=true` bypasses with a local admin user.
 - **Header injection** — every proxied request carries `X-Watcher-Token: <WATCHER_SECRET>` plus `X-User-Id` / `X-User-Role` (lowercased) / `X-User-Email` from the claims.
 - **Container lifecycle** — starts the `songsurf` container on first authenticated request (Docker SDK via mounted `docker.sock`), serves a loading page while polling `/ping`.
 - **Inactivity monitor** — warns after `INACTIVITY_WARN_TIMEOUT` idle seconds, stops the container after `+ INACTIVITY_GRACE_TIMEOUT`. `/watcher/keepalive` resets the timer; `/api/status` polling is passive (does not reset it). A download in progress or a non-empty queue (`_songsurf_busy()`, checked once the warn threshold is crossed) counts as activity — the container is never stopped mid-batch. `_start_songsurf()` also resets the timer so a stale idle counter can't kill the container during its boot window.

@@ -3,14 +3,18 @@
 """
 SongSurf Watcher — Portail léger toujours actif
 
-Phase 3 : authentification JWT (HS256) émis par auth-selfhost-rust.
+Authentification (bascule AUTH-09, SSF-11 : les deux modes sont acceptés) :
   - DEV_MODE=true  → utilisateur dev injecté automatiquement, accès libre
-  - DEV_MODE=false → valide le cookie access_token (JWT HS256)
-  - Si JWT invalide/absent → redirect vers AUTH_SERVICE_LOGIN_URL (ou 503 si non configuré)
+  - Porte du portail : Caddy a déjà vérifié la session et envoie l'identité
+    (X-User-Name / X-User-Role / X-User-Id) avec la preuve X-Proxy-Token,
+    comparée à SONGSURF_PROXY_SECRET. Sans preuve valide, les X-User-* sont ignorés.
+  - Sinon → valide le cookie access_token (JWT HS256, retiré en SSF-12)
+  - Aucun des deux → redirect vers AUTH_SERVICE_LOGIN_URL (ou 503 si non configuré)
 
 Variables d'environnement:
   WATCHER_SECRET           Secret partagé avec SongSurf (OBLIGATOIRE)
   DEV_MODE                 'true' pour contourner l'auth en développement
+  SONGSURF_PROXY_SECRET    Preuve envoyée par Caddy dans X-Proxy-Token (vide = porte ignorée)
   AUTH_JWT_SECRET          Clé HMAC partagée avec auth-selfhost-rust (OBLIGATOIRE en prod)
   AUTH_SERVICE_LOGIN_URL   URL de la page de login auth-selfhost-rust (ex: http://auth:8000/login)
   REVAUTH_HOME_URL         URL de l'espace membre rev0auth (ex: http://auth:8000/home/friend)
@@ -54,6 +58,7 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 WATCHER_SECRET         = os.getenv('WATCHER_SECRET', secrets.token_hex(32))
 DEV_MODE               = os.getenv('DEV_MODE', 'false').lower() == 'true'
+SONGSURF_PROXY_SECRET  = os.getenv('SONGSURF_PROXY_SECRET', '')
 AUTH_JWT_SECRET        = os.getenv('AUTH_JWT_SECRET', '')
 AUTH_SERVICE_LOGIN_URL = os.getenv('AUTH_SERVICE_LOGIN_URL', '')
 REVAUTH_HOME_URL       = os.getenv('REVAUTH_HOME_URL', AUTH_SERVICE_LOGIN_URL)
@@ -100,10 +105,13 @@ logging.getLogger('werkzeug').addFilter(_RedactTokenFilter())
 
 if DEV_MODE:
     logger.warning("⚠️  DEV_MODE activé — authentification désactivée (dev only)")
-elif not AUTH_JWT_SECRET:
-    logger.warning("⚠️  AUTH_JWT_SECRET absent — le service refusera toutes les connexions jusqu'à configuration")
+elif not (SONGSURF_PROXY_SECRET or AUTH_JWT_SECRET):
+    logger.warning("⚠️  SONGSURF_PROXY_SECRET et AUTH_JWT_SECRET absents — le service refusera toutes les connexions jusqu'à configuration")
 else:
-    logger.info("🔒 Mode production — JWT HS256 activé")
+    if SONGSURF_PROXY_SECRET:
+        logger.info("🔒 Mode production — porte du portail activée (X-Proxy-Token)")
+    if AUTH_JWT_SECRET:
+        logger.info("🔒 Mode production — JWT HS256 activé")
 
 # ── État global ───────────────────────────────────────────────────────────────
 
@@ -155,6 +163,35 @@ def _validate_jwt(token: str) -> dict | None:
         return None
 
 
+def _user_from_proxy_headers() -> dict | None:
+    """Identité posée par Caddy après vérification de la session par le portail.
+
+    Fiable uniquement si X-Proxy-Token prouve que la requête vient de Caddy :
+    le Watcher écoute sur le réseau local, n'importe quel appareil pourrait
+    sinon se déclarer admin. Le pseudo reste l'identité SongSurf (`sub`, comme
+    dans le JWT) : dossiers et événements inchangés.
+    """
+    if not SONGSURF_PROXY_SECRET:
+        return None
+    proof = request.headers.get('X-Proxy-Token', '')
+    if not proof:
+        return None
+    if not hmac.compare_digest(proof.encode(), SONGSURF_PROXY_SECRET.encode()):
+        # Preuve présente mais fausse : secret désynchronisé avec Caddy, ou forge
+        logger.warning("⚠️  X-Proxy-Token invalide — en-têtes d'identité ignorés")
+        return None
+    name = request.headers.get('X-User-Name', '').strip()
+    role = request.headers.get('X-User-Role', '').strip().lower()
+    if not name or not role:
+        return None
+    return {
+        'sub':   name,
+        'role':  role,
+        'email': '',
+        'uid':   request.headers.get('X-User-Id', '').strip(),
+    }
+
+
 def _extract_jwt_from_request() -> str | None:
     """Reads JWT from the access_token HttpOnly cookie."""
     return request.cookies.get('access_token') or None
@@ -164,10 +201,14 @@ def _get_user_from_request() -> dict | None:
     """
     Returns user claims or None if unauthenticated.
     - DEV_MODE=true → dev user, always authenticated
+    - Valid X-Proxy-Token → identity headers set by Caddy (portal gate)
     - Otherwise     → validate access_token cookie (JWT HS256)
     """
     if DEV_MODE:
         return _DEV_USER.copy()
+    user = _user_from_proxy_headers()
+    if user:
+        return user
     token = _extract_jwt_from_request()
     if token:
         return _validate_jwt(token)
@@ -374,16 +415,27 @@ _HOP_HEADERS = {
 _PASSIVE_ACTIVITY_PATHS = {'/ping', '/api/status'}
 
 
+def _is_identity_header(name: str) -> bool:
+    """En-têtes d'identité/preuve venant du client ou de Caddy : jamais relayés
+    tels quels à SongSurf (le Watcher pose les siens, la preuve reste ici)."""
+    n = name.lower()
+    return n.startswith('x-user-') or n in ('x-proxy-token', 'x-watcher-token')
+
+
 def _proxy(user: dict):
     """Proxyfie la requête vers SongSurf en injectant l'identité utilisateur."""
     if request.path not in _PASSIVE_ACTIVITY_PATHS:
         _update_activity()
 
-    fwd_headers = {k: v for k, v in request.headers if k.lower() not in _HOP_HEADERS}
+    fwd_headers = {k: v for k, v in request.headers
+                   if k.lower() not in _HOP_HEADERS and not _is_identity_header(k)}
     fwd_headers['X-Watcher-Token'] = WATCHER_SECRET
     fwd_headers['X-User-Id']       = user['sub']
     fwd_headers['X-User-Role']     = user['role']
     fwd_headers['X-User-Email']    = user.get('email', '')
+    if user.get('uid'):
+        # Identifiant stable du portail, transmis pour plus tard (pas encore lu)
+        fwd_headers['X-User-Portal-Id'] = user['uid']
 
     path_qs = request.full_path.rstrip('?')
     resp = None
@@ -578,10 +630,11 @@ def proxy(path):
 if __name__ == '__main__':
     if DEV_MODE:
         mode = "DEV (bypass JWT)"
-    elif AUTH_JWT_SECRET:
-        mode = f"PRODUCTION (JWT HS256, login={AUTH_SERVICE_LOGIN_URL or 'non configuré → 503'})"
+    elif SONGSURF_PROXY_SECRET or AUTH_JWT_SECRET:
+        gates = [g for g, on in (('porte du portail', SONGSURF_PROXY_SECRET), ('JWT HS256', AUTH_JWT_SECRET)) if on]
+        mode = f"PRODUCTION ({' + '.join(gates)}, login={AUTH_SERVICE_LOGIN_URL or 'non configuré → 503'})"
     else:
-        mode = "PRODUCTION (AUTH_JWT_SECRET absent → service verrouillé)"
+        mode = "PRODUCTION (SONGSURF_PROXY_SECRET et AUTH_JWT_SECRET absents → service verrouillé)"
     logger.info(f"🚀 Watcher démarré — mode={mode}, target={TARGET_URL}")
     events_client.start_replay_thread()
 

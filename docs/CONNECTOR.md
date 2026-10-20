@@ -27,7 +27,34 @@ SongSurf :8081
 
 ---
 
-## JWT contract (issued by rev0auth)
+## Portal gate (AUTH-09 — transition in progress)
+
+Contract written by the rev0auth side (ticket AUTH-09). SongSurf side: **SSF-11** (Watcher accepts both the gate and the JWT) then **SSF-12** (JWT removed).
+
+```
+Browser ──portal session cookie──► Caddy (VPS) ── forward_auth ──► portal
+                                     │ no session → 302 to portal login (navigation) / 401 (API)
+                                     │ no SongSurf access → 403
+                                     ▼ access granted
+                                  Watcher  (X-User-Name, X-User-Role, X-User-Id, X-Proxy-Token)
+```
+
+| Header | Content |
+|---|---|
+| `X-User-Name` | exact pseudo (original case), unique, immutable → becomes `sub` |
+| `X-User-Role` | `guest` · `member` · `mod` · `admin` (lowercased by the Watcher) |
+| `X-User-Id` | portal UUID, stable → forwarded to SongSurf as `X-User-Portal-Id` (not used yet) |
+| `X-Proxy-Token` | proof that the request comes from Caddy |
+
+Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-Proxy-Token` itself. The Watcher checks it with `hmac.compare_digest` against `SONGSURF_PROXY_SECRET`: missing or wrong → the `X-User-*` are ignored (the Watcher listens on the home network — any LAN device could otherwise claim to be admin). An empty secret disables the gate. `CORS` preflights (`OPTIONS`) are exempted by Caddy.
+
+Switch order (no downtime): 1) generate `SONGSURF_PROXY_SECRET` (`openssl rand -hex 32`), set it on the NAS (`.secrets`) and on the VPS · 2) **SSF-11** deployed (both accepted) · 3) gate applied on the VPS · 4) portal: plain links, no JWT · 5) **SSF-12**: JWT removed from SongSurf · 6) portal/VPS: `AUTH_JWT_SECRET` removed.
+
+The SongSurf Clip extension sends the portal cookie (host permission on the SongSurf domain) and treats a 401, a redirect to another origin (portal login) or a network error as "not connected": clickable toast / popup state that opens SongSurf in a tab.
+
+---
+
+## JWT contract (issued by rev0auth — removed in SSF-12)
 
 Issued at login as an **HttpOnly cookie** named `access_token`.
 
