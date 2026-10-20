@@ -12,11 +12,48 @@ const DEFAULT_SONGSURF_URL = 'https://songsurf.rev0li.duckdns.org';
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let songSurfUrl  = '';
-let serverStatus = 'unknown'; // 'online' | 'offline' | 'unknown'
+let serverStatus = 'unknown'; // 'online' | 'offline' | 'unauth' | 'unknown'
 
 async function loadConfig() {
   const { songsurf_url } = await chrome.storage.sync.get('songsurf_url');
   songSurfUrl = (songsurf_url || DEFAULT_SONGSURF_URL).replace(/\/$/, '');
+}
+
+// ── Réponses de la porte du portail ───────────────────────────────────────────
+// Devant SongSurf, Caddy vérifie la session du portail : sans session il répond
+// 401 ou redirige vers la page de connexion du portail (autre origine). Quand
+// SongSurf dort, le Watcher redirige vers sa page de chargement.
+
+const ERR_LOGIN     = 'Non connecté — clique ici pour ouvrir SongSurf et te connecter.';
+const ERR_OFFLINE   = 'SongSurf injoignable — clique ici pour ouvrir SongSurf (connexion ?).';
+const ERR_WAKING    = 'SongSurf démarre — réessaie dans quelques secondes.';
+const ERR_FORBIDDEN = 'Ton compte n\'a pas accès à SongSurf.';
+
+function responseIssue(r) {
+  if (r.status === 401) return 'login';
+  if (r.redirected) {
+    const u = new URL(r.url);
+    if (u.origin !== new URL(songSurfUrl).origin) return 'login';
+    if (u.pathname.startsWith('/watcher/loading')) return 'waking';
+  }
+  // 403 de la porte (session sans accès SongSurf) : pas du JSON SongSurf
+  if (r.status === 403 && !(r.headers.get('Content-Type') || '').includes('json')) return 'forbidden';
+  return null;
+}
+
+function issueError(issue) {
+  if (issue === 'login') {
+    setStatus('unauth');
+    return { success: false, error: ERR_LOGIN, needsLogin: true };
+  }
+  if (issue === 'waking')    return { success: false, error: ERR_WAKING };
+  if (issue === 'forbidden') return { success: false, error: ERR_FORBIDDEN };
+  return null;
+}
+
+function offlineError() {
+  setStatus('offline');
+  return { success: false, error: ERR_OFFLINE, needsLogin: true };
 }
 
 // ── Ping ──────────────────────────────────────────────────────────────────────
@@ -32,7 +69,8 @@ async function ping() {
       credentials: 'include',
       signal: AbortSignal.timeout(4000),
     });
-    setStatus(r.ok ? 'online' : 'offline');
+    if (responseIssue(r) === 'login') setStatus('unauth');
+    else setStatus(r.ok ? 'online' : 'offline');
   } catch {
     setStatus('offline');
   }
@@ -49,6 +87,9 @@ function updateBadge() {
   if (serverStatus === 'offline') {
     action.setBadgeText({ text: '!' });
     action.setBadgeBackgroundColor({ color: '#e53e3e' });
+  } else if (serverStatus === 'unauth') {
+    action.setBadgeText({ text: '!' });
+    action.setBadgeBackgroundColor({ color: '#dd6b20' });
   } else if (serverStatus === 'online') {
     action.setBadgeText({ text: '' });
   } else {
@@ -70,7 +111,7 @@ async function apiPost(endpoint, body, timeoutMs = 8000) {
     signal:      AbortSignal.timeout(timeoutMs),
   });
   const data = await r.json().catch(() => ({}));
-  return { _status: r.status, ...data };
+  return { _status: r.status, _issue: responseIssue(r), ...data };
 }
 
 async function previewUrl(url) {
@@ -80,13 +121,12 @@ async function previewUrl(url) {
   try {
     const data = await apiPost('/api/preview', { url }, 30000); // yt-dlp can take ~10s
     if (data._noConfig) return { success: false, error: 'URL SongSurf non configurée.' };
-    if (data._status === 401 || data._status === 503)
-      return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+    const issue = issueError(data._issue);
+    if (issue) return issue;
     if (data.success) { setStatus('online'); return data; }
     return { success: false, error: data.error || `Erreur ${data._status}` };
   } catch {
-    setStatus('offline');
-    return { success: false, error: 'SongSurf injoignable.' };
+    return offlineError();
   }
 }
 
@@ -105,20 +145,19 @@ async function queueUrl(url, meta = {}) {
   await loadConfig();
   if (!songSurfUrl)
     return { success: false, error: 'URL SongSurf non configurée. Ouvre les options.' };
-  if (serverStatus === 'offline')
-    return { success: false, error: 'SongSurf est hors ligne.' };
+  if (serverStatus === 'unauth') return issueError('login');
+  if (serverStatus === 'offline') return offlineError();
   try {
     await syncCookiesBeforeQueue();
     const body = { url, ...meta };
     const data = await apiPost('/api/queue-direct', body, 10000);
     if (data._noConfig) return { success: false, error: 'URL SongSurf non configurée.' };
-    if (data._status === 401 || data._status === 503)
-      return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+    const issue = issueError(data._issue);
+    if (issue) return issue;
     if (data.success) { setStatus('online'); return { success: true, label: data.label, type: data.type }; }
     return { success: false, error: data.error || `Erreur ${data._status}` };
   } catch {
-    setStatus('offline');
-    return { success: false, error: 'SongSurf injoignable.' };
+    return offlineError();
   }
 }
 
@@ -169,10 +208,11 @@ async function getCookiesAndSend() {
       await chrome.storage.local.set({ last_cookie_sync: { pseudo: data.pseudo || '', at: lastCookieSyncAt } });
       return { success: true, count: all.length, pseudo: data.pseudo || '' };
     }
-    if (r.status === 401 || r.status === 503) return { success: false, error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+    const issue = issueError(responseIssue(r));
+    if (issue) return issue;
     return { success: false, error: data.error || `Erreur ${r.status}` };
   } catch {
-    return { success: false, error: 'SongSurf injoignable.' };
+    return offlineError();
   }
 }
 
@@ -189,8 +229,9 @@ async function queueBatch(items) {
       : { url: item.url, artist: item.artist || '', album: item.album || '' };
     try {
       const data = await apiPost('/api/queue-direct', body, 10000);
-      if (data._status === 401 || data._status === 503)
-        return { success: added > 0, added, failed: failed + (items.length - added - failed), error: 'Non authentifié — connecte-toi à SongSurf d\'abord.' };
+      const issue = issueError(data._issue);
+      if (issue)
+        return { ...issue, success: added > 0, added, failed: failed + (items.length - added - failed) };
       if (data.success) added++;
       else failed++;
     } catch {

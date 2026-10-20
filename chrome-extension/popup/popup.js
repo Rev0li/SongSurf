@@ -5,12 +5,14 @@ const pillText   = document.getElementById('status-text');
 const noConfig   = document.getElementById('no-config');
 const main       = document.getElementById('main');
 const offlineHint = document.getElementById('offline-hint');
+const unauthHint  = document.getElementById('unauth-hint');
 
 function applyStatus(status) {
   pill.className = `status-pill ${status}`;
-  const labels = { online: 'En ligne', offline: 'Hors ligne', unknown: 'Inconnu' };
+  const labels = { online: 'En ligne', offline: 'Hors ligne', unauth: 'Non connecté', unknown: 'Inconnu' };
   pillText.textContent = labels[status] || '…';
   offlineHint.style.display = status === 'offline' ? 'block' : 'none';
+  unauthHint.style.display  = status === 'unauth'  ? 'block' : 'none';
 }
 
 // Listen for live updates pushed by background
