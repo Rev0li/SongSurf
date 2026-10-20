@@ -142,10 +142,10 @@ ok "TARGET_URL : ${TARGET_URL}  (local) / ${TARGET_URL_NAS}  (nas)"
 # SECTION 2 — Mots de passe (obligatoires)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "2/6 · Auth JWT (rev0auth)"
-dim "L'authentification est gérée par rev0auth (VPS). Aucun mot de passe local."
-dim "Renseigne AUTH_SERVICE_LOGIN_URL + AUTH_JWT_SECRET dans la section 5."
-ok "Pas de mot de passe local — auth déléguée à rev0auth"
+title "2/6 · Auth (porte du portail)"
+dim "L'authentification est faite par le portail rev0auth, devant SongSurf (Caddy)."
+dim "Aucun mot de passe local. Renseigne REVAUTH_HOME_URL + SONGSURF_PROXY_SECRET en section 5."
+ok "Pas de mot de passe local — auth déléguée au portail"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — Limites téléchargement
@@ -175,39 +175,27 @@ INACTIVITY_GRACE=$(prompt_optional "Arrêt forcé après + (s)" "900")
 ok "Inactivité : avertissement ${INACTIVITY_WARN}s, grâce ${INACTIVITY_GRACE}s"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — Auth Phase 3 (rev0auth / JWT)
+# SECTION 5 — Auth (porte du portail rev0auth)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "5/6 · Auth JWT — rev0auth (Phase 3)"
-dim "Laisse vide si rev0auth n'est pas encore en ligne."
-dim "Quand actif : AUTH_JWT_SECRET doit être identique dans SongSurf et rev0auth."
+title "5/6 · Auth — porte du portail rev0auth"
+dim "Caddy vérifie la session auprès du portail et prouve l'identité au Watcher"
+dim "avec SONGSURF_PROXY_SECRET (même valeur côté VPS)."
 echo ""
 
-DEV_MODE=$(prompt_bool "Activer DEV_MODE (bypass JWT — JAMAIS en prod)" "N")
+DEV_MODE=$(prompt_bool "Activer DEV_MODE (sans auth — JAMAIS en prod)" "N")
 if [[ "$DEV_MODE" == "true" ]]; then
-  warn "DEV_MODE=true : toute l'auth JWT est désactivée. N'utilise PAS ça en production !"
+  warn "DEV_MODE=true : toute l'auth est désactivée. N'utilise PAS ça en production !"
 fi
 ok "DEV_MODE=$DEV_MODE"
 
-AUTH_SERVICE_LOGIN_URL=$(prompt_optional "AUTH_SERVICE_LOGIN_URL (URL login rev0auth)" "")
+REVAUTH_HOME_URL=$(prompt_optional "REVAUTH_HOME_URL (espace membre du portail, retour après logout)" "")
 
 echo ""
-dim "JWT secret : laisse vide pour auto-générer (à copier dans rev0auth quand tu l'actives)."
-printf "  AUTH_JWT_SECRET [auto-générer] : " >/dev/tty
-read -rs JWT_INPUT </dev/tty; echo >/dev/tty
-if [[ -z "$JWT_INPUT" ]]; then
-  AUTH_JWT_SECRET=$(gen_hex)
-  dim "  → auto-généré. Copie-le dans rev0auth quand tu actives la Phase 3."
-else
-  AUTH_JWT_SECRET="$JWT_INPUT"
-fi
-ok "AUTH_JWT_SECRET défini"
-
-echo ""
-dim "Événements d'activité (optionnel) : le NAS pousse connexions/téléchargements"
+dim "Événements d'activité (optionnel) : le NAS pousse téléchargements/conteneur"
 dim "vers le dashboard admin rev0auth. Laisse l'URL vide pour désactiver."
-if [[ -n "$AUTH_SERVICE_LOGIN_URL" ]]; then
-  _EVENTS_DEFAULT="$(echo "$AUTH_SERVICE_LOGIN_URL" | sed -E 's#^(https?://[^/]+).*#\1#')/japprends/api/songsurf-events"
+if [[ -n "$REVAUTH_HOME_URL" ]]; then
+  _EVENTS_DEFAULT="$(echo "$REVAUTH_HOME_URL" | sed -E 's#^(https?://[^/]+).*#\1#')/japprends/api/songsurf-events"
 else
   _EVENTS_DEFAULT=""
 fi
@@ -290,12 +278,12 @@ INACTIVITY_WARN_TIMEOUT=${INACTIVITY_WARN}
 INACTIVITY_GRACE_TIMEOUT=${INACTIVITY_GRACE}
 
 # ── Mode dev ─────────────────────────────────────────────────────────────
-# true = bypass complet de l'auth JWT — JAMAIS en production
+# true = aucune authentification — JAMAIS en production
 DEV_MODE=${DEV_MODE}
 
-# ── Auth JWT — Phase 3 (rev0auth) ─────────────────────────────────────────
-# Laisser vide désactive l'intégration JWT (authentification par mot de passe seule).
-AUTH_SERVICE_LOGIN_URL=${AUTH_SERVICE_LOGIN_URL}
+# ── Portail rev0auth ──────────────────────────────────────────────────────
+# Espace membre du portail : retour après "← Mon espace" (logout)
+REVAUTH_HOME_URL=${REVAUTH_HOME_URL}
 
 # ── Événements d'activité poussés vers rev0auth ───────────────────────────
 # Vide = tracking désactivé. Secret associé : SONGSURF_EVENTS_SECRET (.secrets).
@@ -329,15 +317,12 @@ SONGSURF_FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY}
 # ── Secret partagé Watcher ↔ SongSurf (auto-généré) ──────────────────────
 WATCHER_SECRET=${WATCHER_SECRET}
 
-# ── Secret JWT — doit correspondre à AUTH_JWT_SECRET dans rev0auth ────────
-AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
-
 # ── Secret événements — doit correspondre à SONGSURF_EVENTS_SECRET ────────
 # dans auth/.secrets (VPS). Rotation = mise à jour des deux + restart des deux stacks.
 SONGSURF_EVENTS_SECRET=${SONGSURF_EVENTS_SECRET}
 
 # ── Preuve de la porte du portail — doit correspondre au secret lu par ────
-# Caddy (en-tête X-Proxy-Token). Vide = seul le JWT est accepté.
+# Caddy (en-tête X-Proxy-Token). Vide = service verrouillé (sauf DEV_MODE).
 SONGSURF_PROXY_SECRET=${SONGSURF_PROXY_SECRET}
 
 EOF
@@ -365,13 +350,13 @@ echo "    DEV_MODE       : $DEV_MODE"
 echo "    Limite /jour   : ${DAILY_DOWNLOAD_LIMIT} téléchargements (0=illimité)"
 echo "    Durée max      : ${MAX_DURATION_SECONDS}s ($(( MAX_DURATION_SECONDS / 60 )) min)"
 echo "    Inactivité     : avertissement ${INACTIVITY_WARN}s + arrêt ${INACTIVITY_GRACE}s"
-[[ -n "$AUTH_SERVICE_LOGIN_URL" ]] && echo "    rev0auth       : $AUTH_SERVICE_LOGIN_URL"
+[[ -n "$REVAUTH_HOME_URL" ]] && echo "    Portail        : $REVAUTH_HOME_URL"
 echo ""
 echo -e "  Prochaine étape : ${BOLD}make up${NC}"
 
-if [[ "$DEV_MODE" == "false" ]] && [[ -n "$AUTH_SERVICE_LOGIN_URL" ]]; then
+if [[ "$DEV_MODE" == "false" ]]; then
   echo ""
-  warn "Phase 3 active : vérifie que AUTH_JWT_SECRET est identique dans .secrets et rev0auth avant de déployer."
+  warn "Prod : SONGSURF_PROXY_SECRET doit être identique dans .secrets et dans le secret lu par Caddy (VPS)."
 fi
 
 if [[ -n "$AUTH_EVENTS_URL" ]]; then
@@ -381,7 +366,7 @@ fi
 
 if [[ "$DEV_MODE" == "true" ]]; then
   echo ""
-  warn "DEV_MODE=true est actif — l'auth JWT est désactivée. Ne déploie PAS cette config en production."
+  warn "DEV_MODE=true est actif — l'auth est désactivée. Ne déploie PAS cette config en production."
 fi
 
 echo ""

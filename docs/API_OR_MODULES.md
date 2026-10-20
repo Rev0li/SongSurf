@@ -105,8 +105,8 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/watcher/ready` | GET | 200 when SongSurf answers `/ping`, 503 while starting |
 | `/watcher/inactivity-status` | GET | `{idle_seconds, warned}` for the frontend banner |
 | `/watcher/keepalive` | POST | Resets the inactivity timer (requires auth) |
-| `/logout` | GET/POST | Clears the auth cookie, redirects to `REVAUTH_HOME_URL` / login |
-| `/<any>` | ANY | Catch-all: portal gate or JWT → start container if needed → proxy with injected headers. API callers get JSON 503 `{retry: true}` while SongSurf boots |
+| `/logout` | GET/POST | Puts SongSurf to sleep (unless busy), redirects to `REVAUTH_HOME_URL` (portal session, no cookie here) |
+| `/<any>` | ANY | Catch-all: portal gate (no valid proof → 401 JSON for API/extension, 401 « passe par le portail » page otherwise) → start container if needed → proxy with injected headers. API callers get JSON 503 `{retry: true}` while SongSurf boots |
 | `OPTIONS *` | OPTIONS | CORS preflight — only the SongSurf Clip extension origin (`chrome-extension://<SONGSURF_EXTENSION_ID>`), 403 otherwise |
 
 ---
@@ -157,8 +157,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | Function | Description |
 |---|---|
 | `_user_from_proxy_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, role, email: '', uid: X-User-Id}`, else `None` |
-| `_validate_jwt(token)` | HS256 decode with `AUTH_JWT_SECRET`; requires `sub`, `role`, `exp`, `token_type=access` |
-| `_get_user_from_request()` | `DEV_MODE` → dev user; valid portal gate → its identity; else cookie → claims → `{sub, role, email}` |
+| `_get_user_from_request()` | `DEV_MODE` → dev user; else `_user_from_proxy_headers()` |
 | `_proxy(user)` | Drops client `X-User-*` / `X-Proxy-Token`, forwards with `X-Watcher-Token` + `X-User-Id/Role/Email` (+ `X-User-Portal-Id`); starts container when down |
 | `_inactivity_watcher()` | Background thread: warn → grace → `container.stop()` |
 

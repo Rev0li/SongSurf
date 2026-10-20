@@ -58,7 +58,7 @@ frontend-dev:                     ## SvelteKit hot-reload dev server (port 5173)
 up-local: init-dirs               ## Start in LOCAL mode (bridge network, DEV_MODE=true)
 	DEPLOY_TARGET=local $(COMPOSE) up -d --build
 
-up-nas: init-dirs                 ## Start in NAS mode (host network, JWT auth required)
+up-nas: init-dirs                 ## Start in NAS mode (host network, portal gate required)
 	DEPLOY_TARGET=nas $(COMPOSE) up -d --build
 
 # ── Docker — generic targets (use TARGET from .env or override) ───────────────
@@ -98,12 +98,6 @@ config:                           ## Preview the resolved Compose config
 
 shell:                            ## Open a shell in the running songsurf container
 	docker exec -it songsurf bash
-
-# ── Test JWT (prod mode sans rev0auth) ───────────────────────────────────────
-
-.PHONY: token
-token:                            ## Génère un JWT de test pour accéder en mode prod (ROLE=admin|guest, TTL=24)
-	@ROLE=$(or $(ROLE),admin) TTL=$(or $(TTL),24) bash scripts/gen_test_token.sh
 
 # ── yt-dlp (version épinglée) ─────────────────────────────────────────────────
 

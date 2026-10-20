@@ -41,7 +41,7 @@ def flask_setup(tmp_path_factory):
 
 
 def auth_headers(role='member', sub='user-abc', email='user@test.com'):
-    """Headers Watcher would inject after JWT validation."""
+    """Headers Watcher would inject after the portal gate."""
     return {
         'X-Watcher-Token': WATCHER_SECRET,
         'X-User-Id':       sub,
