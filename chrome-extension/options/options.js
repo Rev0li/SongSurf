@@ -1,11 +1,16 @@
 // SongSurf Clip — options script
 
+// Keep in sync with DEFAULT_SONGSURF_URL in background.js
+const DEFAULT_SONGSURF_URL = 'https://songsurf.rev0li.duckdns.org';
+
 const urlInput  = document.getElementById('url-input');
 const btnSave   = document.getElementById('btn-save');
 const btnTest   = document.getElementById('btn-test');
 const statusMsg = document.getElementById('status-msg');
 const pingDot   = document.getElementById('ping-dot');
 const pingLabel = document.getElementById('ping-label');
+
+urlInput.placeholder = DEFAULT_SONGSURF_URL;
 
 // ── Load saved config ─────────────────────────────────────────────────────────
 
@@ -19,7 +24,10 @@ chrome.storage.sync.get('songsurf_url', ({ songsurf_url }) => {
 btnSave.addEventListener('click', () => {
   const raw = urlInput.value.trim().replace(/\/$/, '');
   if (!raw) {
-    showMsg('❌ URL requise.', 'error');
+    chrome.storage.sync.remove('songsurf_url', () => {
+      showMsg('✅ URL par défaut rétablie.', 'success');
+      setTimeout(refreshStatus, 300);
+    });
     return;
   }
   try { new URL(raw); } catch {
@@ -35,8 +43,7 @@ btnSave.addEventListener('click', () => {
 // ── Test connection ───────────────────────────────────────────────────────────
 
 btnTest.addEventListener('click', async () => {
-  const url = urlInput.value.trim().replace(/\/$/, '');
-  if (!url) { showMsg('❌ Saisis l\'URL d\'abord.', 'error'); return; }
+  const url = urlInput.value.trim().replace(/\/$/, '') || DEFAULT_SONGSURF_URL;
 
   btnTest.disabled = true;
   btnTest.textContent = '…';
