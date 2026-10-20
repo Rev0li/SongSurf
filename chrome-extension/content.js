@@ -58,17 +58,31 @@
     document.body.appendChild(toastEl);
   }
 
-  function showToast(emoji, msg, isError = false) {
+  function showToast(emoji, msg, isError = false, onClick = null) {
     ensureToast();
     toastEl.style.background = isError ? '#742a2a' : '#1a202c';
     toastEl.innerHTML = `<span style="font-size:17px;flex-shrink:0">${emoji}</span><span>${msg}</span>`;
     toastEl.style.opacity = '1';
     toastEl.style.transform = 'translateY(0)';
+    toastEl.style.pointerEvents = onClick ? 'auto' : 'none';
+    toastEl.style.cursor        = onClick ? 'pointer' : '';
+    toastEl.onclick             = onClick;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       toastEl.style.opacity = '0';
       toastEl.style.transform = 'translateY(10px)';
-    }, 3500);
+      toastEl.style.pointerEvents = 'none';
+    }, onClick ? 6000 : 3500);
+  }
+
+  // Erreur de résultat : session du portail absente → toast cliquable qui ouvre SongSurf
+  function showResultError(result, fallback = 'Erreur') {
+    const msg = (result && result.error) || fallback;
+    if (result && result.needsLogin) {
+      showToast('🔐', msg, true, () => chrome.runtime.sendMessage({ type: 'OPEN_SONGSURF' }));
+    } else {
+      showToast('❌', msg, true);
+    }
   }
 
   // ── Shared panel styles ───────────────────────────────────────────────────────
@@ -208,7 +222,7 @@
         showToast('✅', `${typeLabel} ajouté(e) à la queue SongSurf`);
         flashButton('green');
       } else {
-        showToast('❌', (result && result.error) || 'Erreur', true);
+        showResultError(result);
         updateButtonForUrl(location.href);
       }
     });
@@ -315,7 +329,7 @@
         showToast('✅', `${result.added} ${noun}${result.added > 1 ? 's' : ''} ajouté${result.added > 1 ? 's' : ''} à la queue SongSurf`);
         flashButton('green');
       } else {
-        showToast('❌', (result && result.error) || 'Erreur', true);
+        showResultError(result);
         updateButtonForUrl(location.href);
       }
     });
@@ -408,12 +422,7 @@
     isBusy = false;
 
     if (!result || !result.success) {
-      const msg = result?.error || 'Erreur réseau';
-      if (msg.includes('uthenti') || msg.includes('connecte')) {
-        showToast('🔐', msg, true);
-      } else {
-        showToast('❌', msg, true);
-      }
+      showResultError(result, 'Erreur réseau');
       updateButtonForUrl(location.href);
       return;
     }

@@ -46,6 +46,8 @@
     .status-pill.online  .dot { background: #34d399; }
     .status-pill.offline { background: rgba(248,113,113,.15); color: #f87171; }
     .status-pill.offline .dot { background: #f87171; animation: pulse 1.2s infinite; }
+    .status-pill.unauth  { background: rgba(251,146,60,.15); color: #fb923c; }
+    .status-pill.unauth  .dot { background: #fb923c; }
     .status-pill.unknown { background: rgba(156,163,175,.12); color: #9ca3af; }
     .status-pill.unknown .dot { background: #9ca3af; }
 
@@ -72,6 +74,17 @@
       border-radius: 8px;
       padding: 8px 12px;
       color: #fca5a5;
+      font-size: 11px;
+      line-height: 1.5;
+      display: none;
+    }
+
+    #unauth-hint {
+      background: rgba(251,146,60,.1);
+      border: 1px solid rgba(251,146,60,.25);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #fdba74;
       font-size: 11px;
       line-height: 1.5;
       display: none;
@@ -147,7 +160,11 @@
       </div>
 
       <div id="offline-hint">
-        SongSurf est hors ligne. Le Watcher va le redémarrer automatiquement lors de ta prochaine visite.
+        SongSurf est injoignable. Vérifie ta connexion, ou ouvre SongSurf : si ta session a expiré, le portail te demandera de te reconnecter.
+      </div>
+
+      <div id="unauth-hint">
+        Tu n'es pas connecté. Clique <strong>↗ Ouvrir SongSurf</strong> pour te connecter au portail, puis reviens ici.
       </div>
     </div>
 

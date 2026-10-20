@@ -54,7 +54,11 @@ btnTest.addEventListener('click', async () => {
       credentials: 'include',
       signal: AbortSignal.timeout(5000),
     });
-    if (r.ok) {
+    // Porte du portail : 401, ou redirection vers la connexion (autre origine)
+    if (r.status === 401 || (r.redirected && new URL(r.url).origin !== new URL(url).origin)) {
+      showMsg('🔐 SongSurf répond, mais tu n\'es pas connecté : ouvre SongSurf pour te connecter au portail.', 'error');
+      applyStatus('unauth');
+    } else if (r.ok) {
       showMsg('✅ SongSurf répond correctement.', 'success');
       applyStatus('online');
     } else {
@@ -62,7 +66,7 @@ btnTest.addEventListener('click', async () => {
       applyStatus('offline');
     }
   } catch {
-    showMsg('❌ Impossible de joindre SongSurf. Vérifie l\'URL et ta connexion Tailscale.', 'error');
+    showMsg('❌ Impossible de joindre SongSurf. Vérifie l\'URL et ta connexion.', 'error');
     applyStatus('offline');
   } finally {
     btnTest.disabled = false;
@@ -83,6 +87,7 @@ function applyStatus(status) {
   const labels = {
     online:  'SongSurf est en ligne ✓',
     offline: 'SongSurf est hors ligne',
+    unauth:  'Non connecté au portail',
     unknown: 'Statut inconnu',
   };
   pingLabel.textContent = labels[status] || 'Statut inconnu';

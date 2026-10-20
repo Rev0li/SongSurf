@@ -8,13 +8,14 @@ New coverage since 2026-05: track number (TRCK) pass-through, multi-artist TPE1 
 
 Automated coverage:
 - W-1 → W-9, W-10/11 (JWT validation, DEV_MODE, secret, claims, tamper)
+- W-14 → W-19 (SSF-11 portal gate: proof, ignored headers, double acceptance, forwarded headers)
 - S-1 → S-4 (Watcher-token auth, header injection, role normalization)
 - D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
 - ST-3, ST-4 (user isolation, path traversal)
 - Z-3 (ZIP without prepare), Z-5 + ST-1/ST-2 (SSF-10: admin ZIP disabled, member library purged)
 - A-1 (admin-only route)
 
-Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
+Remaining manual tests: W-12/13, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
 
 ---
 
@@ -47,6 +48,19 @@ Remaining manual tests: W-12/13, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, 
 |---|------|-----|----------|
 | W-12 | Redirect when configured | Set `AUTH_SERVICE_LOGIN_URL`, send unauthenticated request | 302 redirect to `AUTH_SERVICE_LOGIN_URL` |
 | W-13 | 503 fallback | Unset `AUTH_SERVICE_LOGIN_URL`, send unauthenticated request | 503 + `unavailable.html` |
+
+### 1.4 Portal gate — AUTH-09 (SSF-11, `tests/test_watcher_proxy_gate.py`)
+
+| # | Test | How | Expected |
+|---|------|-----|----------|
+| W-14 | Valid proof → portal identity | `X-Proxy-Token` = `SONGSURF_PROXY_SECRET` + `X-User-Name/Role/Id` | `sub` = exact pseudo, role lowercased, `uid` = portal UUID |
+| W-15 | Missing / wrong proof | Same headers, proof absent, empty, wrong or non-ASCII | Identity headers ignored; wrong proof logged |
+| W-16 | Secret not configured | `SONGSURF_PROXY_SECRET` empty | Headers never trusted, whatever the proof |
+| W-17 | Incomplete identity | Valid proof without `X-User-Name` or `X-User-Role` (or blank name) | Rejected |
+| W-18 | Double acceptance | JWT cookie without proof; both present; forged headers without proof on `/` and `/watcher/*` | JWT still accepted; gate wins; forged → redirect to login / 401 |
+| W-19 | Forwarded headers | Proxied request with forged `X-User-Email` / `X-Watcher-Token` | SongSurf gets the Watcher's own values + `X-User-Portal-Id`, never `X-Proxy-Token` / `X-User-Name` |
+| W-20 | **Manual (NAS, after step 3)** — through the gate | Open `https://songsurf.rev0li.duckdns.org` logged in / logged out of the portal | Logged in: library of the right account; logged out: portal login |
+| W-21 | **Manual (extension)** — portal session | Queue a song logged in, then logged out of the portal | Logged in: queued (the portal cookie is sent); logged out: clickable « Non connecté » toast that opens SongSurf |
 
 ---
 

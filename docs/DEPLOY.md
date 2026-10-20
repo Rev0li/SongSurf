@@ -87,11 +87,13 @@ make secrets
 | Fichier | Contenu | Permissions |
 |---------|---------|-------------|
 | `.env` | Config non-secrète (ports, timeouts, mode, `AUTH_EVENTS_URL`) | 644 |
-| `.secrets` | `AUTH_JWT_SECRET`, `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET`, clés Flask | 600 |
+| `.secrets` | `AUTH_JWT_SECRET`, `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET`, `SONGSURF_PROXY_SECRET`, clés Flask | 600 |
 
 Les deux sont chargés par Docker Compose via `env_file`. Ne jamais committer `.secrets`.
 
 **Pour la prod avec rev0auth :** copier la valeur `AUTH_JWT_SECRET` de rev0auth dans `.secrets` (identique octet par octet), renseigner `AUTH_SERVICE_LOGIN_URL` dans `.env` et vérifier `DEV_MODE=false`. Contrat JWT : [`CONNECTOR.md`](CONNECTOR.md).
+
+**Porte du portail (AUTH-09) :** sur un NAS existant, ajouter à la main dans `.secrets` `SONGSURF_PROXY_SECRET=<valeur>` (`openssl rand -hex 32`), la même valeur que le fichier secret lu par Caddy sur le VPS, puis redéployer. Vide = porte ignorée, seul le JWT marche. Contrat et ordre de bascule : [`CONNECTOR.md`](CONNECTOR.md).
 
 **Événements d'activité (optionnel) :** le NAS pousse connexions/téléchargements vers le dashboard admin rev0auth (`/japprends/songsurf-activity`). Sur un NAS existant, ne pas relancer le wizard (il écraserait `.env`/`.secrets`) — ajouter à la main :
 

@@ -223,6 +223,18 @@ else
 fi
 ok "SONGSURF_EVENTS_SECRET défini"
 
+echo ""
+dim "Porte du portail (Caddy forward_auth) : preuve envoyée par Caddy dans X-Proxy-Token."
+printf "  SONGSURF_PROXY_SECRET [auto-générer] : " >/dev/tty
+read -rs PROXY_INPUT </dev/tty; echo >/dev/tty
+if [[ -z "$PROXY_INPUT" ]]; then
+  SONGSURF_PROXY_SECRET=$(gen_hex)
+  dim "  → auto-généré. Copie-le dans le fichier secret lu par Caddy côté VPS."
+else
+  SONGSURF_PROXY_SECRET="$PROXY_INPUT"
+fi
+ok "SONGSURF_PROXY_SECRET défini"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 6 — Adresses donation (optionnel)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -323,6 +335,10 @@ AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
 # ── Secret événements — doit correspondre à SONGSURF_EVENTS_SECRET ────────
 # dans auth/.secrets (VPS). Rotation = mise à jour des deux + restart des deux stacks.
 SONGSURF_EVENTS_SECRET=${SONGSURF_EVENTS_SECRET}
+
+# ── Preuve de la porte du portail — doit correspondre au secret lu par ────
+# Caddy (en-tête X-Proxy-Token). Vide = seul le JWT est accepté.
+SONGSURF_PROXY_SECRET=${SONGSURF_PROXY_SECRET}
 
 EOF
   chmod 600 "$SECRETS_FILE"
