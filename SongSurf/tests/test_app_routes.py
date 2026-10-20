@@ -1,6 +1,6 @@
 """
 Flask route tests via test client — auth, library, path traversal, ZIP flow.
-Covers: S-1, S-2, S-3, S-4, ST-3, ST-4, Z-3, A-1, D-2/D-3/D-5, D-9.
+Covers: S-1, S-2, S-3, S-4, ST-1, ST-2, ST-3, ST-4, Z-3, Z-5, A-1, D-2/D-3/D-5, D-9.
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
@@ -836,3 +836,57 @@ def test_ssf02_sigterm_idle_exits_0(flask_setup):
     with pytest.raises(SystemExit) as exc:
         app_mod._on_sigterm(15, None)
     assert exc.value.code == 0
+
+
+# ── SSF-10 : export ZIP désactivé pour la bibliothèque admin ──────────────────
+
+def test_ssf10_admin_zip_disabled(flask_setup):
+    c, music, _, app_mod = flask_setup
+    song = music / app_mod.ADMIN_PSEUDO / 'Artist' / 'Album' / 'Song.mp3'
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(b'ID3')
+    try:
+        r = c.post('/api/prepare-zip', headers=admin_headers())
+        assert r.status_code == 403
+        assert r.get_json()['code'] == 'zip_disabled'
+        assert c.get('/api/download-zip', headers=admin_headers()).status_code == 403
+        assert song.exists()
+    finally:
+        song.unlink(missing_ok=True)
+
+
+def test_ssf10_zip_refused_on_admin_dir_whatever_the_role(flask_setup, tmp_path):
+    # La règle porte aussi sur le dossier : même un ZIP déjà préparé ne vide jamais le dossier admin.
+    c, music, _, app_mod = flask_setup
+    keep = music / app_mod.ADMIN_PSEUDO / 'keep.mp3'
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_bytes(b'ID3')
+    stale_zip = tmp_path / 'stale.zip'
+    stale_zip.write_bytes(b'PK')
+    h = auth_headers(sub='member-ssf10')
+    try:
+        with patch.object(app_mod, '_user_music_dir', return_value=keep.parent):
+            assert c.post('/api/prepare-zip', headers=h).status_code == 403
+            with app_mod.user_zip_lock:
+                app_mod.user_zip_state['member-ssf10'] = {
+                    'zip_path': str(stale_zip), 'count': 1, 'size_mb': 0}
+            assert c.get('/api/download-zip', headers=h).status_code == 403
+        assert keep.exists()
+    finally:
+        with app_mod.user_zip_lock:
+            app_mod.user_zip_state.pop('member-ssf10', None)
+        keep.unlink(missing_ok=True)
+
+
+def test_ssf10_member_zip_still_purges_member_library(flask_setup):
+    c, music, _, _ = flask_setup
+    h = auth_headers(sub='member-zip-ok', email='zipper@test.com')
+    song = music / 'zipper' / 'Artist' / 'Album' / 'Song.mp3'
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(b'ID3')
+    r = c.post('/api/prepare-zip', headers=h)
+    assert r.status_code == 200 and r.get_json()['count'] == 1
+    r = c.get('/api/download-zip', headers=h)
+    assert r.status_code == 200
+    r.get_data()                     # consomme le stream → nettoyage post-export
+    assert not (music / 'zipper').exists()

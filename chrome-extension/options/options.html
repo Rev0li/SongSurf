@@ -132,19 +132,19 @@
 <body>
   <div class="card">
     <h1>Song<span>Surf</span> Clip</h1>
-    <p class="subtitle">Configure l'URL de ton instance SongSurf pour que l'extension puisse y envoyer les URLs.</p>
+    <p class="subtitle">L'extension utilise l'instance SongSurf par défaut. Renseigne une autre URL seulement pour du dev ou une autre instance.</p>
 
     <label for="url-input">URL SongSurf</label>
     <input
       type="url"
       id="url-input"
-      placeholder="https://ton-songsurf.ts.net"
+      placeholder="https://songsurf.rev0li.duckdns.org"
       autocomplete="off"
       spellcheck="false"
     >
     <p class="hint">
-      Sans slash final. Exemple : <code>https://songsurf.example.ts.net</code>
-      ou <code>http://192.168.1.10:8080</code>
+      Vide = URL par défaut (<code>https://songsurf.rev0li.duckdns.org</code>).
+      Sans slash final. Exemple : <code>http://localhost:8080</code>
     </p>
 
     <div class="actions">

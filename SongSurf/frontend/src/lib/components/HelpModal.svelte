@@ -28,7 +28,8 @@
 					img: '/help/download-3.png',
 					body:
 						"Quand tes morceaux sont prêts, prépare puis télécharge un ZIP de ta bibliothèque. " +
-						"⚠️ Pour les membres, la bibliothèque est supprimée après l'export (bibliothèques temporaires).",
+						"⚠️ La bibliothèque est supprimée du serveur après l'export (bibliothèques temporaires). " +
+						"Pas d'export pour la bibliothèque admin, qui est permanente.",
 				},
 			],
 		},

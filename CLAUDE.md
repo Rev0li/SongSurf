@@ -37,7 +37,7 @@ make token ROLE=admin TTL=24   # generate a test JWT (prod-mode testing without 
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
-# Tests (261 pytest tests, no linter configured; the three test_watcher_* files need PyJWT + docker SDK)
+# Tests (264 pytest tests, no linter configured; the three test_watcher_* files need PyJWT + docker SDK)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -60,7 +60,7 @@ There are no login forms, password auth, or guest sessions anymore (removed in P
 
 - Production: per-user library `/data/music/<pseudo>/Artist/Album/Title.mp3`. `pseudo` = email local part (sanitized); admin role always maps to `ADMIN_PSEUDO` (default `rev0admin`).
 - `DEV_MODE`: flat `/data/music/Artist/Album/`.
-- Member ZIP export (`/api/prepare-zip` → `/api/download-zip`) **deletes the member's library after streaming** — by design (temporary libraries). The admin library is never deleted.
+- Member ZIP export (`/api/prepare-zip` → `/api/download-zip`) **deletes the member's library after streaming** — by design (temporary libraries). ZIP export is **disabled for the admin library** (SSF-10): button hidden, both endpoints return 403 `zip_disabled`. `_zip_forbidden()` checks the role *and* the target folder (admin folder, music root), and the post-stream cleanup re-checks it before `rmtree`.
 - MP3 only. Playlist flat-folder mode and MP4 support were removed (2026-06).
 
 ## Backend modules

@@ -6,6 +6,9 @@ const action = chrome.action || chrome.browserAction;
 const PING_ALARM   = 'songsurf-ping';
 const PING_MINUTES = 0.5; // every 30 seconds
 
+// Used when no URL is set in the options page (override for dev / self-hosting)
+const DEFAULT_SONGSURF_URL = 'https://songsurf.rev0li.duckdns.org';
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let songSurfUrl  = '';
@@ -13,7 +16,7 @@ let serverStatus = 'unknown'; // 'online' | 'offline' | 'unknown'
 
 async function loadConfig() {
   const { songsurf_url } = await chrome.storage.sync.get('songsurf_url');
-  songSurfUrl = (songsurf_url || '').replace(/\/$/, '');
+  songSurfUrl = (songsurf_url || DEFAULT_SONGSURF_URL).replace(/\/$/, '');
 }
 
 // ── Ping ──────────────────────────────────────────────────────────────────────
