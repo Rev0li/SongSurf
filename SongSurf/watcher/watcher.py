@@ -106,7 +106,7 @@ except Exception as e:
 
 # ── Authentification utilisateur ──────────────────────────────────────────────
 
-_DEV_USER = {'sub': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
+_DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
 
 
 def _safe_int(value, default=0):
@@ -375,7 +375,8 @@ def _proxy(user: dict):
     fwd_headers['X-User-Role']     = user['role']
     fwd_headers['X-User-Email']    = user.get('email', '')
     if user.get('uid'):
-        # Identifiant stable du portail, transmis pour plus tard (pas encore lu)
+        # Identifiant stable du portail = clé de stockage côté SongSurf (SSF-03) ;
+        # absent → SongSurf refuse la requête.
         fwd_headers['X-User-Portal-Id'] = user['uid']
 
     path_qs = request.full_path.rstrip('?')

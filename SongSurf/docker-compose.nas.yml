@@ -13,4 +13,6 @@ services:
     # Block it at the NAS firewall — only :8080 (Watcher) should be reachable externally.
     # Synology: Control Panel → Security → Firewall → deny port 8081 from WAN.
     volumes:
-      - /volume1/media/music:/data/music/rev0admin
+      # Bibliothèque admin = musique Jellyfin, montée sur le dossier de l'UUID admin
+      # (clé de stockage SSF-03). ADMIN_UID est dans .env.
+      - /volume1/media/music:/data/music/${ADMIN_UID:?ADMIN_UID is required (UUID du compte admin du portail)}

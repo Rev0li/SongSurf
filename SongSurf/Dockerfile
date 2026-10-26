@@ -47,6 +47,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App code
 COPY --chown=songsurf:songsurf server/ .
 COPY --chown=songsurf:songsurf shared/events_client.py .
+# Migration one-shot pseudo → UUID (SSF-03) : docker exec songsurf python3 tools/migrate_to_uid.py
+COPY --chown=songsurf:songsurf scripts/migrate_to_uid.py tools/
 
 # SvelteKit build output
 COPY --from=frontend-builder --chown=songsurf:songsurf /frontend/build /app/frontend/build

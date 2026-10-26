@@ -24,6 +24,7 @@ os.environ.setdefault('FLASK_PORT', '8082')
 import tempfile
 _TMP = tempfile.mkdtemp(prefix='songsurf_test_')
 os.environ.setdefault('MUSIC_BASE_DIR', _TMP)
+os.environ.setdefault('SONGSURF_STATE_DIR', os.path.join(_TMP, 'state'))  # jamais data/state du repo
 
 
 @pytest.fixture

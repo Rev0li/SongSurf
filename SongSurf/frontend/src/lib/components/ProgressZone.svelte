@@ -14,6 +14,15 @@
 	$: statusLabel = current.artist
 		? `${primaryArtist(current.artist)} — ${asText(current.title, '…')}${phaseLabel}`
 		: asText(current.title, 'En attente…');
+
+	// Worker pris par quelqu'un d'autre : l'admin voit qui et quoi, un membre
+	// seulement « un autre membre » + combien de titres passent avant le sien.
+	$: worker = $downloadStatus.worker ?? {};
+	$: otherLabel = worker.owner
+		? `${worker.owner} : ${primaryArtist(worker.current?.artist ?? '')} — ${asText(worker.current?.title, '…')}`
+		: 'Worker occupé par un autre membre';
+	$: before = Number(worker.songs_before_mine ?? 0);
+	$: waitLabel = before > 0 ? ` · ton tour dans ${before} morceau${before > 1 ? 'x' : ''}` : '';
 </script>
 
 {#if $workerBusy}
@@ -28,7 +37,7 @@
 			<div class="progress-total-fill" style="width: {$workerBusyByOther ? 100 : pct}%"></div>
 		</div>
 		{#if $workerBusyByOther}
-			<div class="pz-track pz-other">Worker utilisé par quelqu'un d'autre</div>
+			<div class="pz-track pz-other">{otherLabel}{waitLabel}</div>
 		{:else}
 			<div class="pz-track">{statusLabel}</div>
 		{/if}

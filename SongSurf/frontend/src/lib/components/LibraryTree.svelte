@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast, user, confirmAction } from '$lib/stores.js';
 	import { matchesFilter, nrm } from '$lib/utils.js';
@@ -9,7 +9,11 @@
 	let expanded = new Set();
 	let dragging = false;
 
-	onMount(refresh);
+	onMount(() => {
+		refresh();
+		resumeZip();
+	});
+	onDestroy(stopZipPolling);
 
 	export async function refresh() {
 		if (dragging) return;
@@ -96,9 +100,46 @@
 	}
 
 	// ── ZIP download ──────────────────────────────────────────────────────────
-	let zipping = false;
+	// Le serveur construit le ZIP en arrière-plan : on suit l'avancement via
+	// /api/zip-status, puis on lance le téléchargement. Un ZIP prêt (même après un
+	// redémarrage du serveur) se récupère sans le reconstruire.
+	let zip = { status: 'idle' };
+	let zipPoll = null;
 	// Bibliothèque admin permanente : pas d'export ZIP (SSF-10, refusé aussi côté API).
 	$: isAdmin = $user?.role === 'admin';
+	$: zipBuilding = zip.status === 'building';
+	$: zipLabel = zipBuilding
+		? `⏳ ZIP ${zip.done ?? 0} / ${zip.total ?? '…'}`
+		: zip.status === 'ready' ? '📥 Récupérer le ZIP' : '📥 Télécharger ZIP';
+
+	async function resumeZip() {
+		if ($user?.role === 'admin') return;
+		try {
+			zip = await api.zipStatus();
+			if (zip.status === 'building') startZipPolling();
+		} catch { /* ignore */ }
+	}
+
+	function startZipPolling() {
+		stopZipPolling();
+		zipPoll = setInterval(async () => {
+			try {
+				zip = await api.zipStatus();
+			} catch { return; }
+			if (zip.status === 'ready') {
+				stopZipPolling();
+				startZipDownload();
+			} else if (zip.status !== 'building') {
+				stopZipPolling();
+				if (zip.status === 'error') addToast(zip.error || 'Erreur ZIP.', 'error');
+			}
+		}, 1000);
+	}
+
+	function stopZipPolling() {
+		if (zipPoll) clearInterval(zipPoll);
+		zipPoll = null;
+	}
 
 	async function downloadZip() {
 		const ok = await confirmAction({
@@ -110,12 +151,24 @@
 		});
 		if (!ok) return;
 
-		zipping = true;
+		if (zip.status === 'ready') {
+			startZipDownload();
+			return;
+		}
 		try {
-			const res = await api.prepareZip();
-			if (!res.success) { addToast(res.error || 'Impossible de créer le ZIP.', 'error'); return; }
-			addToast(`ZIP prêt : ${res.count} fichiers (${res.size_mb} MB). Téléchargement…`, 'info');
-			window.location.href = (res.download_url || '/api/download-zip') + '?t=' + Date.now();
+			zip = await api.prepareZip();
+			startZipPolling();
+		} catch (err) {
+			zip = { status: 'idle' };
+			addToast(err.message || 'Impossible de créer le ZIP.', 'error');
+		}
+	}
+
+	function startZipDownload() {
+		try {
+			addToast(`ZIP prêt : ${zip.count} fichiers (${zip.size_mb} MB). Téléchargement…`, 'info');
+			window.location.href = (zip.download_url || '/api/download-zip') + '?t=' + Date.now();
+			zip = { status: 'idle' };
 
 			// Polling jusqu'à ce que le serveur ait supprimé la bibliothèque (max 5 min)
 			let attempts = 0;
@@ -133,8 +186,6 @@
 			}, 2000);
 		} catch (err) {
 			addToast(err.message || 'Erreur ZIP.', 'error');
-		} finally {
-			zipping = false;
 		}
 	}
 
@@ -164,8 +215,8 @@
 	<div class="lib-header">
 		<h2 class="card-title" style="margin:0">📚 Bibliothèque</h2>
 		{#if !isAdmin}
-			<button class="btn btn-success btn-sm" on:click={downloadZip} disabled={zipping}>
-				{zipping ? '⏳ Préparation…' : '📥 Télécharger ZIP'}
+			<button class="btn btn-success btn-sm" on:click={downloadZip} disabled={zipBuilding}>
+				{zipLabel}
 			</button>
 		{/if}
 	</div>

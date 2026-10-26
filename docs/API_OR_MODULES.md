@@ -1,6 +1,6 @@
 # API & Modules — SongSurf
 
-Reference generated from the current code (`server/app.py`, `server/downloader.py`, `server/organizer.py`, `watcher/watcher.py`). All endpoints return JSON unless noted.
+Reference generated from the current code (`server/app.py`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`, `watcher/watcher.py`). All endpoints return JSON unless noted.
 
 **Auth:** every `/api/*` route requires the Watcher-injected `X-Watcher-Token` header (`@auth_required`). The user identity comes from `X-User-Id` / `X-User-Role` / `X-User-Email`. In `DEV_MODE` (no `WATCHER_SECRET`) a local admin dev user is injected.
 
@@ -13,24 +13,27 @@ Reference generated from the current code (`server/app.py`, `server/downloader.p
 | Endpoint | Method | Description |
 |---|---|---|
 | `/ping` | GET | Healthcheck (no auth) — used by Watcher and Docker healthcheck |
-| `/api/me` | GET | `{sub, role, email, pseudo}` of the current user (`pseudo` = library folder name, shown in the header) |
-| `/api/status` | GET | Download progress, queue size, batch progress, daily counter, `is_mine` |
+| `/api/me` | GET | `{sub, uid, role, email, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
+| `/api/status` | GET | Download progress, queue size, batch progress, caller's daily counter, `is_mine`, `worker`. Watcher probe (valid `X-Watcher-Token`, no identity) → only `{in_progress, queue_size}` |
 
 **`GET /api/status` — response:**
 ```json
 {
   "in_progress": true,
-  "current_download": { "url": "…", "metadata": {…}, "user_sub": "…", "started_at": "…" },
+  "current_download": { "url": "…", "metadata": {…}, "user_key": "…", "user_pseudo": "…", "started_at": "…" },
   "progress": { "percent": 67, "phase": "downloading", "speed": "812 KB/s", "eta": "8s" },
   "queue_size": 2,
   "batch_active": true, "batch_total": 12, "batch_done": 4, "batch_percent": 38.5,
-  "daily_count": 7, "daily_limit": 0,
+  "daily_count": 7, "daily_limit": 50,
   "is_mine": true,
+  "worker": { "songs_before_mine": null, "owner": null, "current": null },
+  "pending": [ { "artist": "…", "title": "…", "album": "…" } ],
   "last_completed": {…}, "last_error": null,
   "cookies_present": true, "cookies_age_days": 0.4
 }
 ```
-`last_completed` / `last_error` / `cookies_*` are the **caller's own**; `current_download` is `null` when the worker is busy with another member's song (`is_mine: false`).
+`last_completed` / `last_error` / `cookies_*` / `daily_*` / `pending` are the **caller's own**; `daily_limit` is `0` (unlimited) for the admin. `current_download` is `null` when the worker is busy with another member's song (`is_mine: false`); `worker` then says who uses it: `songs_before_mine` = songs that start before the caller's next one (current song included, `null` if the caller has nothing queued); `owner` (pseudo) and `current` (`{artist, title}`) are filled **for the admin only**.
+`queue_size` = songs queued but not started, all users.
 Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (90) → `completed` (100).
 
 ### Extraction & download
@@ -38,7 +41,7 @@ Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/extract` | POST | `{url}` → metadata. Single song: flattened fields + `is_playlist: false`. Album/playlist: `{type, title, artist, year, thumbnail_url, thumbnail_candidates, songs[], total_songs, total_duration, is_playlist: true}` |
-| `/api/download` | POST | Queue one song (= a one-song job). Body: `{url, title, artist, album, year, track_number, album_artist, artists[]}`. 429 only if the job queue is full (`MAX_PENDING_JOBS`) or the daily limit is reached — several downloads can be queued at once |
+| `/api/download` | POST | Queue one song (= a one-song job). Body: `{url, title, artist, album, year, track_number, album_artist, artists[]}`. 429 only if the caller already has `MAX_PENDING_JOBS` (100) jobs queued or reached their daily limit (`code: 'daily_limit'`, members only) — several downloads can be queued at once |
 | `/api/download-playlist` | POST | Queue a whole album as one job. Body: `{playlist_metadata: {title, artist, year, songs[]}}` — each song keeps its own `artists` and `track_number`; album-level artist becomes `TPE2`. Returns `{added, total, queue_size}` (`queue_size` = songs queued but not yet started) |
 
 Songs in playlist extraction carry: `{title, artist, artists[], url, id, duration, track_number}`.
@@ -47,8 +50,9 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/prepare-zip` | POST | Zips the user's whole library → `{count, size_mb, download_url}`. Admin library: 403 `{code: 'zip_disabled'}` (SSF-10) |
-| `/api/download-zip` | GET | Streams the ZIP. **Member libraries are deleted after the stream completes.** Admin library: 403 `zip_disabled`, never exported nor deleted (role and folder checked) |
+| `/api/prepare-zip` | POST | Starts building the ZIP of the user's whole library in the background → 202 `{status: 'building', done: 0, total}` (already building → same answer, no second build). No MP3 → 404. Admin library: 403 `{code: 'zip_disabled'}` (SSF-10) |
+| `/api/zip-status` | GET | `{status: 'idle' \| 'building' \| 'ready' \| 'error', done, total, count, size_mb, download_url?, error?}` — the frontend polls it every second. State persisted in SQLite: a ready ZIP survives a restart, a build cut by a restart becomes `error` |
+| `/api/download-zip` | GET | Streams the ZIP once `ready` (otherwise 404). **Member libraries are deleted after the stream completes.** Admin library: 403 `zip_disabled`, never exported nor deleted (role, music root and mount points checked) |
 
 ### Library
 
@@ -90,9 +94,9 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → fire-and-forget: spawns a thread that extracts metadata then enqueues server-side (`_queue_direct_async`). Returns immediately; downloads even with no SongSurf tab open |
+| `/api/queue-direct` | POST | `{url, artist?, album?, title?, year?}` → fire-and-forget: spawns a thread that extracts metadata then enqueues server-side (`_queue_direct_async`). Returns immediately; downloads even with no SongSurf tab open. Same 429 rules as `/api/download` (queue full, daily limit) |
 | `/api/preview` | POST | `{url}` → lightweight metadata (no side-effect) for the extension's confirmation UI |
-| `/api/cookies/update` | POST | `{cookies}` (Netscape format, validated) → written to `/data/cookies/<pseudo>.txt` (chmod 600) → `{success, count, pseudo}` |
+| `/api/cookies/update` | POST | `{cookies}` (Netscape format, validated) → written to `/data/cookies/<uid>.txt` (chmod 600) → `{success, count, pseudo}` |
 
 ---
 
@@ -112,6 +116,20 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 ---
 
 ## Backend modules
+
+### `server/state_store.py` — `StateStore(db_path)` (SSF-03)
+
+SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, a song left `active` goes back to `pending` and a ZIP left `building` becomes `error` (interrupted).
+
+| Method | Description |
+|---|---|
+| `enqueue_job(user_key, songs)` | One job (album or single song) = its songs as `pending` rows, in order |
+| `claim_next()` / `finish(id)` | Next song in round-robin order, marked `active` (pointer `rr_last_user` persisted) / removed once processed (success or failure) |
+| `pending_jobs(user_key)` · `pending_count()` · `pending_for(user_key)` · `songs_before(user_key)` | Per-user job count (queue limit), global pending songs, caller's pending songs, songs passing before the caller's next one |
+| `daily_count(user_key, day)` / `daily_increment(user_key, day)` | Per-user daily counter (older days purged) |
+| `zip_get` / `zip_set` / `zip_delete` | Per-user ZIP export state (`building` → `ready` / `error`) |
+
+`round_robin_order(items, last_user)` (pure) — users rotate in key order starting after the last served one; each user's songs keep their arrival order.
 
 ### `server/downloader.py` — `YouTubeDownloader(temp_dir, music_dir)`
 
@@ -171,7 +189,8 @@ api.getStatus()                            // GET  /api/status
 api.extract(url)                           // POST /api/extract
 api.download(payload)                      // POST /api/download
 api.downloadPlaylist(payload)              // POST /api/download-playlist
-api.prepareZip()                           // POST /api/prepare-zip
+api.prepareZip()                           // POST /api/prepare-zip (202, build in background)
+api.zipStatus()                            // GET  /api/zip-status
 api.getLibrary()                           // GET  /api/library
 api.moveSong(source, targetFolder)         // POST /api/library/move
 api.moveFolder(folderPath, newParent)      // POST /api/library/move-folder

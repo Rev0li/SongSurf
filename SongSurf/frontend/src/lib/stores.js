@@ -15,6 +15,7 @@ export const downloadStatus = writable({
 	batch_percent: 0,
 	is_mine: true,
 	pending: [],
+	worker: null, // { songs_before_mine, owner (admin), current (admin) }
 });
 
 export const workerBusy = derived(

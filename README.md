@@ -13,7 +13,8 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 - **Single songs, albums and playlists** from YouTube / YouTube Music → best-quality MP3 (FFmpeg)
 - **Clean ID3 tags**: title, album, year, **track number** (`n/total`), **multi-value artists** (TPE1, null-separated — each artist credited individually), **album artist** (TPE2 — stable album grouping in Jellyfin), embedded cover + `cover.jpg` sidecar
 - **Featuring detection** — `Song feat. X` is normalized into the title and credited in the artist tag
-- **Per-user libraries** — each authenticated user gets `/data/music/<pseudo>/`; members can export their library as a ZIP (deleted afterwards), the admin library is permanent
+- **Per-user libraries** — each authenticated user gets `/data/music/<portal UUID>/` (a `.owner` file names the pseudo); members can export their library as a ZIP (deleted afterwards), the admin library is permanent
+- **Fair, restart-proof queue** — songs are served round-robin between users (two members progress side by side), with a per-member daily quota; the queue, quotas and ZIP exports live in SQLite and survive restarts
 - **Web UI** (SvelteKit): URL queue with metadata preview/edit, library tree with drag-and-drop, full **ID3 metadata editor** (multi-value support with `;`), cover upload
 - **Browser extension** (Chrome/Firefox): one-click queue from music.youtube.com pages, batch an artist's full discography, YouTube cookie sync for yt-dlp
 - **On-demand lifecycle**: automatic container shutdown after inactivity (warn → grace → stop)
@@ -57,11 +58,11 @@ make dev          # Flask backend only, no Docker (port 8081)
 | `WATCHER_PORT` | `8080` | Public port — the only one that should face traffic |
 | `DEV_MODE` | `false` | `true` bypasses auth — never in production |
 | `REVAUTH_HOME_URL` | _(empty)_ | Portal member space: target after logout, link on the « use the portal » page |
-| `DAILY_DOWNLOAD_LIMIT` | `0` | Downloads per day, `0` = unlimited |
+| `DAILY_DOWNLOAD_LIMIT` | `0` | Downloads per member per day (admin unlimited), `0` = unlimited |
 | `MAX_DURATION_SECONDS` | `9000` | Reject videos longer than this (2h30 allows DJ mixes) |
 | `INACTIVITY_WARN_TIMEOUT` | `3600` | Idle seconds before shutdown warning |
 | `INACTIVITY_GRACE_TIMEOUT` | `900` | Extra idle seconds before container stop |
-| `ADMIN_PSEUDO` | `rev0admin` | Folder name for the admin library |
+| `ADMIN_UID` | — | Portal UUID of the admin account (NAS only): the Jellyfin music folder is mounted on `/data/music/<ADMIN_UID>` |
 
 `.secrets` (chmod 600, never committed): `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token`; empty = service locked), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
 
@@ -94,10 +95,12 @@ SongSurf/SongSurf/            # the app (nested folder)
     app.py                    # Flask routes, queue, auth guard, metadata API
     downloader.py             # yt-dlp wrapper, extraction, progress
     organizer.py              # file placement, ID3 tags, covers
+    state_store.py            # SQLite: queue (round-robin), quotas, ZIP exports
   watcher/watcher.py          # auth proxy + container lifecycle
   frontend/                   # SvelteKit (adapter-static, built into the image)
   tests/                      # pytest suite
   docker/compose-switch.sh    # merges base + local|nas compose files
+  scripts/migrate_to_uid.py   # one-shot SSF-03 migration: pseudo folders → portal UUID
 chrome-extension/             # MV3 extension
 docs/                         # architecture, API reference, auth contract, deploy, V1 plan
 ```

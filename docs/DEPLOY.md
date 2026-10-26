@@ -130,6 +130,27 @@ make deploy-nas        # depuis la machine de dev
 ./docker/compose-switch.sh up -d --build
 ```
 
+### 5.1 Migration pseudo → UUID (SSF-03, une seule fois)
+
+Depuis SSF-03, tout ce qui est stocké par utilisateur (bibliothèque, cookies, file, quota, ZIP) est rangé sous l'**UUID du compte portail**, admin compris. Les dossiers créés avant (nommés par pseudo) se migrent une fois :
+
+1. **Relever les UUID** dans l'admin rev0auth (pseudo ↔ UUID de chaque compte qui a une bibliothèque ou des cookies).
+2. **`ADMIN_UID`** dans le `.env` du NAS = UUID du compte admin. `docker-compose.nas.yml` monte la musique Jellyfin sur `/data/music/<ADMIN_UID>` et refuse de démarrer sans lui. Aucun fichier ne bouge : seul le point de montage change.
+3. **Correspondance** dans `data/state/uid-map.txt` sur le NAS (`sudo`, chmod 600), une ligne par compte :
+   ```
+   # <dossier actuel>  <uuid du portail>  [pseudo exact, sinon = dossier]
+   rev0admin  <uuid-admin>
+   <dossier>  <uuid>  <Pseudo>
+   ```
+4. **Déployer** : `make deploy-nas`.
+5. **Simuler puis appliquer** (dans le conteneur, qui voit `/data`) :
+   ```bash
+   sudo docker exec songsurf python3 tools/migrate_to_uid.py --map /data/state/uid-map.txt
+   sudo docker exec songsurf python3 tools/migrate_to_uid.py --map /data/state/uid-map.txt --apply
+   ```
+   Le script renomme `music/<dossier>` → `music/<uuid>` (+ `.owner`) et `cookies/<dossier>.txt` → `cookies/<uuid>.txt`, retire l'ancien point de montage admin vide, et liste les dossiers sans correspondance. Un **conflit** (dossier UUID déjà rempli) ne déplace rien et sort en code 1 : à régler à la main avant de relancer.
+6. **Vérifier** : chaque membre retrouve sa bibliothèque ; `cat data/music/*/.owner` liste les pseudos. Supprimer ensuite `data/state/uid-map.txt`.
+
 ---
 
 ## 6. Accès Tailscale / VPN
