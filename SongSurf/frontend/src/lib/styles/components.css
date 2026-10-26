@@ -16,7 +16,6 @@
 .header-brand { display: flex; align-items: center; gap: var(--s3); }
 .header-logo  { font-size: 18px; }
 .header-title { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .5px; font-family: var(--font-display); }
-.header-nav   { display: flex; align-items: center; gap: var(--s3); }
 
 /* ── Badge ───────────────────────────────────────────────────────────────── */
 .badge {
@@ -26,11 +25,6 @@
   font-weight: 500;
   background: var(--accent2-soft);
   border: 1px solid rgba(110, 218, 211, 0.3);
-  color: var(--text);
-}
-.badge-primary {
-  background: var(--accent-soft);
-  border: 1px solid rgba(232, 183, 196, 0.35);
   color: var(--text);
 }
 
@@ -71,17 +65,18 @@
   color: var(--text);
   background: var(--bg-3);
   font-family: var(--font-body);
+  text-decoration: none;
 }
 .btn:hover:not(:disabled) { box-shadow: var(--shadow-soft); }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
-.btn-primary, .btn-brand {
+.btn-primary {
   background: var(--primary);
   color: #111111;
   border-color: transparent;
 }
-.btn-primary:hover:not(:disabled), .btn-brand:hover:not(:disabled) { opacity: 0.88; }
+.btn-primary:hover:not(:disabled) { opacity: 0.88; }
 
 .btn-success {
   background: var(--accent);
@@ -140,35 +135,6 @@
 }
 
 /* ── Toggle switch ───────────────────────────────────────────────────────── */
-.toggle-switch { position: relative; display: inline-block; width: 44px; height: 26px; flex-shrink: 0; }
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider {
-  position: absolute; inset: 0;
-  background: var(--bg-4);
-  border: 1px solid var(--sep);
-  border-radius: var(--r-full);
-  transition: background .2s, border-color .2s;
-  cursor: pointer;
-}
-.toggle-slider::before {
-  content: '';
-  position: absolute;
-  width: 20px; height: 20px;
-  left: 3px; top: 2px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform .2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,.2);
-}
-.toggle-switch input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
-
-.toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-}
 
 /* ── Progress bar ────────────────────────────────────────────────────────── */
 .progress-total {
@@ -184,17 +150,6 @@
   background: var(--accent);
   border-radius: var(--r-full);
   transition: width .6s ease;
-}
-.progress-text {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--text-2);
-}
-.progress-subtext {
-  font-size: 12px;
-  color: var(--text-3);
-  margin-top: var(--s1);
 }
 
 /* ── Alert ───────────────────────────────────────────────────────────────── */
@@ -216,8 +171,7 @@
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */
-.empty-state      { text-align: center; padding: var(--s8) var(--s4); }
-.empty-state-icon { font-size: 32px; margin-bottom: var(--s3); opacity: .5; }
+
 .empty-state-text { color: var(--text-3); font-size: 14px; margin: 0; }
 
 /* ── Responsive (sm < 480px) ─────────────────────────────────────────────── */

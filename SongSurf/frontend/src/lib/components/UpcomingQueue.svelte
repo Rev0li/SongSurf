@@ -2,6 +2,7 @@
 	import { downloadStatus } from '$lib/stores.js';
 	import { primaryArtist, asText } from '$lib/utils.js';
 
+	// Seule file d'attente affichée (SSF-05) : celle du serveur, qui possède la file.
 	// Le serveur envoie déjà la file dans l'ordre de passage, limitée à mes
 	// propres titres (extension ou input) — jamais ceux d'un autre membre.
 	// On regroupe les titres consécutifs d'un même album (un album = un job
@@ -25,12 +26,16 @@
 	$: grouped = group(pending);
 </script>
 
-{#if grouped.length > 0}
-	<div class="card">
-		<div class="upcoming-header">
-			<h2 class="card-title" style="margin:0">🔜 À venir</h2>
+<div class="card">
+	<div class="upcoming-header">
+		<h2 class="card-title" style="margin:0">📋 File d'attente</h2>
+		{#if pending.length > 0}
 			<span class="queue-badge">{pending.length} titre{pending.length > 1 ? 's' : ''}</span>
-		</div>
+		{/if}
+	</div>
+	{#if grouped.length === 0}
+		<p class="empty-state-text">Analyse un lien, puis clique sur « Ajouter à la file ».</p>
+	{:else}
 		<ul class="upcoming-list">
 			{#each grouped as g, i (i)}
 				<li class="upcoming-item">
@@ -44,8 +49,8 @@
 				</li>
 			{/each}
 		</ul>
-	</div>
-{/if}
+	{/if}
+</div>
 
 <style>
 	.upcoming-header {

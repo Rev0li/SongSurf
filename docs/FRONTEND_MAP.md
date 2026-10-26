@@ -9,7 +9,7 @@
 
 | Zone | Fichier(s) | Lignes |
 |---|---|---|
-| Page Téléchargement `/` | `routes/+page.svelte` + 6 composants | ~1 400 |
+| Page Téléchargement `/` | `routes/+page.svelte` + 4 composants (avant : 6, ~1 400 lignes) | ~640 |
 | Page Métadonnées `/metadata` | `routes/metadata/+page.svelte` (script 768 · balisage 755 · style 670) | **2 194** |
 | Coquille (tous écrans) | `routes/+layout.svelte`, `Header`, `Toast`, `ConfirmModal`, `HelpModal`, `WatcherInactivity` | ~630 |
 | Partagé | `lib/api.js`, `lib/stores.js`, `lib/utils.js` | ~300 |
@@ -113,9 +113,9 @@ Découpage naturel du backend qui en découle : **téléchargement** (extract, d
 
 ---
 
-## 6. Propositions à valider avant le découpage
+## 6. Décisions (validées le 2026-10-26) et état
 
-1. 💀 Supprimer le code mort de la section 4 (et la route `admin/extract-covers` côté backend, dans SSF-04).
-2. 🔁 Fusionner `UrlQueue` dans `UpcomingQueue` : une seule « file d'attente », celle du serveur ; une erreur d'envoi devient un toast.
-3. 🔁 Retirer l'arborescence de la page d'accueil (garder le bouton ZIP et un lien vers `/metadata`).
-4. 🟡 Rien d'autre n'est supprimé : les éléments secondaires restent, leur mise en retrait relève de la refonte visuelle (SSF-07).
+1. ✅ **Fait** — code mort supprimé : 3 fonctions de `utils.js` (+ `matchesFilter`, `lastCompleted`, `urlQueue`, devenus inutiles), 31 classes CSS globales. La route `admin/extract-covers` part avec SSF-04.
+2. ✅ **Fait** — une seule « 📋 File d'attente » (`UpcomingQueue`, celle du serveur, avec texte d'aide quand elle est vide) ; `UrlQueue` supprimé ; « Ajouter à la file » envoie directement, erreur → toast.
+3. ✅ **Fait** — arborescence retirée de l'accueil : `LibraryTree` remplacé par `LibraryCard` (bouton « 📚 Voir ma bibliothèque » + ZIP). Les onglets du haut disparaîtront avec la refonte.
+4. ⏳ **À discuter avant le découpage** — ce qu'on garde au premier plan (mobile, simplicité), éventuel **mode simple / mode expert**.

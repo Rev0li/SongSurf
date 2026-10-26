@@ -28,13 +28,8 @@ export const workerBusyByOther = derived(
 	($s) => (!!$s.in_progress || ($s.queue_size ?? 0) > 0 || !!$s.batch_active) && !$s.is_mine
 );
 
-export const lastCompleted = writable(null); // { artist, title, timestamp } | null
-
 // Theme: 'light' | 'dark' — initialized in +layout.svelte onMount from localStorage
 export const theme = writable('light');
-
-// Persists the UrlQueue across navigation
-export const urlQueue = writable([]);
 
 // Help/tutorial modal open state (toggled by the "?" button in the header).
 // Auto-opened once on first visit — see +layout.svelte (localStorage 'ssf.help.seen').

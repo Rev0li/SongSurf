@@ -3,8 +3,6 @@
 	import { addToast } from '$lib/stores.js';
 	import { asText, inferPlaylistArtist } from '$lib/utils.js';
 
-	export let onAddToQueue = () => {};
-
 	// ── State ──────────────────────────────────────────────────────────────────
 	let url = '';
 	let extract = null;
@@ -56,34 +54,48 @@
 	}
 
 	// ── Add to queue ─────────────────────────────────────────────────────────
-	function addToQueue() {
-		if (!extract) return;
+	// Envoi direct au serveur, qui possède la file (SSF-03) : elle s'affiche dans
+	// « File d'attente » (UpcomingQueue). Un refus (cookies, quota, file pleine)
+	// devient un toast et le panneau reste ouvert pour réessayer.
+	let submitting = false;
 
-		const item = extract.is_playlist ? {
-			isPlaylist: true,
-			label: asText(playlistAlbum, extract.title ?? 'Album'),
-			playlistMetadata: {
-				title:  asText(playlistAlbum, 'Unknown Album'),
-				artist: asText(playlistArtist, 'Unknown Artist'),
-				year:   asText(playlistYear),
-				songs:  extract.songs ?? [],
-			},
-		} : {
-			isPlaylist: false,
-			label: `${asText(artist, '?')} — ${asText(title, '?')}`,
-			url:    extract.url ?? '',
-			title:  asText(title,  'Unknown Title'),
-			artist: asText(artist, 'Unknown Artist'),
-			album:  asText(album,  'Unknown Album'),
-			year:   '',
-			track_number: extract.track_number ?? '',
-			album_artist: extract.album_artist ?? '',
-			// Artiste modifié à la main → la liste multi-artistes extraite n'est plus fiable
-			artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
-		};
+	async function addToQueue() {
+		if (!extract || submitting) return;
+		submitting = true;
 
-		onAddToQueue(item);
-		reset();
+		try {
+			let label;
+			if (extract.is_playlist) {
+				label = asText(playlistAlbum, extract.title ?? 'Album');
+				await api.downloadPlaylist({
+					playlist_metadata: {
+						title:  asText(playlistAlbum, 'Unknown Album'),
+						artist: asText(playlistArtist, 'Unknown Artist'),
+						year:   asText(playlistYear),
+						songs:  extract.songs ?? [],
+					},
+				});
+			} else {
+				label = `${asText(artist, '?')} — ${asText(title, '?')}`;
+				await api.download({
+					url:    extract.url ?? '',
+					title:  asText(title,  'Unknown Title'),
+					artist: asText(artist, 'Unknown Artist'),
+					album:  asText(album,  'Unknown Album'),
+					year:   '',
+					track_number: extract.track_number ?? '',
+					album_artist: extract.album_artist ?? '',
+					// Artiste modifié à la main → la liste multi-artistes extraite n'est plus fiable
+					artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
+				});
+			}
+			addToast(`➕ Ajouté à la file : ${label}`, 'info');
+			reset();
+		} catch (err) {
+			addToast(err.message || 'Impossible d\'ajouter à la file.', 'error', 8000);
+		} finally {
+			submitting = false;
+		}
 	}
 
 	// ── Reset ─────────────────────────────────────────────────────────────────
@@ -171,8 +183,8 @@
 				{/if}
 
 				<div class="metadata-actions">
-					<button class="btn btn-primary btn-block" on:click={addToQueue}>
-						➕ Ajouter à la file
+					<button class="btn btn-primary btn-block" on:click={addToQueue} disabled={submitting}>
+						{submitting ? 'Envoi…' : '➕ Ajouter à la file'}
 					</button>
 					<button class="btn btn-ghost btn-sm" on:click={reset}>Annuler</button>
 				</div>
