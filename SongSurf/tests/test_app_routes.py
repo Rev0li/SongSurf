@@ -1056,3 +1056,31 @@ def test_ssf03_progress_reset_when_a_song_starts(flask_setup):
         app_mod._process_song(_queued_song('prog', 'p1'))
     assert seen['phase'] == 'idle' and seen['percent'] == 0
     app_mod._last_error_by_user.clear()
+
+
+# ── SSF-14 : export ZIP interrompu → bibliothèque conservée ───────────────────
+
+def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
+    import os as _os
+    c, music, _, app_mod = flask_setup
+    h = auth_headers(sub='mobile')
+    lib = music / uid_for('mobile')
+    song = lib / 'Art' / 'Alb' / 'Song.mp3'
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(_os.urandom(300_000))           # incompressible → plusieurs blocs de 64 Ko
+    try:
+        assert c.post('/api/prepare-zip', headers=h).status_code == 202
+        assert _wait_zip(c, h)['status'] == 'ready'
+        r = c.get('/api/download-zip', headers=h, buffered=False)
+        assert r.status_code == 200
+        next(iter(r.response))                         # un seul bloc reçu…
+        r.close()                                      # … puis connexion coupée
+        assert song.is_file()                          # bibliothèque intacte
+        assert c.get('/api/zip-status', headers=h).get_json()['status'] == 'ready'
+        # Nouvelle tentative complète : là seulement, la bibliothèque est vidée
+        r = c.get('/api/download-zip', headers=h)
+        r.get_data()
+        assert not lib.exists()
+    finally:
+        app_mod._zip_path(uid_for('mobile')).unlink(missing_ok=True)
+        app_mod.store.zip_delete(uid_for('mobile'))
