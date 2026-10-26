@@ -1037,3 +1037,22 @@ def test_ssf03_zip_build_survives_as_ready(flask_setup):
     finally:
         app_mod._zip_path(uid_for('keeper')).unlink(missing_ok=True)
         app_mod.store.zip_delete(uid_for('keeper'))
+
+
+def test_ssf03_progress_reset_when_a_song_starts(flask_setup):
+    # Le titre précédent laisse « completed / 100 % » : si on passe en cours sans
+    # remettre à zéro, /api/status annonce le nouveau titre fini (bond de la barre).
+    _, _, _, app_mod = flask_setup
+    give_cookies(app_mod, uid_for('prog'))
+    app_mod.downloader.progress.phase = 'completed'
+    app_mod.downloader.progress.percent = 100
+    seen = {}
+
+    def fake_download(*_a, **_k):
+        seen.update(app_mod.downloader.get_progress())
+        return {'success': False, 'error': 'stop'}
+
+    with patch.object(app_mod.downloader, 'download', side_effect=fake_download):
+        app_mod._process_song(_queued_song('prog', 'p1'))
+    assert seen['phase'] == 'idle' and seen['percent'] == 0
+    app_mod._last_error_by_user.clear()

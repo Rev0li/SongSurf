@@ -2087,6 +2087,10 @@ def _process_song(item):
     cookies_file = _user_cookies_file(owner)
 
     with queue_lock:
+        # Progression remise à zéro AVANT de passer en cours : sinon /api/status voit
+        # encore le « completed / 100 % » du titre précédent et la barre fait un bond
+        # d'un titre entier en avant, puis recule quand le téléchargement démarre.
+        downloader.progress.reset()
         download_status.update({
             'in_progress':      True,
             'current_download': {
