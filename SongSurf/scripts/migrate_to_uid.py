@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 
 UID_RE = re.compile(r'^[A-Za-z0-9-]{8,64}$')       # même règle que server/app.py
-UUID_RE = re.compile(r'^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')  # forme canonique
 OWNER_FILE = '.owner'
 
 
@@ -129,8 +128,9 @@ def main(argv=None) -> int:
         print(f"  {folder} → {uid} ({pseudo})\n      bibliothèque : {lib}\n      cookies      : {ck}")
 
     mapped = {f for f, _, _ in entries} | {u for _, u, _ in entries}
+    # Les dossiers déjà nommés par identifiant portent un .owner (écrit par SongSurf).
     leftovers = sorted(p.name for p in args.music.iterdir()
-                       if p.is_dir() and p.name not in mapped and not UUID_RE.match(p.name))
+                       if p.is_dir() and p.name not in mapped and not (p / OWNER_FILE).exists())
     if leftovers:
         print("\nDossiers sans correspondance (laissés tels quels) : " + ', '.join(leftovers))
     print(f"\n{len(entries)} compte(s), {conflicts} conflit(s).")

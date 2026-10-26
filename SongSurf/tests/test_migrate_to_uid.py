@@ -26,6 +26,8 @@ def layout(tmp_path):
     (music / 'rev0admin').mkdir()                  # ancien point de montage admin, vide
     (music / UID_ADMIN).mkdir()                    # nouveau point de montage admin
     (music / 'orphan').mkdir()
+    (music / 'Xk9pQ2rT7vLm4nB8cD1eF6gH3jK5sW0y').mkdir()   # id BetterAuth, déjà migré
+    (music / 'Xk9pQ2rT7vLm4nB8cD1eF6gH3jK5sW0y' / '.owner').write_text('zoe\n')
     cookies.mkdir()
     (cookies / 'alice.txt').write_text('c')
     mapfile = tmp_path / 'uid-map.txt'
@@ -59,7 +61,7 @@ def test_apply_renames_libraries_and_cookies(layout, capsys):
     # Admin : le montage UUID est en place, l'ancien dossier vide disparaît
     assert not (music / 'rev0admin').exists() and (music / UID_ADMIN).is_dir()
     out = capsys.readouterr().out
-    assert 'orphan' in out and '0 conflit' in out
+    assert 'orphan' in out and 'Xk9pQ2rT' not in out and '0 conflit' in out
 
 
 def test_apply_replaces_folder_created_since_deploy(layout):
