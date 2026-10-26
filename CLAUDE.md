@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SongSurf is a self-hosted YouTube Music downloader with a two-tier proxy architecture:
 
 ```
-Browser ──portal session──► Caddy (forward_auth) ──identity + X-Proxy-Token──► [Watcher :8080*] ──headers──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<pseudo>/Artist/Album/Title.mp3
+Browser ──portal session──► Caddy (forward_auth) ──identity + X-Proxy-Token──► [Watcher :8080*] ──headers──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<uid>/Artist/Album/Title.mp3
                             │                              ▲
                             └── Docker SDK (start/stop) ───┘
 ```
@@ -36,7 +36,7 @@ make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
-# Tests (265 pytest tests, no linter configured; the test_watcher_* files need the docker SDK)
+# Tests (~300 pytest tests, no linter configured; the test_watcher_* files need the docker SDK)
 python3 -m pytest               # from SongSurf/SongSurf/
 python3 -m pytest tests/test_organizer.py -q
 ```
@@ -50,7 +50,7 @@ Portal gate (AUTH-09, **implemented**: SSF-11 then SSF-12 removed the JWT):
 1. Caddy on the VPS asks the portal before each request to `songsurf.` (`forward_auth`). No session → Caddy itself redirects to the portal login (navigation) or answers 401 (API); no SongSurf access → 403. The Watcher never redirects to a login page.
 2. Access granted → Caddy sends `X-User-Name` (exact pseudo) / `X-User-Role` / `X-User-Id` (portal UUID) plus the proof `X-Proxy-Token`, after stripping client-sent `X-User-*` and the portal cookie.
 3. The Watcher trusts those headers **only** if `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time). Otherwise → 401 JSON (API / extension) or a « passe par le portail » page. Empty secret → locked.
-4. It proxies to SongSurf with `X-Watcher-Token: <WATCHER_SECRET>` + `X-User-Id` = pseudo (`sub`, folders/events derive from it) / `X-User-Role` / `X-User-Email` (empty) / `X-User-Portal-Id`. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded. SongSurf verifies `X-Watcher-Token` and performs no auth itself.
+4. It proxies to SongSurf with `X-Watcher-Token: <WATCHER_SECRET>` + `X-User-Id` = pseudo (`sub`, display/logs/events only) / `X-User-Role` / `X-User-Email` (empty) / `X-User-Portal-Id` = portal UUID (**storage key**, required: SongSurf answers 401 without a valid one). Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded. SongSurf verifies `X-Watcher-Token` and performs no auth itself.
 5. `/logout` puts SongSurf to sleep and redirects to `REVAUTH_HOME_URL` (the session is the portal's, no cookie here).
 6. `DEV_MODE=true` bypasses everything with a local admin dev user — never in production.
 
@@ -58,9 +58,10 @@ There are no login forms, password auth, guest sessions or JWT anymore (`?token=
 
 ## Storage model
 
-- Production: per-user library `/data/music/<pseudo>/Artist/Album/Title.mp3`. `pseudo` = email local part (sanitized); admin role always maps to `ADMIN_PSEUDO` (default `rev0admin`).
+- Production: per-user library `/data/music/<uid>/Artist/Album/Title.mp3`, `uid` = portal UUID (`_user_key()`, SSF-03) — admin included, never derived from the pseudo. Each folder has a `.owner` file holding the exact pseudo. On the NAS the admin library is the Jellyfin music folder bind-mounted on `/data/music/${ADMIN_UID}` (`docker-compose.nas.yml`). Old pseudo-named folders: one-shot `scripts/migrate_to_uid.py` (procedure in `docs/DEPLOY.md` §5.1).
 - `DEV_MODE`: flat `/data/music/Artist/Album/`.
-- Member ZIP export (`/api/prepare-zip` → `/api/download-zip`) **deletes the member's library after streaming** — by design (temporary libraries). ZIP export is **disabled for the admin library** (SSF-10): button hidden, both endpoints return 403 `zip_disabled`. `_zip_forbidden()` checks the role *and* the target folder (admin folder, music root), and the post-stream cleanup re-checks it before `rmtree`.
+- Member ZIP export (`/api/prepare-zip` → 202, built in a background thread; frontend polls `/api/zip-status`; then `/api/download-zip`) **deletes the member's library after streaming** — by design (temporary libraries). ZIP export is **disabled for the admin library** (SSF-10): button hidden, both endpoints return 403 `zip_disabled`. `_zip_forbidden()` checks the role *and* the target folder (music root, any mount point — `_is_mount_point()` also reads `/proc/self/mountinfo` because `os.path.ismount` misses same-disk bind mounts), and the post-stream cleanup re-checks it before `rmtree`.
+- Persistent state (`server/state_store.py`, SQLite `/data/state/songsurf.db`, volume `./data/state`): download queue, round-robin pointer, per-user daily counters, ZIP export state. Survives restarts.
 - MP3 only. Playlist flat-folder mode and MP4 support were removed (2026-06).
 
 ## Backend modules
@@ -69,6 +70,7 @@ There are no login forms, password auth, guest sessions or JWT anymore (`?token=
 |---|---|
 | `server/app.py` | Flask routes, auth guard, download queue + worker thread, per-user dirs, ZIP export, metadata editor API, extension endpoints |
 | `server/downloader.py` | yt-dlp wrapper: metadata extraction (single + playlist/album), MP3 download to temp, progress tracking, artist list normalization |
+| `server/state_store.py` | `StateStore` (SQLite): persistent queue with round-robin `claim_next`/`finish`, daily counters, ZIP export state; `round_robin_order()` pure helper |
 | `server/organizer.py` | File placement `Artist/Album/Title.mp3`, ID3 tags via Mutagen, featuring detection, album covers (`cover.jpg` + embedded APIC) |
 | `watcher/watcher.py` | Portal gate (`X-Proxy-Token`), header injection, reverse proxy, SongSurf container lifecycle (Docker SDK), inactivity shutdown, CORS for the extension |
 | `shared/events_client.py` | Activity-event push to rev0auth (stdlib-only, copied into both images): `emit()` fire-and-forget thread, JSONL spool in `logs/events-pending-<source>.jsonl` on failure, replay thread every 5 min |
@@ -102,18 +104,19 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 
 ## Threading model (SongSurf)
 
-- Main Flask thread: HTTP, validation, enqueue. The queue is **job-level** (`job_queue`, `queue.Queue` of jobs, max `MAX_PENDING_JOBS=100`): one album = one job, a single track = a one-song job (`_enqueue_job`). Daily limit `DAILY_DOWNLOAD_LIMIT`. `_pending_songs` (under `queue_lock`) = songs queued but not yet started, exposed as `queue_size` in `/api/status`. The frontend submits everything at once; the server owns ordering, so queuing several albums no longer overflows a flat queue and the batch keeps draining even if the page is closed.
-- One download worker thread: pulls a job, processes its songs sequentially via `_process_song`, then takes the next job; updates `download_status` under `queue_lock`.
+- Main Flask thread: HTTP, validation, enqueue. The queue lives in SQLite (`store`, SSF-03): one album = one job, a single track = a one-song job (`_enqueue_job(user, songs)`), max `MAX_PENDING_JOBS=100` jobs **per user** (`_queue_full`). Daily limit `DAILY_DOWNLOAD_LIMIT` **per member**, admin unlimited (`_daily_limit_for`), also enforced on `/api/queue-direct`. `queue_size` in `/api/status` = `store.pending_count()` (all users). The frontend submits everything at once; the server owns ordering and the batch keeps draining even if the page is closed.
+- One download worker thread (`_worker_step`): `store.claim_next()` takes the next song **round-robin between users** (each user's songs in arrival order), `_process_song`, then `store.finish()` — a song only leaves the queue once processed, so a restart mid-download re-downloads it (`StateStore._recover`); `_resume_pending_batch()` reopens the progress batch at boot. `_queue_wakeup` (Event) wakes the worker on enqueue. Updates `download_status` under `queue_lock` (lock order: `queue_lock` → store lock).
+- `/api/status` `worker`: who uses the worker — members get `songs_before_mine` only, the admin also gets `owner` (pseudo) + `current`. A token-only call (Watcher busy probe, no identity) gets `{in_progress, queue_size}` — before SSF-03 it got 503 and the Watcher could stop SongSurf mid-batch.
 - Extension queueing is server-side fire-and-forget: `/api/queue-direct` spawns a daemon thread (`_queue_direct_async`) that extracts metadata then `_enqueue_job`, and returns immediately. No `extension_pending`/visual-queue round-trip anymore — the NAS downloads even with no SongSurf tab open.
 - Watcher side: inactivity thread (`_inactivity_tick` every 60 s: warn after `INACTIVITY_WARN_TIMEOUT`, stop container after `+ INACTIVITY_GRACE_TIMEOUT`). A busy SongSurf (`in_progress` or `queue_size > 0` via `_songsurf_busy()`) counts as activity — never stopped mid-batch; `_start_songsurf()` resets the idle timer (boot-window race). Same busy check on `/logout`.
 
 ## Environment variables
 
-`.env` (non-secret): `DEPLOY_TARGET`, `WATCHER_PORT`, `SONGSURF_PORT`, `TARGET_URL(_NAS)`, `DAILY_DOWNLOAD_LIMIT`, `MAX_DURATION_SECONDS`, `INACTIVITY_WARN_TIMEOUT`, `INACTIVITY_GRACE_TIMEOUT`, `DEV_MODE`, `REVAUTH_HOME_URL`, `ADMIN_PSEUDO`, `AUTH_EVENTS_URL` (empty = activity tracking off).
+`.env` (non-secret): `DEPLOY_TARGET`, `WATCHER_PORT`, `SONGSURF_PORT`, `TARGET_URL(_NAS)`, `DAILY_DOWNLOAD_LIMIT`, `MAX_DURATION_SECONDS`, `INACTIVITY_WARN_TIMEOUT`, `INACTIVITY_GRACE_TIMEOUT`, `DEV_MODE`, `REVAUTH_HOME_URL`, `ADMIN_UID` (portal UUID of the admin, NAS only — mount target of the Jellyfin library, compose refuses to start without it), `AUTH_EVENTS_URL` (empty = activity tracking off). `SONGSURF_STATE_DIR` (default `/data/state`) overrides the SQLite location.
 
 `.secrets` (chmod 600, never committed, generated by `make secrets`): `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET` (must match `auth/.secrets` on the VPS), `SONGSURF_PROXY_SECRET` (must match the secret file Caddy reads on the VPS; empty = service locked), Flask secret keys.
 
-`YTDLP_COOKIES_DIR` (default `/data/cookies`, volume `./data/cookies`): **per-user** YouTube cookies `<pseudo>.txt` (chmod 600, Netscape format) written by the extension via `/api/cookies/update`. yt-dlp always uses the cookies of the job owner — no global file, no fallback on admin cookies: a user without cookies gets `403 {code: 'cookies_missing'}` on `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct`. The legacy global `/data/cookies.txt` (`YTDLP_COOKIES`) is migrated to the admin's file at boot.
+`YTDLP_COOKIES_DIR` (default `/data/cookies`, volume `./data/cookies`): **per-user** YouTube cookies `<uid>.txt` (chmod 600, Netscape format) written by the extension via `/api/cookies/update`. yt-dlp always uses the cookies of the job owner — no global file, no fallback on admin cookies: a user without cookies gets `403 {code: 'cookies_missing'}` on `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct`.
 
 ## Gotchas
 

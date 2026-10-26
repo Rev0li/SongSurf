@@ -3,13 +3,15 @@
 """
 SongSurf — music download server
 
-Auth model (Phase 2):
-  - Watcher injects X-Watcher-Token + X-User-Id + X-User-Role + X-User-Email
+Auth model (portal gate, see docs/CONNECTOR.md):
+  - Watcher injects X-Watcher-Token + X-User-Id (pseudo) + X-User-Role
+    + X-User-Portal-Id (portal UUID, the storage key)
   - SongSurf trusts these headers (authentication is done upstream)
   - WATCHER_SECRET set   → require token match, then read user from headers
   - WATCHER_SECRET unset + DEV_MODE=true → inject dev user (standalone testing)
 
-Storage: /data/music/Artist/Album/  (flat, no user-sub prefix)
+Storage: /data/music/<portal UUID>/Artist/Album/ (DEV_MODE: flat /data/music/Artist/Album/)
+Persistent state (queue, quotas, ZIP exports): SQLite in /data/state (state_store.py)
 
 Phase 3: see docs/CONNECTOR.md
 """
@@ -24,7 +26,6 @@ import hmac
 import signal
 import threading
 import time
-import queue
 import os
 import secrets
 import shutil
@@ -40,6 +41,7 @@ from waitress import serve
 from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
 from genre_lookup import lookup_genres
+from state_store import StateStore
 
 # En Docker, events_client.py est copié à côté de app.py ;
 # en dev local (make dev) il vit dans ../shared.
@@ -60,9 +62,10 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_MB * 1024 * 1024
 WATCHER_SECRET = os.getenv('WATCHER_SECRET', '')
 DEV_MODE       = os.getenv('DEV_MODE', 'false').lower() == 'true'
 
-DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))  # 0 = unlimited
+# Quota par utilisateur et par jour (l'admin est illimité). 0 = illimité pour tous.
+DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))
 
-_DEV_USER = {'sub': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
+_DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
 
 # ── Directories ───────────────────────────────────────────────────────────────
 
@@ -71,18 +74,23 @@ if Path(__file__).parent == Path('/app'):
     TEMP_DIR       = Path('/data/temp')
     LOG_DIR        = Path('/app/logs')
     _cookies_dflt  = Path('/data/cookies')
+    _state_dflt    = Path('/data/state')
 else:
     _base          = Path(__file__).parent.parent
     BASE_MUSIC_DIR = _base / 'music'
     TEMP_DIR       = _base / 'temp'
     LOG_DIR        = _base / 'logs'
     _cookies_dflt  = _base / 'data' / 'cookies'
+    _state_dflt    = _base / 'data' / 'state'
 
-# Cookies YouTube par utilisateur (<pseudo>.txt), hors bibliothèque : l'export ZIP
+# Cookies YouTube par utilisateur (<uid>.txt), hors bibliothèque : l'export ZIP
 # membre (qui supprime la bibliothèque) ne les emporte pas.
 COOKIES_DIR = Path(os.environ.get('YTDLP_COOKIES_DIR') or _cookies_dflt)
 
-for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR, COOKIES_DIR]:
+# État persistant (file, quotas, exports ZIP) — SQLite, survit aux redémarrages (SSF-03).
+STATE_DIR = Path(os.environ.get('SONGSURF_STATE_DIR') or _state_dflt)
+
+for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR, COOKIES_DIR, STATE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # Push d'événements d'activité vers rev0auth (no-op si AUTH_EVENTS_URL absent)
@@ -140,18 +148,17 @@ def _is_valid_youtube_url(url: str) -> bool:
 
 downloader = YouTubeDownloader(TEMP_DIR, BASE_MUSIC_DIR)
 
-# ── Download queue (jobs album-level) ────────────────────────────────────────────
-# Le worker draine des "jobs" séquentiellement : un album = un job, un titre seul =
-# un job d'une piste. Empiler plusieurs albums ne sature donc plus une file plate —
-# chaque job attend son tour. Le serveur est propriétaire de la file : elle continue
-# à se vider même si le navigateur quitte la page Téléchargement.
-MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente
-job_queue   = queue.Queue(maxsize=MAX_PENDING_JOBS)
-queue_lock  = threading.Lock()
+# ── Download queue (persistante, round-robin entre utilisateurs) ─────────────────
+# La file vit dans SQLite (state_store) : un redémarrage en plein batch reprend là
+# où il s'était arrêté. Un album = un job, un titre seul = un job d'une piste ; le
+# worker prend les titres un par un, chaque utilisateur à tour de rôle, pour que
+# deux membres en parallèle avancent tous les deux. Le serveur est propriétaire de
+# la file : elle continue à se vider même si le navigateur quitte la page.
+MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente, par utilisateur
+queue_lock  = threading.Lock()  # download_status + _last_*_by_user
+_queue_wakeup = threading.Event()
 
-_pending_songs = 0   # titres empilés mais pas encore démarrés (accès sous queue_lock)
-_pending_queue = []  # aperçu léger des titres en attente, dans l'ordre de passage :
-                     # [{'user_sub','artist','title','album'}, ...] (accès sous queue_lock)
+store = StateStore(STATE_DIR / 'songsurf.db')
 
 download_status = {
     'in_progress': False,
@@ -164,39 +171,43 @@ download_status = {
     'batch_percent': 0,
 }
 
-# Dernier succès / dernière erreur, rangés par user_sub : /api/status ne renvoie que
-# ceux de l'appelant (jamais le titre ou le chemin d'un autre membre). Sous queue_lock.
+# Dernier succès / dernière erreur, rangés par clé utilisateur : /api/status ne renvoie
+# que ceux de l'appelant (jamais le titre ou le chemin d'un autre membre). Sous queue_lock.
 _last_completed_by_user = {}
 _last_error_by_user     = {}
 
-# ── Daily download counter ─────────────────────────────────────────────────────
-_daily_lock  = threading.Lock()
-_daily_count = 0
-_daily_date  = None  # date object; reset on new calendar day
+QUEUE_FULL_MSG = 'File pleine, réessaie dans un instant.'
 
 
-def _daily_reset_if_needed():
-    """Must be called under _daily_lock. Resets counter on new day."""
-    global _daily_count, _daily_date
-    today = datetime.now().date()
-    if _daily_date != today:
-        _daily_count = 0
-        _daily_date  = today
+# ── Daily download quota (par utilisateur, admin illimité) ─────────────────────
+
+def _today() -> str:
+    return datetime.now().date().isoformat()
 
 
-def _daily_limit_reached() -> bool:
-    if DAILY_DOWNLOAD_LIMIT <= 0:
-        return False
-    with _daily_lock:
-        _daily_reset_if_needed()
-        return _daily_count >= DAILY_DOWNLOAD_LIMIT
+def _daily_limit_for(user: dict) -> int:
+    """Quota du jour de l'utilisateur ; 0 = illimité (admin, ou limite désactivée)."""
+    if user.get('role') == 'admin':
+        return 0
+    return max(0, DAILY_DOWNLOAD_LIMIT)
 
 
-def _daily_increment():
-    global _daily_count
-    with _daily_lock:
-        _daily_reset_if_needed()
-        _daily_count += 1
+def _daily_limit_reached(user: dict) -> bool:
+    limit = _daily_limit_for(user)
+    return limit > 0 and store.daily_count(_user_key(user), _today()) >= limit
+
+
+def _daily_limit_response(user: dict):
+    """429 si le quota du jour est atteint, sinon None."""
+    if not _daily_limit_reached(user):
+        return None
+    limit = _daily_limit_for(user)
+    return jsonify({'success': False, 'error': f'Limite journalière atteinte ({limit} titres/jour).',
+                    'code': 'daily_limit'}), 429
+
+
+def _queue_full(user: dict) -> bool:
+    return store.pending_jobs(_user_key(user)) >= MAX_PENDING_JOBS
 
 
 def _start_or_extend_batch(added_count: int):
@@ -211,75 +222,81 @@ def _start_or_extend_batch(added_count: int):
         download_status['batch_total'] += added_count
 
 
-def _enqueue_job(songs):
-    """Empile un job (liste de titres) dans la file serveur.
+def _job_owner(user: dict) -> dict:
+    """Champs propriétaire recopiés dans chaque titre de la file."""
+    return {
+        'user_key':    _user_key(user),
+        'user_pseudo': _user_pseudo(user),
+        'user_role':   user.get('role', 'member'),
+        'added_at':    datetime.now().isoformat(),
+    }
 
-    Un album entier = un seul job → plusieurs albums s'enchaînent sans saturer la
-    file. Lève queue.Full si trop de jobs sont déjà en attente (l'appelant → 429).
+
+def _enqueue_job(user: dict, songs):
+    """Empile un job (liste de titres) de `user` dans la file persistante.
+
+    L'appelant vérifie _queue_full() avant (→ 429).
     """
-    global _pending_songs
     if not songs:
         return 0
-    job_queue.put_nowait({'songs': list(songs), 'added_at': datetime.now().isoformat()})
-    with queue_lock:
-        _pending_songs += len(songs)
-        for s in songs:
-            meta = s.get('metadata') or {}
-            _pending_queue.append({
-                'user_sub': s.get('user_sub', ''),
-                'artist':   meta.get('artist', ''),
-                'title':    meta.get('title', ''),
-                'album':    meta.get('album', ''),
-            })
-    _start_or_extend_batch(len(songs))
-    return len(songs)
+    added = store.enqueue_job(_user_key(user), list(songs))
+    _start_or_extend_batch(added)
+    _queue_wakeup.set()
+    return added
 
 
 # ── Per-user storage ───────────────────────────────────────────────────────────
+# Clé de stockage = UUID du compte portail (X-User-Portal-Id), admin compris :
+# unique et stable par construction, jamais dérivée du pseudo (SSF-03). Le pseudo
+# ne sert qu'à l'affichage, aux logs et au fichier .owner des dossiers.
 
-user_zip_state = {}  # {sub: {'zip_path': str, 'count': int, 'size_mb': float}}
-user_zip_lock  = threading.Lock()
+_UID_RE = re.compile(r'^[A-Za-z0-9-]{8,64}$')
+
+OWNER_FILE = '.owner'
 
 
-ADMIN_PSEUDO = os.getenv('ADMIN_PSEUDO', 'rev0admin')
+def _user_key(user: dict) -> str:
+    """Clé de stockage de l'utilisateur (bibliothèque, cookies, file, quota, ZIP)."""
+    uid = (user or {}).get('uid') or ''
+    if not _UID_RE.match(uid):
+        raise ValueError(f"Identifiant de compte invalide: {uid!r}")
+    return uid
 
 
 def _user_pseudo(user: dict) -> str:
-    """Derive a filesystem-safe pseudo from a user dict.
-
-    Uses the part before '@' in the email, falls back to sub.
-    '_pseudo' key is accepted as a pre-computed override (used by queue worker).
-    Admin role always maps to ADMIN_PSEUDO so the folder is stable regardless of email.
-    """
-    if user.get('_pseudo'):
-        return user['_pseudo']
-    if user.get('role') == 'admin' and ADMIN_PSEUDO:
-        return ADMIN_PSEUDO
-    email = (user.get('email') or '').strip().lower()
-    if email and '@' in email:
-        raw = email.split('@')[0]
-    else:
-        raw = (user.get('sub') or 'user')
-    pseudo = re.sub(r'[^a-z0-9._-]', '_', raw)
-    return pseudo.strip('._-') or 'user'
+    """Pseudo d'affichage (exact, transmis par le portail)."""
+    return (user or {}).get('sub') or ''
 
 
 def _user_music_dir(user: dict) -> Path:
     """Return the music directory for a user.
 
     DEV_MODE  → BASE_MUSIC_DIR  (flat: Artist/Album/)
-    Production → BASE_MUSIC_DIR/<pseudo>/  (per-user: pseudo/Artist/Album/)
+    Production → BASE_MUSIC_DIR/<uid>/  (per-user: uid/Artist/Album/), with a
+                 .owner file holding the pseudo so the folder stays readable.
     """
     if DEV_MODE:
         BASE_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         return BASE_MUSIC_DIR
-    pseudo = _user_pseudo(user)
-    d = (BASE_MUSIC_DIR / pseudo).resolve()
-    if not d.is_relative_to(BASE_MUSIC_DIR.resolve()):
-        raise ValueError(f"Invalid pseudo — path escapes music dir: {pseudo!r}")
+    key = _user_key(user)
+    d = (BASE_MUSIC_DIR / key).resolve()
+    if not d.is_relative_to(BASE_MUSIC_DIR.resolve()) or d == BASE_MUSIC_DIR.resolve():
+        raise ValueError(f"Invalid user key — path escapes music dir: {key!r}")
     d.mkdir(parents=True, exist_ok=True)
+    _write_owner_file(d, _user_pseudo(user))
     return d
 
+
+def _write_owner_file(d: Path, pseudo: str) -> None:
+    """Écrit le pseudo dans <dossier>/.owner s'il manque ou a changé (jamais bloquant)."""
+    if not pseudo:
+        return
+    owner = d / OWNER_FILE
+    try:
+        if not owner.is_file() or owner.read_text(encoding='utf-8').strip() != pseudo:
+            owner.write_text(pseudo + '\n', encoding='utf-8')
+    except OSError as e:
+        logger.warning(f"⚠️ .owner non écrit dans {d.name}: {e}")
 
 
 def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
@@ -330,6 +347,7 @@ def _get_current_user() -> dict | None:
             return None
         return {
             'sub':   request.headers.get('X-User-Id', ''),
+            'uid':   request.headers.get('X-User-Portal-Id', '').strip(),
             'role':  request.headers.get('X-User-Role', 'member').lower(),
             'email': request.headers.get('X-User-Email', ''),
         }
@@ -338,14 +356,23 @@ def _get_current_user() -> dict | None:
     return None
 
 
+def _is_identified(user: dict | None) -> bool:
+    """Pseudo présent ET UUID du portail valide : sans UUID, pas de clé de stockage,
+    donc refus — jamais de repli sur le pseudo (SSF-03)."""
+    return bool(user and user.get('sub') and _UID_RE.match(user.get('uid') or ''))
+
+
+def _unauthenticated_response():
+    if request.is_json or 'application/json' in request.headers.get('Accept', ''):
+        return jsonify({'success': False, 'error': 'Non authentifié'}), 401
+    return 'Service unavailable', 503
+
+
 def auth_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        user = _get_current_user()
-        if not user or not user.get('sub'):
-            if request.is_json or 'application/json' in request.headers.get('Accept', ''):
-                return jsonify({'success': False, 'error': 'Non authentifié'}), 401
-            return 'Service unavailable', 503
+        if not _is_identified(_get_current_user()):
+            return _unauthenticated_response()
         return f(*args, **kwargs)
     return decorated
 
@@ -429,12 +456,24 @@ def ping():
 # ── Download status ────────────────────────────────────────────────────────────
 
 @app.route('/api/status')
-@auth_required
 def get_status():
+    current_user = _get_current_user()
+    if current_user is not None and WATCHER_SECRET and not current_user.get('sub'):
+        # Sonde du Watcher (jeton valide, sans identité) : seulement « occupé ou pas »,
+        # pour ne jamais arrêter SongSurf en plein batch (_songsurf_busy).
+        with queue_lock:
+            in_progress = bool(download_status['in_progress'])
+        return jsonify({'in_progress': in_progress, 'queue_size': store.pending_count()})
+    if not _is_identified(current_user):
+        return _unauthenticated_response()
+    my_key = _user_key(current_user)
+
+    queue_size = store.pending_count()
+    my_pending = store.pending_for(my_key)
+    songs_before = store.songs_before(my_key) if my_pending else None
     with queue_lock:
         status = download_status.copy()
-        status['queue_size'] = _pending_songs
-        pending_snapshot = list(_pending_queue)
+        status['queue_size'] = queue_size
         current_pct = 0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
@@ -456,25 +495,34 @@ def get_status():
             status['batch_percent'] = round(max(0.0, min(100.0, composed)), 1)
         else:
             status['batch_percent'] = float(current_pct)
-    with _daily_lock:
-        _daily_reset_if_needed()
-        status['daily_count'] = _daily_count
-    status['daily_limit'] = DAILY_DOWNLOAD_LIMIT
-    current_user = _get_current_user()
-    my_sub = (current_user or {}).get('sub')
+    status['daily_count'] = store.daily_count(my_key, _today())
+    status['daily_limit'] = _daily_limit_for(current_user)
     with queue_lock:
-        status['last_completed'] = _last_completed_by_user.get(my_sub)
-        status['last_error']     = _last_error_by_user.get(my_sub)
+        status['last_completed'] = _last_completed_by_user.get(my_key)
+        status['last_error']     = _last_error_by_user.get(my_key)
     current_dl = status.get('current_download') or {}
-    status['is_mine'] = not current_dl or current_dl.get('user_sub') == my_sub
-    # Titre en cours d'un autre membre : on dit seulement que le worker est occupé.
+    status['is_mine'] = not current_dl or current_dl.get('user_key') == my_key
+    # Qui occupe le worker : l'admin voit le pseudo et le titre en cours, un membre
+    # seulement « un autre membre » + combien de titres passent avant le sien.
+    worker = {'songs_before_mine': None, 'owner': None, 'current': None}
+    if current_dl and not status['is_mine']:
+        if songs_before is not None:
+            worker['songs_before_mine'] = songs_before + 1  # + le titre en cours
+        if current_user.get('role') == 'admin':
+            meta = current_dl.get('metadata') or {}
+            worker['owner']   = current_dl.get('user_pseudo') or None
+            worker['current'] = {'artist': meta.get('artist', ''), 'title': meta.get('title', '')}
+    elif songs_before:
+        worker['songs_before_mine'] = songs_before
+    status['worker'] = worker
+    # Titre en cours d'un autre membre : jamais son détail dans current_download.
     if not status['is_mine']:
         status['current_download'] = None
     # Détail "à venir" limité aux titres de l'utilisateur courant — jamais la file
     # d'un autre membre (même logique de confidentialité que is_mine ci-dessus).
     status['pending'] = [
-        {'artist': p['artist'], 'title': p['title'], 'album': p['album']}
-        for p in pending_snapshot if p['user_sub'] == my_sub
+        {'artist': m.get('artist', ''), 'title': m.get('title', ''), 'album': m.get('album', '')}
+        for m in (p.get('metadata') or {} for p in my_pending)
     ][:200]
     # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
     try:
@@ -988,13 +1036,12 @@ def start_download():
             return jsonify({'success': False, 'error': 'URL invalide.'}), 400
         if (resp := _cookies_missing_response(user)) is not None:
             return resp
-        # Le serveur draine la file séquentiellement, indépendamment de la page :
-        # le titre est empilé comme un job d'une piste. 429 seulement si trop de
-        # jobs sont déjà en attente.
-        if job_queue.full():
-            return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
-        if _daily_limit_reached():
-            return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
+        # Le serveur draine la file, indépendamment de la page : le titre est empilé
+        # comme un job d'une piste. 429 si l'utilisateur a trop de jobs en attente.
+        if _queue_full(user):
+            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
+        if (resp := _daily_limit_response(user)) is not None:
+            return resp
 
         metadata = {
             'artist':       data.get('artist', 'Unknown Artist'),
@@ -1005,16 +1052,9 @@ def start_download():
             'year':         data.get('year',   ''),
             'track_number': data.get('track_number', ''),
         }
-        _enqueue_job([{
-            'url':         url,
-            'metadata':    metadata,
-            'user_sub':    user['sub'],
-            'user_role':   user.get('role', 'member'),
-            'user_pseudo': _user_pseudo(user),
-            'added_at':    datetime.now().isoformat(),
-        }])
+        _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
-        return jsonify({'success': True, 'queue_size': _pending_songs})
+        return jsonify({'success': True, 'queue_size': store.pending_count()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1031,13 +1071,13 @@ def download_playlist():
             return jsonify({'success': False, 'error': 'Données manquantes'}), 400
         if (resp := _cookies_missing_response(user)) is not None:
             return resp
-        # L'album entier est empilé comme un seul job : le worker le draine d'une
-        # traite avant de passer au prochain album. Plusieurs albums ne se marchent
-        # donc plus dessus, et l'enchaînement continue même si on quitte la page.
-        if job_queue.full():
-            return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
-        if _daily_limit_reached():
-            return jsonify({'success': False, 'error': f'Limite journalière atteinte ({DAILY_DOWNLOAD_LIMIT} titres/jour).'}), 429
+        # L'album entier est empilé comme un seul job, ses titres dans l'ordre ; le
+        # worker alterne avec les titres des autres membres (round-robin) et continue
+        # même si on quitte la page.
+        if _queue_full(user):
+            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
+        if (resp := _daily_limit_response(user)) is not None:
+            return resp
 
         items = [{
             'url':         song['url'],
@@ -1051,33 +1091,92 @@ def download_playlist():
                 'track_number': song.get('track_number', ''),
                 'track_total':  len(songs),
             },
-            'user_sub':    user['sub'],
-            'user_role':   user.get('role', 'member'),
-            'user_pseudo': _user_pseudo(user),
-            'added_at':    datetime.now().isoformat(),
+            **_job_owner(user),
         } for song in songs]
 
-        added = _enqueue_job(items)
-        return jsonify({'success': True, 'added': added, 'total': len(songs), 'queue_size': _pending_songs})
+        added = _enqueue_job(user, items)
+        return jsonify({'success': True, 'added': added, 'total': len(songs),
+                        'queue_size': store.pending_count()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ── ZIP ────────────────────────────────────────────────────────────────────────
+# Export en arrière-plan (SSF-03) : /api/prepare-zip lance la construction et répond
+# tout de suite, le frontend suit l'avancement via /api/zip-status puis télécharge
+# /api/download-zip. L'état vit dans SQLite : un ZIP prêt survit à un redémarrage,
+# un ZIP interrompu est signalé (state_store._recover).
 
 ZIP_DISABLED_MSG = "Export ZIP désactivé pour cette bibliothèque."
+_zip_start_lock  = threading.Lock()   # une seule construction à la fois par utilisateur
 
 
 def _zip_forbidden(user: dict, music_dir: Path) -> bool:
     """Export ZIP refusé pour la bibliothèque admin, qui est permanente (décision SSF-10).
 
     Vérifié sur le rôle ET sur le dossier : l'export vide la bibliothèque après le
-    téléchargement, il ne doit jamais viser le dossier admin ni la racine musique.
+    téléchargement, il ne doit jamais viser la racine musique ni un point de montage
+    (la bibliothèque admin est la musique Jellyfin montée dans /data/music/<uid>).
     """
     if user.get('role') == 'admin':
         return True
-    protected = {BASE_MUSIC_DIR.resolve(), (BASE_MUSIC_DIR / ADMIN_PSEUDO).resolve()}
-    return music_dir.resolve() in protected
+    target = music_dir.resolve()
+    return target == BASE_MUSIC_DIR.resolve() or _is_mount_point(target)
+
+
+def _is_mount_point(path: Path) -> bool:
+    """os.path.ismount ne voit pas un bind mount venant du même disque (cas du NAS) :
+    on consulte aussi la table des montages du conteneur."""
+    if os.path.ismount(path):
+        return True
+    try:
+        with open('/proc/self/mountinfo', encoding='utf-8') as f:
+            points = {line.split()[4].encode().decode('unicode_escape') for line in f}
+    except OSError:
+        return False
+    return str(path) in points
+
+
+def _zip_path(user_key: str) -> Path:
+    return TEMP_DIR / f"songsurf_{user_key}.zip"
+
+
+def _zip_public(state: dict | None) -> dict:
+    """État ZIP renvoyé au frontend (jamais le chemin sur le serveur)."""
+    if not state:
+        return {'status': 'idle'}
+    out = {
+        'status':  state['status'],
+        'done':    state['done'],
+        'total':   state['total'],
+        'count':   state['total'],
+        'size_mb': state['size_mb'],
+    }
+    if state['status'] == 'error':
+        out['error'] = state['error']
+    if state['status'] == 'ready':
+        out['download_url'] = '/api/download-zip'
+    return out
+
+
+def _build_zip(user_key: str, music_dir: Path, files: list, zip_path: Path) -> None:
+    """Thread : écrit le ZIP dans un .part puis le renomme, en publiant l'avancement."""
+    part = zip_path.with_name(zip_path.name + '.part')
+    try:
+        with zipfile.ZipFile(part, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for i, f in enumerate(files, 1):
+                if f.is_file():  # déplacé/supprimé pendant la construction → ignoré
+                    zf.write(f, f.relative_to(music_dir))
+                if i % 5 == 0 or i == len(files):
+                    store.zip_set(user_key, status='building', done=i)
+        part.replace(zip_path)
+        size_mb = round(zip_path.stat().st_size / (1024 * 1024), 1)
+        store.zip_set(user_key, status='ready', done=len(files), size_mb=size_mb)
+        logger.info(f"📦 ZIP prêt: {len(files)} fichiers, {size_mb:.1f} MB [{user_key[:8]}]")
+    except Exception as e:
+        part.unlink(missing_ok=True)
+        store.zip_set(user_key, status='error', error=str(e))
+        logger.error(f"❌ Construction ZIP [{user_key[:8]}]: {e}")
 
 
 @app.route('/api/prepare-zip', methods=['POST'])
@@ -1085,62 +1184,61 @@ def _zip_forbidden(user: dict, music_dir: Path) -> bool:
 def prepare_zip():
     try:
         user      = _get_current_user()
+        key       = _user_key(user)
         music_dir = _user_music_dir(user)
         if _zip_forbidden(user, music_dir):
             return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
-        files = sorted([p for p in music_dir.rglob('*.mp3') if p.is_file()],
-                       key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            return jsonify({'success': False, 'error': 'Aucune musique disponible'}), 404
-
-        zip_path = TEMP_DIR / f"songsurf_{user['sub'][:16]}.zip"
-        if zip_path.exists():
-            zip_path.unlink()
-
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for f in files:
-                zf.write(f, f.relative_to(music_dir))
-
-        size_mb = zip_path.stat().st_size / (1024 * 1024)
-        with user_zip_lock:
-            user_zip_state[user['sub']] = {
-                'zip_path': str(zip_path),
-                'count':    len(files),
-                'size_mb':  round(size_mb, 1),
-            }
-
-        logger.info(f"📦 ZIP prêt: {len(files)} fichiers, {size_mb:.1f} MB [{user['sub'][:8]}]")
-        return jsonify({
-            'success':      True,
-            'count':        len(files),
-            'size_mb':      round(size_mb, 1),
-            'download_url': '/api/download-zip',
-        })
+        with _zip_start_lock:
+            current = store.zip_get(key)
+            if current and current['status'] == 'building':
+                return jsonify({'success': True, **_zip_public(current)}), 202
+            files = sorted([p for p in music_dir.rglob('*.mp3') if p.is_file()],
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            if not files:
+                return jsonify({'success': False, 'error': 'Aucune musique disponible'}), 404
+            zip_path = _zip_path(key)
+            zip_path.unlink(missing_ok=True)
+            store.zip_set(key, status='building', zip_path=str(zip_path),
+                          done=0, total=len(files), size_mb=0, error='')
+        threading.Thread(target=_build_zip, args=(key, music_dir, files, zip_path),
+                         daemon=True).start()
+        return jsonify({'success': True, **_zip_public(store.zip_get(key))}), 202
     except Exception as e:
         logger.error(f"❌ /api/prepare-zip: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/zip-status')
+@auth_required
+def zip_status():
+    """Avancement de l'export ZIP de l'appelant : idle | building | ready | error."""
+    key   = _user_key(_get_current_user())
+    state = store.zip_get(key)
+    if state and state['status'] == 'ready' and not Path(state['zip_path']).is_file():
+        store.zip_delete(key)   # fichier disparu (TEMP_DIR nettoyé) → plus rien à récupérer
+        state = None
+    return jsonify({'success': True, **_zip_public(state)})
 
 
 @app.route('/api/download-zip')
 @auth_required
 def download_zip():
     user      = _get_current_user()
+    key       = _user_key(user)
     music_dir = _user_music_dir(user)
     if _zip_forbidden(user, music_dir):
         return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
-    with user_zip_lock:
-        state = user_zip_state.get(user['sub'])
-    if not state:
+    state = store.zip_get(key)
+    if not state or state['status'] != 'ready':
         return jsonify({'success': False, 'error': 'ZIP non prêt, utilisez /api/prepare-zip'}), 404
 
     zip_path = Path(state['zip_path'])
     if not zip_path.exists():
         return jsonify({'success': False, 'error': 'ZIP introuvable'}), 404
 
-    _sub      = user['sub']
     _pseudo   = _user_pseudo(user)
     _role     = user.get('role', '')
-    _zip_meta = {'count': state.get('count', 0), 'size_mb': state.get('size_mb', 0)}
+    _zip_meta = {'count': state['total'], 'size_mb': state['size_mb']}
     file_size = zip_path.stat().st_size
 
     def _stream_and_cleanup():
@@ -1155,14 +1253,13 @@ def download_zip():
             # Appelé par le WSGI quand le stream est terminé (ou connexion coupée)
             try:
                 zip_path.unlink(missing_ok=True)
-                with user_zip_lock:
-                    user_zip_state.pop(_sub, None)
+                store.zip_delete(key)
                 # Bibliothèque membre = temporaire, supprimée après export. Jamais le
                 # dossier admin ni la racine : refusés en amont, revérifiés ici (SSF-10).
                 purged = not _zip_forbidden(user, music_dir) and music_dir.exists()
                 if purged:
                     shutil.rmtree(music_dir, ignore_errors=True)
-                    logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{_sub[:8]}]")
+                    logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{key[:8]}]")
                 events_client.emit(
                     'zip_export',
                     pseudo=_pseudo,
@@ -1360,19 +1457,16 @@ def admin_genre_backfill_status():
 
 # ── Extension Chrome — cookies sync (par utilisateur) ──────────────────────────
 
-# Ancien fichier global (avant SSF-01) : migré vers les cookies de l'admin au boot.
-_LEGACY_COOKIES_FILE = Path(os.environ.get('YTDLP_COOKIES', '/data/cookies.txt'))
-
 COOKIES_MISSING_MSG = ("Cookies YouTube manquants pour ton compte : connecte-toi à YouTube, "
                        "puis clique « Sync cookies YouTube » dans l'extension SongSurf Clip.")
 
 
 def _user_cookies_file(user: dict | None) -> Path:
-    """Fichier cookies Netscape de l'utilisateur : COOKIES_DIR/<pseudo>.txt."""
-    pseudo = _user_pseudo(user or {})
-    f = (COOKIES_DIR / f'{pseudo}.txt').resolve()
+    """Fichier cookies Netscape de l'utilisateur : COOKIES_DIR/<uid>.txt."""
+    key = _user_key(user or {})
+    f = (COOKIES_DIR / f'{key}.txt').resolve()
     if not f.is_relative_to(COOKIES_DIR.resolve()):
-        raise ValueError(f"Invalid pseudo — path escapes cookies dir: {pseudo!r}")
+        raise ValueError(f"Invalid user key — path escapes cookies dir: {key!r}")
     return f
 
 
@@ -1399,19 +1493,6 @@ def _is_netscape_cookies(content: str) -> bool:
             return False
         entries += 1
     return entries > 0
-
-
-def _migrate_legacy_cookies() -> None:
-    """Déplace l'ancien /data/cookies.txt global vers les cookies de l'admin (une fois)."""
-    try:
-        target = _user_cookies_file({'role': 'admin'})
-        if _LEGACY_COOKIES_FILE.is_file() and not target.exists():
-            target.write_bytes(_LEGACY_COOKIES_FILE.read_bytes())
-            target.chmod(0o600)
-            _LEGACY_COOKIES_FILE.unlink()
-            logger.info(f"🍪 Cookies globaux migrés vers {target.name}")
-    except Exception as e:
-        logger.warning(f"⚠️ Migration cookies globaux échouée: {e}")
 
 
 @app.route('/api/cookies/update', methods=['POST'])
@@ -1543,18 +1624,11 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'year':         meta.get('year', ''),
                     'track_number': meta.get('track_number', ''),
                 }
-            try:
-                _enqueue_job([{
-                    'url':         url,
-                    'metadata':    metadata,
-                    'user_sub':    user['sub'],
-                    'user_role':   user.get('role', 'member'),
-                    'user_pseudo': _user_pseudo(user),
-                    'added_at':    datetime.now().isoformat(),
-                }])
-                logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
-            except queue.Full:
+            if _queue_full(user):
                 logger.warning("⚠️ queue-direct (song): file pleine")
+                return
+            _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
+            logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
         else:
             result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
             if not result.get('success'):
@@ -1575,16 +1649,13 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'track_number': song.get('track_number', ''),
                     'track_total':  len(songs),
                 },
-                'user_sub':    user['sub'],
-                'user_role':   user.get('role', 'member'),
-                'user_pseudo': _user_pseudo(user),
-                'added_at':    datetime.now().isoformat(),
+                **_job_owner(user),
             } for song in songs]
-            try:
-                added = _enqueue_job(items)
-                logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
-            except queue.Full:
+            if _queue_full(user):
                 logger.warning("⚠️ queue-direct (album): file pleine")
+                return
+            added = _enqueue_job(user, items)
+            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
     except Exception as e:
         logger.error(f"❌ queue-direct async: {e}")
 
@@ -1608,8 +1679,10 @@ def queue_direct():
             return jsonify({'success': False, 'error': 'URL invalide'}), 400
         if (resp := _cookies_missing_response(user)) is not None:
             return resp
-        if job_queue.full():
-            return jsonify({'success': False, 'error': 'File pleine, réessaie dans un instant.'}), 429
+        if _queue_full(user):
+            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
+        if (resp := _daily_limit_response(user)) is not None:
+            return resp
 
         url_mode = _detect_url_mode(url)
         override = {
@@ -1996,7 +2069,7 @@ def _batch_progress_after_song():
     """Sous queue_lock : incrémente batch_done et clôture le batch si tout est fini."""
     download_status['batch_done'] = int(download_status.get('batch_done', 0)) + 1
     if (download_status['batch_done'] >= download_status.get('batch_total', 0)
-            and _pending_songs == 0 and job_queue.empty()):
+            and store.pending_count() == 0):
         download_status['batch_active'] = False
 
 
@@ -2006,33 +2079,32 @@ def _process_song(item):
     Toujours non bloquant pour la suite de la file : toute erreur est capturée et
     batch_done est incrémenté dans tous les cas, pour que le batch puisse se clôturer.
     """
-    global _pending_songs
     url         = item['url']
     metadata    = item['metadata']
-    user_sub    = item.get('user_sub', 'dev-user-local')
+    user_key    = item['user_key']
     user_pseudo = item.get('user_pseudo', '')
-    cookies_file = _user_cookies_file({'sub': user_sub, '_pseudo': user_pseudo,
-                                       'role': item.get('user_role', 'member')})
+    owner       = {'uid': user_key, 'sub': user_pseudo, 'role': item.get('user_role', 'member')}
+    cookies_file = _user_cookies_file(owner)
 
     with queue_lock:
-        if _pending_songs > 0:
-            _pending_songs -= 1
-        if _pending_queue:
-            _pending_queue.pop(0)
+        # Progression remise à zéro AVANT de passer en cours : sinon /api/status voit
+        # encore le « completed / 100 % » du titre précédent et la barre fait un bond
+        # d'un titre entier en avant, puis recule quand le téléchargement démarre.
+        downloader.progress.reset()
         download_status.update({
             'in_progress':      True,
             'current_download': {
                 'url': url, 'metadata': metadata,
-                'user_sub': user_sub,
+                'user_key': user_key, 'user_pseudo': user_pseudo,
                 'started_at': datetime.now().isoformat()
             },
         })
-        _last_error_by_user.pop(user_sub, None)
+        _last_error_by_user.pop(user_key, None)
 
-    logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_sub[:8]}]")
+    logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_pseudo or user_key[:8]}]")
 
     try:
-        music_dir = _user_music_dir({'sub': user_sub, '_pseudo': user_pseudo})
+        music_dir = _user_music_dir(owner)
         org       = MusicOrganizer(music_dir)
 
         # Court-circuit doublon : si le titre est déjà en bibliothèque,
@@ -2068,7 +2140,7 @@ def _process_song(item):
         with queue_lock:
             download_status['in_progress']    = False
             download_status['current_download'] = None
-            _last_completed_by_user[user_sub] = {
+            _last_completed_by_user[user_key] = {
                 'success':   True,
                 'skipped':   _skipped,
                 'file_path': org_result.get('final_path', ''),
@@ -2082,7 +2154,7 @@ def _process_song(item):
             logger.info(f"✅ Doublon ignoré : {metadata.get('artist')} - {metadata.get('title')}")
         else:
             logger.info(f"✅ {org_result['final_path']}")
-            _label = user_pseudo or user_sub[:8]
+            _label = user_pseudo or user_key[:8]
             activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
             dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
             events_client.emit(
@@ -2092,7 +2164,7 @@ def _process_song(item):
                 album=metadata.get('album', ''),
                 title=metadata.get('title', ''),
             )
-            _daily_increment()
+            store.daily_increment(user_key, _today())
 
     except Exception as e:
         err_msg  = str(e)
@@ -2103,14 +2175,14 @@ def _process_song(item):
         with queue_lock:
             download_status['in_progress']    = False
             download_status['current_download'] = None
-            _last_error_by_user[user_sub] = {
+            _last_error_by_user[user_key] = {
                 'error': friendly, 'metadata': metadata,
                 'timestamp': datetime.now().isoformat(),
             }
             _batch_progress_after_song()
         events_client.emit(
             'download_failed',
-            pseudo=user_pseudo or user_sub[:8],
+            pseudo=user_pseudo or user_key[:8],
             artist=(metadata or {}).get('artist', ''),
             album=(metadata or {}).get('album', ''),
             title=(metadata or {}).get('title', ''),
@@ -2118,21 +2190,40 @@ def _process_song(item):
         )
 
 
+def _worker_step() -> bool:
+    """Traite le prochain titre de la file (round-robin). False si la file est vide.
+
+    Le titre ne quitte la file qu'une fois traité : un arrêt pendant son
+    téléchargement le laisse « en cours », il repasse en attente au redémarrage.
+    """
+    claimed = store.claim_next()
+    if claimed is None:
+        return False
+    item_id, item = claimed
+    try:
+        _process_song(item)
+    except Exception as e:
+        logger.error(f"❌ Worker error (titre): {e}")
+    finally:
+        store.finish(item_id)
+    return True
+
+
+def _resume_pending_batch() -> None:
+    """Au boot : une file reprise depuis SQLite rouvre un batch pour la barre de progression."""
+    pending = store.pending_count()
+    if pending:
+        _start_or_extend_batch(pending)
+        logger.info(f"♻️ File reprise après redémarrage : {pending} titre(s) en attente")
+
+
 def queue_worker():
     logger.info("🔄 Queue worker démarré")
     while True:
         try:
-            job = job_queue.get()
-            if job is None:
-                break
-            # Un job = un album (ou un titre seul) : on draine ses pistes en séquence
-            # avant de prendre le job suivant.
-            for item in job.get('songs', []):
-                try:
-                    _process_song(item)
-                except Exception as e:
-                    logger.error(f"❌ Worker error (titre): {e}")
-            job_queue.task_done()
+            if not _worker_step():
+                _queue_wakeup.wait(timeout=1.0)
+                _queue_wakeup.clear()
         except Exception as e:
             logger.error(f"❌ Worker error: {e}")
             time.sleep(1)
@@ -2188,9 +2279,11 @@ if __name__ == '__main__':
 
     logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={BASE_MUSIC_DIR}")
     events_client.start_replay_thread()
-    _migrate_legacy_cookies()
-    threading.Thread(target=queue_worker, daemon=True).start()
+    # Nettoyage AVANT le worker : un titre repris de la file ne doit pas voir ses
+    # fichiers temporaires supprimés en plein téléchargement.
     _cleanup_temp_leftovers()
+    _resume_pending_batch()
+    threading.Thread(target=queue_worker, daemon=True).start()
     signal.signal(signal.SIGTERM, _on_sigterm)
     signal.signal(signal.SIGINT, _on_sigterm)
     # waitress : serveur de prod multi-thread, un seul process (l'état est global au process)

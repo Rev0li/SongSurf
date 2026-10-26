@@ -86,7 +86,8 @@ services:
     volumes:
       - ./data/music:/data/music
       - ./data/temp:/data/temp
-      - ./data/cookies:/data/cookies   # cookies YouTube par utilisateur (<pseudo>.txt)
+      - ./data/cookies:/data/cookies   # cookies YouTube par utilisateur (<uid>.txt)
+      - ./data/state:/data/state       # SQLite : file, quotas, exports ZIP (SSF-03)
       - ./logs:/app/logs
 
     healthcheck:

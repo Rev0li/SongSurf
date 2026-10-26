@@ -15,7 +15,7 @@ graph TD
     SS --> YD[yt-dlp]
     YD --> FF[FFmpeg]
     FF --> ORG[Organizer]
-    ORG --> MUSIC[/data/music/&lt;pseudo&gt;/<br/>Artist/Album/Title.mp3]
+    ORG --> MUSIC[/data/music/&lt;uid&gt;/<br/>Artist/Album/Title.mp3]
 ```
 
 ---
@@ -36,12 +36,13 @@ Always running (~15 MB RAM). Responsibilities:
 
 Started on demand. Responsibilities:
 
-- **Auth guard** — `WATCHER_SECRET` set → require matching `X-Watcher-Token` header (constant-time compare), then trust the `X-User-*` headers; `DEV_MODE` → injected dev user; otherwise locked.
-- **Per-user storage** — `/data/music/<pseudo>/` where `pseudo` is derived from the email local part; admin role always maps to `ADMIN_PSEUDO`. `DEV_MODE` uses a flat `/data/music/`.
-- **Download orchestration** — single `queue.Queue` (max 50), one worker thread, optional daily quota (`DAILY_DOWNLOAD_LIMIT`), batch progress for albums.
-- **ZIP export** — members can export and download their library as ZIP; the member library is deleted after the download completes (temporary-library model). The admin library is permanent: never exported nor deleted (SSF-10 — no ZIP button for the admin, the API answers 403 `zip_disabled`).
+- **Auth guard** — `WATCHER_SECRET` set → require matching `X-Watcher-Token` header (constant-time compare), then trust the `X-User-*` headers; a request without a valid portal UUID (`X-User-Portal-Id`) is refused. `DEV_MODE` → injected dev user; otherwise locked. A token-only request (Watcher busy probe) gets a minimal `/api/status`.
+- **Per-user storage** — keyed by the **portal UUID** (SSF-03), admin included: `/data/music/<uid>/` holds a `.owner` file with the pseudo for readability; cookies `/data/cookies/<uid>.txt`. On the NAS the admin library is the Jellyfin music folder mounted on `/data/music/<ADMIN_UID>`. `DEV_MODE` uses a flat `/data/music/`.
+- **Persistent state** (`server/state_store.py`, SQLite `/data/state/songsurf.db`) — download queue, round-robin pointer, daily counters, ZIP export state. Survives restarts: a song interrupted mid-download goes back to pending, a ZIP being built is reported as interrupted.
+- **Download orchestration** — one worker thread takes songs one at a time, **round-robin between users** (each user's songs keep their order); max `MAX_PENDING_JOBS` (100) jobs per user; daily quota `DAILY_DOWNLOAD_LIMIT` per member, admin unlimited; batch progress for albums.
+- **ZIP export** — built in a background thread (`/api/prepare-zip` → poll `/api/zip-status` → `/api/download-zip`); the member library is deleted after the download completes (temporary-library model). The admin library is permanent: never exported nor deleted (SSF-10 — no ZIP button for the admin, the API answers 403 `zip_disabled`; also refused on the music root and on any mount point).
 - **Metadata editor API** — read/write any ID3 frame of a library file, upload covers.
-- **Extension endpoints** — `/api/queue-direct` (held in a pending list consumed by the frontend), `/api/preview`, `/api/cookies/update`.
+- **Extension endpoints** — `/api/queue-direct` (extracts in a daemon thread then enqueues server-side), `/api/preview`, `/api/cookies/update`.
 
 ### Downloader (`server/downloader.py`)
 
@@ -51,7 +52,7 @@ Wraps yt-dlp:
 - `extract_playlist_metadata(url)` — album/playlist via `extract_flat`: playlist title/artist/year/thumbnail + per-song `{title, artist, artists, url, id, duration, track_number}` (track number = `playlist_index` or position).
 - `download(url, metadata)` — bestaudio → MP3 (FFmpeg, best VBR quality), staged in `/data/temp`, cached by filename (reuses an existing temp file).
 - Artist normalization: yt-dlp `artists` list preferred; string fallback split on `&`, `,`, `et`, `and`, `/`; ` - Topic` suffix stripped. The primary artist (first) names the folder.
-- Cookies: per user, `/data/cookies/<pseudo>.txt` (synced by the extension). Extraction and download use the job owner's file; without it the request is refused (`cookies_missing`).
+- Cookies: per user, `/data/cookies/<uid>.txt` (synced by the extension). Extraction and download use the job owner's file; without it the request is refused (`cookies_missing`).
 
 ### Organizer (`server/organizer.py`)
 
@@ -89,12 +90,12 @@ sequenceDiagram
     S-->>B: metadata (songs incl. artists, track_number)
 
     B->>W: POST /api/download or /api/download-playlist
-    S->>Q: enqueue {url, metadata, user}
+    S->>Q: enqueue {url, metadata, owner} (SQLite)
     loop poll every 2s
         B->>S: GET /api/status
         S-->>B: percent / phase / batch progress
     end
-    Q->>Q: yt-dlp → FFmpeg → Organizer → /data/music/<pseudo>/…
+    Q->>Q: yt-dlp → FFmpeg → Organizer → /data/music/<uid>/…
 ```
 
 ---
@@ -104,11 +105,12 @@ sequenceDiagram
 | Thread | Where | Purpose |
 |---|---|---|
 | Main Flask | SongSurf | HTTP handling, validation, enqueue (album = one job) |
-| Download worker | SongSurf | Pulls a job, processes its songs sequentially, then the next job; updates `download_status` under `queue_lock` |
+| Download worker | SongSurf | Claims the next song round-robin from SQLite (`store.claim_next`), processes it, removes it from the queue only once done; updates `download_status` under `queue_lock` |
+| ZIP builder | SongSurf | One per export: writes `<zip>.part`, publishes progress, renames when done |
 | queue-direct daemon | SongSurf | Per extension request: extracts metadata then enqueues server-side (fire-and-forget) |
 | Inactivity watcher | Watcher | Idle tracking → warn → stop container |
 
-Shared state (`download_status`, `_pending_songs`, daily counter) is lock-protected. Both services are served by waitress (one process, several threads) and exit cleanly on SIGTERM (tini as PID 1 via `init: true`).
+In-memory state (`download_status`, `_last_*_by_user`) is guarded by `queue_lock`; persistent state (queue, quotas, ZIP) lives in `StateStore`, one SQLite connection behind its own lock (lock order: `queue_lock` → store, never the reverse). Both services are served by waitress (one process, several threads) and exit cleanly on SIGTERM (tini as PID 1 via `init: true`).
 
 ---
 

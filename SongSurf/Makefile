@@ -41,6 +41,7 @@ init-dirs:                        ## Create host data/logs directories
 	@mkdir -p data/music data/music_guest data/temp logs
 	@chmod 777 data/music data/music_guest data/temp logs
 	@mkdir -p data/cookies && chmod 700 data/cookies   # cookies YouTube par utilisateur (SSF-01)
+	@mkdir -p data/state && chmod 700 data/state       # SQLite : file, quotas, ZIP (SSF-03)
 	@echo "[ok] Data directories ready."
 
 # ── Frontend (local, no Docker) ───────────────────────────────────────────────
@@ -156,7 +157,7 @@ deploy-nas:                       ## rsync + restart watcher/songsurf sur le NAS
 	  --exclude='.secrets' \
 	  ./ $(NAS_USER)@$(NAS_HOST):$(NAS_DIR)/
 	$(NAS_SSH) $(NAS_USER)@$(NAS_HOST) \
-	  "cd $(NAS_DIR) && mkdir -p data/cookies && chmod 700 data/cookies && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
+	  "cd $(NAS_DIR) && mkdir -p data/cookies data/state && chmod 700 data/cookies data/state && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
 
 .PHONY: deploy-nas-dry
 deploy-nas-dry:                   ## dry-run rsync (aperçu sans envoyer)

@@ -39,6 +39,10 @@ export const api = {
 	prepareZip() {
 		return request('/api/prepare-zip', { method: 'POST' });
 	},
+	// { status: 'idle' | 'building' | 'ready' | 'error', done, total, size_mb, download_url?, error? }
+	zipStatus() {
+		return request('/api/zip-status');
+	},
 	moveSong(source, targetFolder) {
 		return request('/api/library/move', {
 			method: 'POST',

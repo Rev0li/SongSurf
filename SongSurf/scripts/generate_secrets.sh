@@ -155,7 +155,7 @@ title "3/6 · Limites"
 dim "Laisse vide pour utiliser les valeurs par défaut."
 echo ""
 
-DAILY_DOWNLOAD_LIMIT=$(prompt_optional "Limite téléchargements admin / jour (0 = illimité)" "50")
+DAILY_DOWNLOAD_LIMIT=$(prompt_optional "Limite téléchargements par membre / jour, admin illimité (0 = illimité)" "50")
 ok "DAILY_DOWNLOAD_LIMIT=$DAILY_DOWNLOAD_LIMIT"
 
 MAX_DURATION_SECONDS=$(prompt_optional "Durée max d'une vidéo en secondes (0 = illimité)" "9000")
@@ -190,6 +190,7 @@ fi
 ok "DEV_MODE=$DEV_MODE"
 
 REVAUTH_HOME_URL=$(prompt_optional "REVAUTH_HOME_URL (espace membre du portail, retour après logout)" "")
+ADMIN_UID=$(prompt_optional "ADMIN_UID (UUID du compte admin du portail, requis sur le NAS)" "")
 
 echo ""
 dim "Événements d'activité (optionnel) : le NAS pousse téléchargements/conteneur"
@@ -269,7 +270,7 @@ TARGET_URL=${TARGET_URL}
 TARGET_URL_NAS=${TARGET_URL_NAS}
 
 # ── Limites téléchargement ────────────────────────────────────────────────
-# 0 = illimité
+# Titres par membre et par jour (admin illimité). 0 = illimité
 DAILY_DOWNLOAD_LIMIT=${DAILY_DOWNLOAD_LIMIT}
 MAX_DURATION_SECONDS=${MAX_DURATION_SECONDS}
 
@@ -284,6 +285,8 @@ DEV_MODE=${DEV_MODE}
 # ── Portail rev0auth ──────────────────────────────────────────────────────
 # Espace membre du portail : retour après "← Mon espace" (logout)
 REVAUTH_HOME_URL=${REVAUTH_HOME_URL}
+# UUID du compte admin du portail — la musique Jellyfin est montée sur /data/music/<ADMIN_UID>
+ADMIN_UID=${ADMIN_UID}
 
 # ── Événements d'activité poussés vers rev0auth ───────────────────────────
 # Vide = tracking désactivé. Secret associé : SONGSURF_EVENTS_SECRET (.secrets).

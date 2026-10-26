@@ -20,7 +20,7 @@ Browser ──portal session cookie──► Caddy (VPS) ── forward_auth ─
                                   SongSurf :8081
                                      │ verifies X-Watcher-Token, trusts X-User-* (no re-validation)
                                      ▼
-                                  /data/music/<pseudo>/   ← admin: permanent · member: deleted after ZIP export
+                                  /data/music/<uid>/      ← admin: permanent · member: deleted after ZIP export
 ```
 
 Requests that don't reach the Watcher through Caddy never get an identity: no login redirect in the Watcher (Caddy does it), just a 401 JSON (API / extension) or a « passe par le portail » page.
@@ -33,7 +33,7 @@ Requests that don't reach the Watcher through Caddy never get an identity: no lo
 |---|---|
 | `X-User-Name` | exact pseudo (original case), unique, immutable → becomes `sub` |
 | `X-User-Role` | `guest` · `member` · `mod` · `admin` (lowercased by the Watcher) |
-| `X-User-Id` | portal UUID, stable → forwarded to SongSurf as `X-User-Portal-Id` (not used yet) |
+| `X-User-Id` | portal UUID, stable → forwarded to SongSurf as `X-User-Portal-Id`, the **storage key** |
 | `X-Proxy-Token` | proof that the request comes from Caddy |
 
 Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-Proxy-Token` itself. CORS preflights (`OPTIONS`) are exempted from the gate.
@@ -44,7 +44,7 @@ Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-P
 - The Watcher compares it with `hmac.compare_digest`. Missing or wrong → the `X-User-*` are ignored (the Watcher listens on the home network — any LAN device could otherwise claim to be admin); a wrong proof is logged.
 - Empty secret → service locked (every request 401), warning at boot.
 
-`sub` is the pseudo: library folders and activity events derive from it. `pseudo` = sanitized `sub`; the admin role always maps to `ADMIN_PSEUDO` (default `rev0admin`).
+`sub` is the exact pseudo, used only for display, logs and activity events. Everything stored per user (library, cookies, queue, quota, ZIP) is keyed by the **portal UUID** (SSF-03), admin included — unique and stable by construction, never derived from the pseudo. A request without a valid UUID is refused by SongSurf.
 
 ---
 
@@ -55,7 +55,7 @@ X-Watcher-Token:   <WATCHER_SECRET>    internal shared secret (constant-time che
 X-User-Id:         <X-User-Name>       the pseudo (sub)
 X-User-Role:       <X-User-Role, lowercased>
 X-User-Email:      ''                  (kept for compatibility, the portal sends none)
-X-User-Portal-Id:  <X-User-Id>         portal UUID, not read yet
+X-User-Portal-Id:  <X-User-Id>         portal UUID = storage key (required)
 ```
 
 Client-sent `X-User-*`, `X-Proxy-Token` and `X-Watcher-Token` are dropped before forwarding. SongSurf rejects any request without a valid `X-Watcher-Token` (401), which is why port 8081 must never be reachable from outside the host.
@@ -78,8 +78,10 @@ SongSurf Clip has a host permission on the SongSurf domain so Chrome sends the p
 
 | Role | Folder | Cleanup |
 |---|---|---|
-| `admin` | `/data/music/<ADMIN_PSEUDO>/` | Never deleted, no ZIP export (SSF-10) |
-| `member` | `/data/music/<pseudo>/` | Deleted after the user downloads their ZIP (`/api/download-zip`) |
+| `admin` | `/data/music/<ADMIN_UID>/` — on the NAS, the Jellyfin music folder mounted there | Never deleted, no ZIP export (SSF-10) |
+| `member` | `/data/music/<uid>/` | Deleted after the user downloads their ZIP (`/api/download-zip`) |
+
+Each folder holds a `.owner` file with the pseudo, so the NAS stays readable. Cookies: `/data/cookies/<uid>.txt`.
 
 ---
 

@@ -96,8 +96,11 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 | # | Test | How | Expected |
 |---|------|-----|----------|
 | ST-1 | Admin library never exported nor deleted | `test_ssf10_admin_zip_disabled`: POST `/api/prepare-zip` / GET `/api/download-zip` as Admin | 403 `zip_disabled`, files untouched |
-| ST-2 | Member files deleted after ZIP | `test_ssf10_member_zip_still_purges_member_library`: prepare then download as Member | `/data/music/<pseudo>/` removed once the stream completes |
-| ST-3 | Per-user isolation | Two users (different `sub`) download | Each has their own `/data/music/<sub>/` folder, no cross-access |
+| ST-2 | Member files deleted after ZIP | `test_ssf10_member_zip_still_purges_member_library`: prepare then download as Member | `/data/music/<uid>/` removed once the stream completes |
+| ST-3 | Per-user isolation | `test_st3_user_isolation`: two users (different portal UUID) | Each sees only their own `/data/music/<uid>/` library |
+| ST-5 | Storage key = portal UUID (SSF-03) | `test_ssf03_missing_or_invalid_portal_id_rejected`, `test_user_music_dir_rejects_invalid_uid` | No / invalid `X-User-Portal-Id` → 401, never a fallback on the pseudo |
+| ST-6 | `.owner` file | `test_ssf03_owner_file_holds_pseudo` | `/data/music/<uid>/.owner` = exact pseudo, not listed in the library |
+| ST-7 | Pseudo → UUID migration | `tests/test_migrate_to_uid.py` | Dry-run by default; `--apply` renames folders + cookies, writes `.owner`, removes the empty old admin mount point; conflicts reported, nothing moved |
 | ST-4 | Path traversal blocked | Library endpoints with `../` in paths | 400 — chemin invalide |
 
 ---
@@ -106,9 +109,11 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| Z-1 | ZIP preparation | POST `/api/prepare-zip` | `{"success": true, "count": N, "size_mb": X}` |
-| Z-2 | ZIP download | GET `/api/download-zip` after prepare | File downloaded, `Content-Disposition: attachment` |
+| Z-1 | ZIP built in background (SSF-03) | POST `/api/prepare-zip` then poll `/api/zip-status` (`test_ssf03_zip_build_survives_as_ready`) | 202 `building` → `ready` with `count`, `size_mb`, `download_url`; never the server path |
+| Z-2 | ZIP download | GET `/api/download-zip` once ready | File downloaded, `Content-Disposition: attachment`, state back to `idle` |
 | Z-3 | ZIP not ready | GET `/api/download-zip` without prepare | 404 |
+| Z-7 | ZIP state survives a restart | `test_zip_state_survives_restart` | `ready` kept; `building` → `error` « Export interrompu… » |
+| Z-8 | Ready ZIP whose file vanished | `test_ssf03_zip_status_idle_when_ready_file_vanished` | `/api/zip-status` → `idle`, state cleared |
 | Z-4 | ZIP contains all files | Inspect ZIP | All `.mp3` from user's music dir are present |
 | Z-5 | ZIP refused on the admin folder, whatever the role | `test_ssf10_zip_refused_on_admin_dir_whatever_the_role` | 403, admin folder untouched even with a ZIP already prepared |
 | Z-6 | **Manual (NAS)** — no ZIP button for the admin | Open SongSurf as admin, then as a member | Admin: no « 📥 Télécharger ZIP » button; member: button present |
@@ -156,15 +161,30 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 |---|------|-----|----------|
 | H-1 | CORS only for SongSurf Clip | `OPTIONS` with `Origin: null` / other `chrome-extension://…` / `https://evil.com` (`test_cors_*`) | 403, no `Access-Control-Allow-Origin` |
 | H-2 | Extension ID pinned | `test_cors_extension_id_matches_manifest` | ID derived from manifest `key` = `SONGSURF_EXTENSION_ID` |
-| H-3 | No cookies → blocked | `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct` without `<pseudo>.txt` | 403 `cookies_missing` + message pointing to the extension; no fallback on admin cookies |
-| H-4 | Cookies stored per user | `/api/cookies/update` | `/data/cookies/<pseudo>.txt`, chmod 600, response carries `pseudo`; bad format → 400 |
+| H-3 | No cookies → blocked | `/api/extract`, `/api/preview`, `/api/download`, `/api/download-playlist`, `/api/queue-direct` without `<uid>.txt` | 403 `cookies_missing` + message pointing to the extension; no fallback on admin cookies |
+| H-4 | Cookies stored per user | `/api/cookies/update` | `/data/cookies/<uid>.txt`, chmod 600, response carries `pseudo`; bad format → 400 |
 | H-5 | Worker uses owner cookies | `test_ssf01_worker_*` | `cookiefile` = owner's file; file removed after queueing → clean error |
 | H-6 | Request size cap | Body > 20 MB | 413 JSON "max 20 Mo" (not 500) |
 | H-7 | `/api/status` isolation | Two members | Other member's `last_completed` / `last_error` / `current_download` never returned |
-| H-8 | Legacy cookies migration | Boot with `/data/cookies.txt` | Moved to `/data/cookies/<ADMIN_PSEUDO>.txt` |
 | H-10 | Clean stop (SSF-02) | `docker stop songsurf` on the NAS (`time`, then `docker inspect -f '{{.State.ExitCode}}'`) | < 2 s, exit 0; `test_ssf02_*` cover temp cleanup |
 | H-11 | Healthcheck (SSF-02) | `docker inspect -f '{{.State.Health.Status}}' songsurf` on the NAS | `healthy` |
 | H-9 | **Manual, real extension on the NAS** | Reload the unpacked extension (new fixed ID → re-enter the SongSurf URL in options), Sync cookies, queue a song | Popup shows "Cookies synchronisés pour <pseudo>"; download OK; a member without sync sees the blocking message |
+
+---
+
+## 10. SSF-03 — persistent queue, fairness, quotas
+
+| # | Test | How | Expected |
+|---|------|-----|----------|
+| Q-1 | Round-robin between users | `test_ssf03_worker_alternates_between_members`, `test_queue_round_robin_between_users`, `test_rr_*` | alice album (3) + bob (1) → `a1, b1, a2, a3`; each user's order kept |
+| Q-2 | Late user not stuck behind a big album | `test_late_user_is_served_before_the_rest_of_a_big_album` | bob's song passes right after the current song |
+| Q-3 | Queue survives a restart | `test_queue_survives_restart_and_resumes_interrupted_song` | Song cut mid-download back to pending, round-robin pointer kept |
+| Q-4 | Queue limit per user | `test_d9_rejects_when_queue_full` | 429 at `MAX_PENDING_JOBS` jobs for that user; another member can still queue |
+| Q-5 | Daily quota per member, admin unlimited | `test_ssf03_daily_quota_per_member_admin_unlimited`, `test_daily_count_is_per_user_and_per_day` | 429 `daily_limit` (also `/api/queue-direct`); other member and admin OK; counter survives a restart |
+| Q-6 | Who uses the worker | `test_ssf03_status_tells_who_uses_the_worker` | Member: no pseudo, `songs_before_mine`; admin: `owner` + `current` |
+| Q-7 | Watcher busy probe | `test_ssf03_watcher_probe_gets_busy_state_without_identity` | Token only → 200 `{in_progress, queue_size}` (before SSF-03: 503, SongSurf could be stopped mid-batch) |
+| Q-8 | **Manual (NAS)** — restart mid-batch | Queue an album, `docker restart songsurf` during a song | Logs « File reprise après redémarrage », the album finishes |
+| Q-9 | **Manual (NAS)** — two members in parallel | Two accounts each queue an album | Songs alternate; each member sees « ton tour dans N morceaux » while the other's song runs |
 
 ---
 
@@ -174,5 +194,7 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 - [ ] `DEV_MODE=false` in `.env`
 - [ ] `SONGSURF_PROXY_SECRET` same value in `.secrets` and in the secret Caddy reads on the VPS
 - [ ] `REVAUTH_HOME_URL` points to the portal member space
+- [ ] `ADMIN_UID` (NAS `.env`) = the admin's portal UUID — `docker compose config` refuses to start without it
+- [ ] Pseudo → UUID migration run once (`docs/DEPLOY.md`), 0 conflict
 - [ ] NAS firewall blocks port 8081 from WAN
 - [ ] SongSurf port NOT published in `docker-compose.local.yml` (already done)
