@@ -1301,7 +1301,16 @@ def api_admin_dl_logs():
         return jsonify({'success': False, 'error': 'Admin requis'}), 403
 
     pseudo = (request.args.get('pseudo') or '').strip().lower()
-    limit  = min(max(1, int(request.args.get('limit', '100'))), 500)
+    # `limit=all` : historique complet (fiches par membre du portail) ;
+    # sinon 1..500, 100 par défaut ou si la valeur est illisible.
+    raw_limit = (request.args.get('limit') or '100').strip().lower()
+    if raw_limit == 'all':
+        limit = None
+    else:
+        try:
+            limit = min(max(1, int(raw_limit)), 500)
+        except ValueError:
+            limit = 100
 
     log_path = LOG_DIR / 'downloads.log'
     entries  = []
@@ -1324,7 +1333,8 @@ def api_admin_dl_logs():
         return jsonify({'success': False, 'error': str(e)}), 500
 
     entries.reverse()
-    return jsonify({'success': True, 'entries': entries[:limit], 'total': len(entries)})
+    return jsonify({'success': True, 'entries': entries if limit is None else entries[:limit],
+                    'total': len(entries)})
 
 
 # ── Admin-only utilities ───────────────────────────────────────────────────────

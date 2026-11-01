@@ -1084,3 +1084,33 @@ def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
     finally:
         app_mod._zip_path(uid_for('mobile')).unlink(missing_ok=True)
         app_mod.store.zip_delete(uid_for('mobile'))
+
+
+# ── Journal des téléchargements (admin) : limite, historique complet ─────────
+
+def _write_dl_log(app_mod, n):
+    lines = [f'2026-10-{(i % 28) + 1:02d} 12:00:00 | alice | Artiste {i % 3} | Album {i % 5} | Titre {i}'
+             for i in range(n)]
+    (app_mod.LOG_DIR / 'downloads.log').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def test_dl_logs_limit_all_returns_full_history(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _write_dl_log(app_mod, 620)
+    r = c.get('/api/admin/dl-logs?limit=all', headers=admin_headers())
+    d = r.get_json()
+    assert r.status_code == 200 and d['total'] == 620 and len(d['entries']) == 620
+    assert d['entries'][0]['title'] == 'Titre 619'  # plus récent d'abord
+
+
+def test_dl_logs_limit_capped_and_lenient(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _write_dl_log(app_mod, 620)
+    assert len(c.get('/api/admin/dl-logs?limit=9999', headers=admin_headers()).get_json()['entries']) == 500
+    r = c.get('/api/admin/dl-logs?limit=abc', headers=admin_headers())
+    assert r.status_code == 200 and len(r.get_json()['entries']) == 100
+
+
+def test_dl_logs_admin_only(flask_setup):
+    c, *_ = flask_setup
+    assert c.get('/api/admin/dl-logs?limit=all', headers=auth_headers()).status_code == 403
