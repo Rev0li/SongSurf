@@ -85,7 +85,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
+| `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries, newest first (403 for non-admin). `limit` 1–500 (default 100, unreadable → 100) or `all` = full history (portal taste profiles) |
 | `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
 | `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
 | `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
