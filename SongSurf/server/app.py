@@ -1241,7 +1241,27 @@ def download_zip():
     _zip_meta = {'count': state['total'], 'size_mb': state['size_mb']}
     file_size = zip_path.stat().st_size
 
+    def _after_full_export():
+        try:
+            zip_path.unlink(missing_ok=True)
+            store.zip_delete(key)
+            # Bibliothèque membre = temporaire, supprimée après export. Jamais le
+            # dossier admin ni la racine : refusés en amont, revérifiés ici (SSF-10).
+            purged = not _zip_forbidden(user, music_dir) and music_dir.exists()
+            if purged:
+                shutil.rmtree(music_dir, ignore_errors=True)
+                logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{key[:8]}]")
+            events_client.emit(
+                'zip_export',
+                pseudo=_pseudo,
+                role=_role,
+                detail={**_zip_meta, 'library_purged': purged},
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Post-download cleanup: {e}")
+
     def _stream_and_cleanup():
+        sent = 0
         try:
             with open(zip_path, 'rb') as f:
                 while True:
@@ -1249,25 +1269,17 @@ def download_zip():
                     if not chunk:
                         break
                     yield chunk
+                    sent += len(chunk)
         finally:
-            # Appelé par le WSGI quand le stream est terminé (ou connexion coupée)
-            try:
-                zip_path.unlink(missing_ok=True)
-                store.zip_delete(key)
-                # Bibliothèque membre = temporaire, supprimée après export. Jamais le
-                # dossier admin ni la racine : refusés en amont, revérifiés ici (SSF-10).
-                purged = not _zip_forbidden(user, music_dir) and music_dir.exists()
-                if purged:
-                    shutil.rmtree(music_dir, ignore_errors=True)
-                    logger.info(f"🗑️ Bibliothèque supprimée post-ZIP [{key[:8]}]")
-                events_client.emit(
-                    'zip_export',
-                    pseudo=_pseudo,
-                    role=_role,
-                    detail={**_zip_meta, 'library_purged': purged},
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ Post-download cleanup: {e}")
+            # Appelé par le WSGI quand le stream est terminé OU la connexion coupée
+            # (GeneratorExit sur le yield). Interrompu (réseau, écran verrouillé sur
+            # mobile…) → on ne touche à rien : bibliothèque intacte, ZIP toujours prêt
+            # à être récupéré (SSF-14).
+            if sent >= file_size:
+                _after_full_export()
+            else:
+                logger.warning(f"⚠️ Export ZIP interrompu ({sent}/{file_size} octets) — "
+                               f"bibliothèque conservée [{key[:8]}]")
 
     return Response(
         _stream_and_cleanup(),
@@ -1289,7 +1301,16 @@ def api_admin_dl_logs():
         return jsonify({'success': False, 'error': 'Admin requis'}), 403
 
     pseudo = (request.args.get('pseudo') or '').strip().lower()
-    limit  = min(max(1, int(request.args.get('limit', '100'))), 500)
+    # `limit=all` : historique complet (fiches par membre du portail) ;
+    # sinon 1..500, 100 par défaut ou si la valeur est illisible.
+    raw_limit = (request.args.get('limit') or '100').strip().lower()
+    if raw_limit == 'all':
+        limit = None
+    else:
+        try:
+            limit = min(max(1, int(raw_limit)), 500)
+        except ValueError:
+            limit = 100
 
     log_path = LOG_DIR / 'downloads.log'
     entries  = []
@@ -1312,7 +1333,8 @@ def api_admin_dl_logs():
         return jsonify({'success': False, 'error': str(e)}), 500
 
     entries.reverse()
-    return jsonify({'success': True, 'entries': entries[:limit], 'total': len(entries)})
+    return jsonify({'success': True, 'entries': entries if limit is None else entries[:limit],
+                    'total': len(entries)})
 
 
 # ── Admin-only utilities ───────────────────────────────────────────────────────

@@ -113,6 +113,7 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 | Z-2 | ZIP download | GET `/api/download-zip` once ready | File downloaded, `Content-Disposition: attachment`, state back to `idle` |
 | Z-3 | ZIP not ready | GET `/api/download-zip` without prepare | 404 |
 | Z-7 | ZIP state survives a restart | `test_zip_state_survives_restart` | `ready` kept; `building` → `error` « Export interrompu… » |
+| Z-9 | Interrupted ZIP download (SSF-14) | `test_ssf14_interrupted_zip_keeps_library_and_ready_zip` | Library and `ready` ZIP kept; only a complete download purges the library |
 | Z-8 | Ready ZIP whose file vanished | `test_ssf03_zip_status_idle_when_ready_file_vanished` | `/api/zip-status` → `idle`, state cleared |
 | Z-4 | ZIP contains all files | Inspect ZIP | All `.mp3` from user's music dir are present |
 | Z-5 | ZIP refused on the admin folder, whatever the role | `test_ssf10_zip_refused_on_admin_dir_whatever_the_role` | 403, admin folder untouched even with a ZIP already prepared |

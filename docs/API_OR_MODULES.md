@@ -52,7 +52,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/prepare-zip` | POST | Starts building the ZIP of the user's whole library in the background → 202 `{status: 'building', done: 0, total}` (already building → same answer, no second build). No MP3 → 404. Admin library: 403 `{code: 'zip_disabled'}` (SSF-10) |
 | `/api/zip-status` | GET | `{status: 'idle' \| 'building' \| 'ready' \| 'error', done, total, count, size_mb, download_url?, error?}` — the frontend polls it every second. State persisted in SQLite: a ready ZIP survives a restart, a build cut by a restart becomes `error` |
-| `/api/download-zip` | GET | Streams the ZIP once `ready` (otherwise 404). **Member libraries are deleted after the stream completes.** Admin library: 403 `zip_disabled`, never exported nor deleted (role, music root and mount points checked) |
+| `/api/download-zip` | GET | Streams the ZIP once `ready` (otherwise 404). **Member libraries are deleted once the whole file has been sent**; an interrupted download keeps the library and the `ready` ZIP (SSF-14). Admin library: 403 `zip_disabled`, never exported nor deleted (role, music root and mount points checked) |
 
 ### Library
 
@@ -85,7 +85,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries (403 for non-admin) |
+| `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries, newest first (403 for non-admin). `limit` 1–500 (default 100, unreadable → 100) or `all` = full history (portal taste profiles) |
 | `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
 | `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
 | `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |

@@ -1056,3 +1056,61 @@ def test_ssf03_progress_reset_when_a_song_starts(flask_setup):
         app_mod._process_song(_queued_song('prog', 'p1'))
     assert seen['phase'] == 'idle' and seen['percent'] == 0
     app_mod._last_error_by_user.clear()
+
+
+# ── SSF-14 : export ZIP interrompu → bibliothèque conservée ───────────────────
+
+def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
+    import os as _os
+    c, music, _, app_mod = flask_setup
+    h = auth_headers(sub='mobile')
+    lib = music / uid_for('mobile')
+    song = lib / 'Art' / 'Alb' / 'Song.mp3'
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(_os.urandom(300_000))           # incompressible → plusieurs blocs de 64 Ko
+    try:
+        assert c.post('/api/prepare-zip', headers=h).status_code == 202
+        assert _wait_zip(c, h)['status'] == 'ready'
+        r = c.get('/api/download-zip', headers=h, buffered=False)
+        assert r.status_code == 200
+        next(iter(r.response))                         # un seul bloc reçu…
+        r.close()                                      # … puis connexion coupée
+        assert song.is_file()                          # bibliothèque intacte
+        assert c.get('/api/zip-status', headers=h).get_json()['status'] == 'ready'
+        # Nouvelle tentative complète : là seulement, la bibliothèque est vidée
+        r = c.get('/api/download-zip', headers=h)
+        r.get_data()
+        assert not lib.exists()
+    finally:
+        app_mod._zip_path(uid_for('mobile')).unlink(missing_ok=True)
+        app_mod.store.zip_delete(uid_for('mobile'))
+
+
+# ── Journal des téléchargements (admin) : limite, historique complet ─────────
+
+def _write_dl_log(app_mod, n):
+    lines = [f'2026-10-{(i % 28) + 1:02d} 12:00:00 | alice | Artiste {i % 3} | Album {i % 5} | Titre {i}'
+             for i in range(n)]
+    (app_mod.LOG_DIR / 'downloads.log').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def test_dl_logs_limit_all_returns_full_history(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _write_dl_log(app_mod, 620)
+    r = c.get('/api/admin/dl-logs?limit=all', headers=admin_headers())
+    d = r.get_json()
+    assert r.status_code == 200 and d['total'] == 620 and len(d['entries']) == 620
+    assert d['entries'][0]['title'] == 'Titre 619'  # plus récent d'abord
+
+
+def test_dl_logs_limit_capped_and_lenient(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _write_dl_log(app_mod, 620)
+    assert len(c.get('/api/admin/dl-logs?limit=9999', headers=admin_headers()).get_json()['entries']) == 500
+    r = c.get('/api/admin/dl-logs?limit=abc', headers=admin_headers())
+    assert r.status_code == 200 and len(r.get_json()['entries']) == 100
+
+
+def test_dl_logs_admin_only(flask_setup):
+    c, *_ = flask_setup
+    assert c.get('/api/admin/dl-logs?limit=all', headers=auth_headers()).status_code == 403
