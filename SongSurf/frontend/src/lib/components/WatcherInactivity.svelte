@@ -1,8 +1,8 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 
-	let warned = false;
-	let graceRemaining = 0;
+	let warned = $state(false);
+	let graceRemaining = $state(0);
 	let forceStopIn = 0;
 	let interval;
 
@@ -42,7 +42,7 @@
 			⌛ Inactivité détectée — arrêt automatique dans
 			<strong>{Math.ceil(graceRemaining / 60)} min</strong>
 		</span>
-		<button class="btn btn-sm btn-primary" on:click={keepalive}>
+		<button class="btn btn-sm btn-primary" onclick={keepalive}>
 			Rester actif
 		</button>
 	</div>

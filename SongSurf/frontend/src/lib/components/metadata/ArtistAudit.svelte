@@ -6,13 +6,13 @@
 	import { addToast } from '$lib/stores.js';
 	import { ID3_LABELS } from '$lib/metadata/id3.js';
 
-	export let artistPath;
+	let { artistPath } = $props();
 
-	let audit    = null;       // rapport /api/library/audit/artist
-	let loading  = false;
-	let error    = '';
-	let selected = new Set();  // ids des recommandations cochées
-	let applying = false;
+	let audit    = $state(null);       // rapport /api/library/audit/artist
+	let loading  = $state(false);
+	let error    = $state('');
+	let selected = $state(new Set());  // ids des recommandations cochées
+	let applying = $state(false);
 
 	async function run() {
 		if (loading) return;
@@ -33,11 +33,11 @@
 		selected = new Set(selected);
 	}
 
-	$: changes = !audit ? [] : (audit.albums ?? []).flatMap((al) =>
+	let changes = $derived(!audit ? [] : (audit.albums ?? []).flatMap((al) =>
 		(al.recommendations ?? [])
 			.filter((r) => selected.has(r.id))
 			.flatMap((r) => (r.changes ?? []).map((c) => ({ path: c.path, field: r.field, value: c.value })))
-	);
+	));
 
 	async function apply() {
 		if (changes.length === 0 || applying) return;
@@ -71,7 +71,7 @@
 				Rien n'est modifié sans validation.
 			</p>
 			{#if error}<p class="save-error">{error}</p>{/if}
-			<button class="btn btn-primary btn-sm" on:click={run} disabled={loading}>
+			<button class="btn btn-primary btn-sm" onclick={run} disabled={loading}>
 				{loading ? '⏳ Audit en cours…' : "🔎 Lancer l'audit"}
 			</button>
 		</div>
@@ -91,7 +91,7 @@
 						<input
 							type="checkbox"
 							checked={selected.has(rec.id)}
-							on:change={() => toggleRec(rec.id)}
+							onchange={() => toggleRec(rec.id)}
 						/>
 						<div class="audit-rec-body">
 							<div class="audit-rec-line">
@@ -119,12 +119,12 @@
 		{/each}
 
 		<div class="save-bar">
-			<button class="btn btn-ghost btn-sm" on:click={run} disabled={loading || applying}>
+			<button class="btn btn-ghost btn-sm" onclick={run} disabled={loading || applying}>
 				{loading ? '⏳…' : '↻ Relancer'}
 			</button>
 			<button
 				class="btn btn-primary btn-sm"
-				on:click={apply}
+				onclick={apply}
 				disabled={changes.length === 0 || applying}
 			>
 				{applying ? '⏳ Application…' : `✓ Appliquer la sélection (${changes.length})`}

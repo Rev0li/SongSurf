@@ -3,15 +3,15 @@
 	// items : [{ label, onClick? }] — sans onClick, le segment est affiché comme courant.
 	import { goHome } from '$lib/metadata/library.js';
 
-	export let items = [];
+	let { items = [] } = $props();
 </script>
 
 <nav class="crumbs">
-	<button class="crumb" on:click={goHome}>🏠 Bibliothèque</button>
+	<button class="crumb" onclick={goHome}>🏠 Bibliothèque</button>
 	{#each items as item}
 		<span class="crumb-sep">›</span>
 		{#if item.onClick}
-			<button class="crumb" on:click={item.onClick}>{item.label}</button>
+			<button class="crumb" onclick={item.onClick}>{item.label}</button>
 		{:else}
 			<span class="crumb-current">{item.label}</span>
 		{/if}

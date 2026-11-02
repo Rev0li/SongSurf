@@ -5,13 +5,15 @@
 	import { addToast } from '$lib/stores.js';
 	import { songDisplayName } from '$lib/metadata/id3.js';
 
-	export let albumPath;
-	export let tracks = [];          // [{path, name, title, track_number}], numérotées d'abord
-	export let onSaved = () => {};
-	export let onCancel = () => {};
+	let {
+		albumPath,
+		tracks = [],          // [{path, name, title, track_number}], numérotées d'abord — copie locale réordonnée ici
+		onSaved = () => {},
+		onCancel = () => {}
+	} = $props();
 
-	let saving  = false;
-	let dragIdx = -1;
+	let saving  = $state(false);
+	let dragIdx = $state(-1);
 
 	function moveTrack(i, delta) {
 		const j = i + delta;
@@ -61,10 +63,10 @@
 			class="track-row reorder-row {dragIdx === i ? 'reorder-dragging' : ''}"
 			draggable="true"
 			role="listitem"
-			on:dragstart={(e) => dragStart(e, i)}
-			on:dragover={(e) => dragOver(e, i)}
-			on:dragend={dragEnd}
-			on:drop|preventDefault={dragEnd}
+			ondragstart={(e) => dragStart(e, i)}
+			ondragover={(e) => dragOver(e, i)}
+			ondragend={dragEnd}
+			ondrop={(e) => { e.preventDefault(); dragEnd(); }}
 		>
 			<span class="reorder-grip">⠿</span>
 			<span class="track-num">{i + 1}</span>
@@ -75,17 +77,17 @@
 				<span class="reorder-badge reorder-badge-missing">sans n°</span>
 			{/if}
 			<span class="reorder-arrows">
-				<button class="reorder-arrow" disabled={i === 0} on:click={() => moveTrack(i, -1)}>▲</button>
-				<button class="reorder-arrow" disabled={i === tracks.length - 1} on:click={() => moveTrack(i, 1)}>▼</button>
+				<button class="reorder-arrow" disabled={i === 0} onclick={() => moveTrack(i, -1)}>▲</button>
+				<button class="reorder-arrow" disabled={i === tracks.length - 1} onclick={() => moveTrack(i, 1)}>▼</button>
 			</span>
 		</div>
 	{/each}
 </div>
 <div class="save-bar">
-	<button class="btn btn-ghost btn-sm" on:click={onCancel} disabled={saving}>
+	<button class="btn btn-ghost btn-sm" onclick={onCancel} disabled={saving}>
 		Annuler
 	</button>
-	<button class="btn btn-primary btn-sm" on:click={save} disabled={saving}>
+	<button class="btn btn-primary btn-sm" onclick={save} disabled={saving}>
 		{saving ? '⏳ Écriture…' : `💾 Enregistrer la numérotation (1..${tracks.length})`}
 	</button>
 </div>

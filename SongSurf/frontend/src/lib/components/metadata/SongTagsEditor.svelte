@@ -2,6 +2,7 @@
 	// Éditeur des tags ID3 d'un titre.
 	// Mode simple : champs principaux + Sauvegarder.
 	// Mode expert : « Champs supplémentaires » et « Appliquer à l'album ».
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import { secondaryOpen } from '$lib/metadata/library.js';
@@ -10,21 +11,23 @@
 		MULTI_FIELDS, MULTI_HINT, JELLYFIN_KEYS,
 	} from '$lib/metadata/id3.js';
 
-	export let path;
-	export let meta;             // réponse /api/library/song-meta (id3 présent)
-	export let albumSongs = [];  // titres visés par « Appliquer à l'album »
-	export let onMetaReloaded = () => {};
+	let {
+		path,
+		meta,
+		albumSongs = [],
+		onMetaReloaded = () => {}
+	} = $props();
 
-	let editValues      = {};
-	let dirty           = false;
-	let saving          = false;
-	let saveError       = '';
-	let lastEditedField = null;  // dernier champ modifié (cible d'« Appliquer à l'album »)
-	let applyingToAlbum = false;
+	let editValues      = $state({});
+	let dirty           = $state(false);
+	let saving          = $state(false);
+	let saveError       = $state('');
+	let lastEditedField = $state(null);  // dernier champ modifié (cible d'« Appliquer à l'album »)
+	let applyingToAlbum = $state(false);
 
 	// Initialisé une fois (puis après chaque sauvegarde) : un upload de pochette
 	// recharge `meta` sans écraser les modifications en cours.
-	initEdit(meta);
+	initEdit(untrack(() => meta));
 
 	function initEdit(m) {
 		const v = {};
@@ -72,10 +75,10 @@
 		else addToast(`${done} OK, ${errors} erreur${errors > 1 ? 's' : ''}.`, 'error');
 	}
 
-	$: jellyfinMissing = JELLYFIN_KEYS.filter((k) => {
+	let jellyfinMissing = $derived(JELLYFIN_KEYS.filter((k) => {
 		const v = editValues[k] ?? meta.id3[k];
 		return !v || v === '' || String(v).toLowerCase().includes('unknown');
-	});
+	}));
 </script>
 
 <section class="meta-section">
@@ -98,13 +101,13 @@
 					value={editValues[key] ?? ''}
 					placeholder={MULTI_FIELDS.has(key) ? 'A; B' : '—'}
 					title={MULTI_FIELDS.has(key) ? MULTI_HINT : ''}
-					on:input={(e) => setField(key, e.currentTarget.value)}
+					oninput={(e) => setField(key, e.currentTarget.value)}
 				/>
 			</div>
 		{/each}
 	</div>
 
-	<button class="details-toggle" on:click={() => secondaryOpen.update((o) => !o)}>
+	<button class="details-toggle" onclick={() => secondaryOpen.update((o) => !o)}>
 		{$secondaryOpen ? '▾' : '▸'} Champs supplémentaires
 	</button>
 	{#if $secondaryOpen}
@@ -119,7 +122,7 @@
 						value={editValues[key] ?? ''}
 						placeholder={MULTI_FIELDS.has(key) ? 'A; B' : '—'}
 						title={MULTI_FIELDS.has(key) ? MULTI_HINT : ''}
-						on:input={(e) => setField(key, e.currentTarget.value)}
+						oninput={(e) => setField(key, e.currentTarget.value)}
 					/>
 				</div>
 			{/each}
@@ -131,7 +134,7 @@
 		{#if lastEditedField && albumSongs.length > 1}
 			<button
 				class="btn btn-ghost btn-sm"
-				on:click={applyToAlbum}
+				onclick={applyToAlbum}
 				disabled={applyingToAlbum}
 				title="Appliquer « {ID3_LABELS[lastEditedField] ?? lastEditedField} » à tous les titres de l'album"
 			>
@@ -140,7 +143,7 @@
 		{/if}
 		<button
 			class="btn btn-primary btn-sm"
-			on:click={saveTags}
+			onclick={saveTags}
 			disabled={!dirty || saving}
 		>
 			{saving ? '⏳ Sauvegarde…' : dirty ? '💾 Sauvegarder' : '✓ Sauvegardé'}

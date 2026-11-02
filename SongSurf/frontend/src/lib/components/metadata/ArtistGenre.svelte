@@ -1,21 +1,22 @@
 <script>
+	import { untrack } from 'svelte';
 	// Genre (TCON) de l'artiste (mode expert) : une saisie réécrite sur tous ses
 	// titres, pré-remplie avec la combinaison de genres la plus fréquente.
 	import { api } from '$lib/api.js';
 	import { addToast, confirmAction } from '$lib/stores.js';
 	import { countSongs } from '$lib/metadata/id3.js';
 
-	export let artist;          // { path, name }
-	export let albums = [];     // albums complets de l'artiste
-	export let albumStatus = {}; // album path → { genres, … } (/api/library/album-status)
-	export let onApplied = () => {};
+	let {
+		artist,
+		albums = [],
+		albumStatus = {},
+		onApplied = () => {}
+	} = $props();
 
-	let genre   = '';
-	let touched = false; // saisie manuelle en cours → ne pas écraser par le pré-remplissage
-	let saving  = false;
+	let genre   = $state('');
+	let touched = $state(false); // saisie manuelle en cours → ne pas écraser par le pré-remplissage
+	let saving  = $state(false);
 
-	// Pré-remplit dès que le statut des albums est chargé (objet vide = en cours de chargement).
-	$: prefill(albumStatus);
 
 	function prefill(status) {
 		if (touched || Object.keys(status).length === 0) return;
@@ -51,6 +52,11 @@
 		} catch (e) { addToast(e.message ?? 'Erreur', 'error'); }
 		finally { saving = false; }
 	}
+	// Pré-remplit dès que le statut des albums est chargé (objet vide = en cours de chargement).
+	$effect.pre(() => {
+		const status = albumStatus;
+		untrack(() => prefill(status));
+	});
 </script>
 
 <div class="artist-genre-zone">
@@ -63,12 +69,12 @@
 			class="meta-input"
 			placeholder="Rap français; Hip-hop"
 			bind:value={genre}
-			on:input={() => { touched = true; }}
-			on:keydown={(e) => e.key === 'Enter' && apply()}
+			oninput={() => { touched = true; }}
+			onkeydown={(e) => e.key === 'Enter' && apply()}
 		/>
 		<button
 			class="btn btn-primary btn-sm"
-			on:click={apply}
+			onclick={apply}
 			disabled={saving || !genre.trim()}
 		>
 			{saving ? '⏳…' : '🎼 Appliquer'}

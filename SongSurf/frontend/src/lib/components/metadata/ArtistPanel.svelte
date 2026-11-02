@@ -16,16 +16,16 @@
 	// Monté une fois par sélection (clé = selection.seq dans la page)
 	const artist = $selection.artist;
 
-	$: isAdmin = $user?.role === 'admin';
+	let isAdmin = $derived($user?.role === 'admin');
 
 	// Liste complète (non filtrée) des albums de l'artiste
-	$: artistAlbums = ($tree?.artists ?? []).find((a) => a.path === artist.path)?.albums ?? [];
-	$: nSongs = countSongs(artistAlbums);
-	$: artistPicUrl = api.getArtistPictureUrl(artist.path, $imgVersions[artist.path] ?? 0);
+	let artistAlbums = $derived(($tree?.artists ?? []).find((a) => a.path === artist.path)?.albums ?? []);
+	let nSongs = $derived(countSongs(artistAlbums));
+	let artistPicUrl = $derived(api.getArtistPictureUrl(artist.path, $imgVersions[artist.path] ?? 0));
 
 	// ── Photo artiste ─────────────────────────────────────────────────────────
-	let artistPicMissing = false; // true quand la photo ne se charge pas
-	let uploadingArtist  = false;
+	let artistPicMissing = $state(false); // true quand la photo ne se charge pas
+	let uploadingArtist  = $state(false);
 
 	async function uploadArtistPic(file) {
 		if (!file || uploadingArtist) return;
@@ -44,7 +44,7 @@
 	}
 
 	// ── Statut de complétude des albums (badges) ──────────────────────────────
-	let albumStatus = {}; // album path → {tracks, missing: {genre, year, track_number}, complete, genres}
+	let albumStatus = $state({}); // album path → {tracks, missing: {genre, year, track_number}, complete, genres}
 	let destroyed = false;
 
 	async function loadAlbumStatus() {
@@ -70,7 +70,7 @@
 	});
 
 	// ── Suppression du dossier (admin — la bibliothèque admin est permanente) ──
-	let deletingFolder = false;
+	let deletingFolder = $state(false);
 
 	async function deleteArtistFolder() {
 		if (deletingFolder) return;
@@ -93,7 +93,7 @@
 	}
 </script>
 
-<svelte:window on:paste={onPaste} />
+<svelte:window onpaste={onPaste} />
 
 <div class="meta-content">
 	<Crumbs items={[{ label: `🎤 ${artist.name}` }]} />
@@ -106,8 +106,8 @@
 					class="artist-pic"
 					src={artistPicUrl}
 					alt=""
-					on:load={() => { artistPicMissing = false; }}
-					on:error={(e) => { e.currentTarget.style.display='none'; artistPicMissing = true; }}
+					onload={() => { artistPicMissing = false; }}
+					onerror={(e) => { e.currentTarget.style.display='none'; artistPicMissing = true; }}
 				/>
 			{/key}
 			<div class="artist-pic-placeholder">🎤</div>
@@ -129,7 +129,7 @@
 				<div class="cover-drop-row">
 					<input
 						type="file" accept="image/*" id="artist-pic-file" class="hidden-file"
-						on:change={(e) => uploadArtistPic(e.currentTarget.files?.[0])}
+						onchange={(e) => uploadArtistPic(e.currentTarget.files?.[0])}
 					/>
 					<label for="artist-pic-file" class="btn btn-ghost btn-sm" class:loading={uploadingArtist}>
 						{uploadingArtist ? '⏳…' : '📁 Choisir'}
@@ -142,7 +142,7 @@
 			{#if isAdmin}
 				<button
 					class="btn btn-danger btn-sm folder-delete-btn"
-					on:click={deleteArtistFolder}
+					onclick={deleteArtistFolder}
 					disabled={deletingFolder}
 					title="Supprime le dossier artiste et tout son contenu (irréversible)"
 				>
@@ -158,14 +158,14 @@
 				<h3 class="section-title">💿 Albums — {artistAlbums.length}</h3>
 				<div class="artist-album-grid">
 					{#each artistAlbums as album (album.path)}
-						<button class="artist-album-card" on:click={() => selectAlbum(album, artist)}>
+						<button class="artist-album-card" onclick={() => selectAlbum(album, artist)}>
 							<div class="artist-album-cover">
 								<img
 									src={api.getFolderCoverUrl(album.path, $imgVersions[album.path] ?? 0)}
 									alt=""
 									loading="lazy"
-									on:load={(e) => e.currentTarget.style.display=''}
-									on:error={(e) => e.currentTarget.style.display='none'}
+									onload={(e) => e.currentTarget.style.display=''}
+									onerror={(e) => e.currentTarget.style.display='none'}
 								/>
 								<div class="artist-album-placeholder">💿</div>
 								{#if albumStatus[album.path]}

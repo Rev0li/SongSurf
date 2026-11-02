@@ -14,13 +14,13 @@
 	<div class="home-gallery">
 		<div class="home-gallery-grid">
 			{#each ($tree.artists ?? []) as artist (artist.path)}
-				<button class="home-artist-card" on:click={() => selectArtist(artist)}>
+				<button class="home-artist-card" onclick={() => selectArtist(artist)}>
 					<div class="home-artist-cover">
 						<img
 							src={api.getArtistPictureUrl(artist.path, $imgVersions[artist.path] ?? 0)}
 							alt="" loading="lazy"
-							on:load={(e) => e.currentTarget.style.display=''}
-							on:error={(e) => e.currentTarget.style.display='none'}
+							onload={(e) => e.currentTarget.style.display=''}
+							onerror={(e) => e.currentTarget.style.display='none'}
 						/>
 						<div class="home-artist-placeholder">🎤</div>
 					</div>

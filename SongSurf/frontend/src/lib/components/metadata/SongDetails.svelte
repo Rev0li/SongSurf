@@ -1,15 +1,27 @@
 <script>
 	// Sections avancées du panneau titre (mode expert) : tags TXXX en lecture
-	// seule, puis « Plus de détails » (audio, état de la pochette, upload par titre).
-	export let meta;
-	export let albumCoverUrl = '';
-	export let uploading = false;
-	export let error = '';
-	export let onUpload = () => {};
+	
+	/**
+	 * @typedef {Object} Props
+	 * @property {any} meta - seule, puis « Plus de détails » (audio, état de la pochette, upload par titre).
+	 * @property {string} [albumCoverUrl]
+	 * @property {boolean} [uploading]
+	 * @property {string} [error]
+	 * @property {any} [onUpload]
+	 */
 
-	let detailsOpen = false;
+	/** @type {Props} */
+	let {
+		meta,
+		albumCoverUrl = '',
+		uploading = false,
+		error = '',
+		onUpload = () => {}
+	} = $props();
 
-	$: customTags = meta.id3?.custom_tags ? Object.entries(meta.id3.custom_tags) : [];
+	let detailsOpen = $state(false);
+
+	let customTags = $derived(meta.id3?.custom_tags ? Object.entries(meta.id3.custom_tags) : []);
 </script>
 
 <!-- Custom TXXX (lecture seule) -->
@@ -29,7 +41,7 @@
 
 <!-- Plus de détails : audio + pochette -->
 <section class="meta-section">
-	<button class="section-title-btn" on:click={() => detailsOpen = !detailsOpen}>
+	<button class="section-title-btn" onclick={() => detailsOpen = !detailsOpen}>
 		<span>{detailsOpen ? '▾' : '▸'} Plus de détails</span>
 		<span class="details-sub">Audio · Pochette</span>
 	</button>
@@ -88,7 +100,7 @@
 			<div class="cover-drop-row">
 				<input
 					type="file" accept="image/*" id="cover-file" class="hidden-file"
-					on:change={(e) => onUpload(e.currentTarget.files?.[0])}
+					onchange={(e) => onUpload(e.currentTarget.files?.[0])}
 				/>
 				<label for="cover-file" class="btn btn-ghost btn-sm" class:loading={uploading}>
 					{uploading ? '⏳…' : '📁 Choisir une image'}

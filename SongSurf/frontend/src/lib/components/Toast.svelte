@@ -7,7 +7,7 @@
 		<div
 			class="alert {toast.type === 'error' ? 'alert-error' : 'alert-info'}"
 			role="alert"
-			on:click={() => removeToast(toast.id)}
+			onclick={() => removeToast(toast.id)}
 		>
 			{toast.message}
 		</div>

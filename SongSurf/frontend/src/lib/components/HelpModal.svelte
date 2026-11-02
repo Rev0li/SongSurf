@@ -1,4 +1,5 @@
 <script>
+
 	import { helpOpen } from '$lib/stores.js';
 
 	// Deux catégories ; chacune est un carrousel d'étapes (texte + image).
@@ -63,13 +64,13 @@
 		},
 	};
 
-	let view = 'home'; // 'home' | 'download' | 'metadata'
-	let stepIndex = 0;
-	let imgError = false;
+	let view = $state('home'); // 'home' | 'download' | 'metadata'
+	let stepIndex = $state(0);
+	let imgError = $state(false);
 
-	$: cat = view === 'home' ? null : categories[view];
-	$: step = cat ? cat.steps[stepIndex] : null;
-	$: { step; imgError = false; } // reset image fallback whenever the step changes
+	let cat = $derived(view === 'home' ? null : categories[view]);
+	let step = $derived(cat ? cat.steps[stepIndex] : null);
+	$effect.pre(() => { step; imgError = false; }); // reset image fallback whenever the step changes
 
 	function open(catKey) {
 		view = catKey;
@@ -99,16 +100,16 @@
 	}
 </script>
 
-<svelte:window on:keydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} />
 
 {#if $helpOpen}
 	<div
 		class="help-overlay"
 		role="presentation"
-		on:click|self={close}
+		onclick={(e) => { if (e.target === e.currentTarget) close(); }}
 	>
 		<div class="help-card" class:is-step={view !== 'home'} role="dialog" aria-modal="true" aria-label="Aide SongSurf">
-			<button class="help-close btn btn-ghost btn-sm" on:click={close} aria-label="Fermer l'aide" title="Fermer (Échap)">✕</button>
+			<button class="help-close btn btn-ghost btn-sm" onclick={close} aria-label="Fermer l'aide" title="Fermer (Échap)">✕</button>
 
 			{#if view === 'home'}
 				<div class="help-home">
@@ -116,7 +117,7 @@
 					<p class="help-lead">Choisis ce que tu veux apprendre :</p>
 					<div class="help-choices">
 						{#each Object.entries(categories) as [key, c]}
-							<button class="help-choice" on:click={() => open(key)}>
+							<button class="help-choice" onclick={() => open(key)}>
 								<span class="help-choice-icon">{c.icon}</span>
 								<span class="help-choice-label">{c.label}</span>
 								<span class="help-choice-tag">{c.tagline}</span>
@@ -127,7 +128,7 @@
 			{:else}
 				<div class="help-step">
 					<div class="help-step-head">
-						<button class="btn btn-ghost btn-sm" on:click={home}>← Catégories</button>
+						<button class="btn btn-ghost btn-sm" onclick={home}>← Catégories</button>
 						<span class="help-crumb">{cat.icon} {cat.label}</span>
 					</div>
 
@@ -138,7 +139,7 @@
 								<span class="help-img-ph-path">{step.img}</span>
 							</div>
 						{:else}
-							<img src={step.img} alt={step.title} on:error={() => (imgError = true)} />
+							<img src={step.img} alt={step.title} onerror={() => (imgError = true)} />
 						{/if}
 					</div>
 
@@ -146,7 +147,7 @@
 					<p class="help-step-body">{step.body}</p>
 
 					<div class="help-nav">
-						<button class="btn btn-ghost btn-sm" on:click={prev} disabled={stepIndex === 0}>← Précédent</button>
+						<button class="btn btn-ghost btn-sm" onclick={prev} disabled={stepIndex === 0}>← Précédent</button>
 						<div class="help-progress-group">
 							<div class="help-dots">
 								{#each cat.steps as _, i}
@@ -156,9 +157,9 @@
 							<span class="help-progress">{stepIndex + 1} / {cat.steps.length}</span>
 						</div>
 						{#if stepIndex < cat.steps.length - 1}
-							<button class="btn btn-primary btn-sm" on:click={next}>Suivant →</button>
+							<button class="btn btn-primary btn-sm" onclick={next}>Suivant →</button>
 						{:else}
-							<button class="btn btn-primary btn-sm" on:click={close}>Terminer ✓</button>
+							<button class="btn btn-primary btn-sm" onclick={close}>Terminer ✓</button>
 						{/if}
 					</div>
 				</div>

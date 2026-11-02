@@ -6,7 +6,7 @@
 		theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
 	}
 
-	$: activeTab = $page.url.pathname.startsWith('/metadata') ? 'metadata' : 'download';
+	let activeTab = $derived($page.url.pathname.startsWith('/metadata') ? 'metadata' : 'download');
 </script>
 
 <!-- Hauteurs fixes (52 + 40 px) : les pages plein écran (/metadata) calculent
@@ -24,8 +24,8 @@
 			{#if $user}
 				<span class="badge" title={$user.email || $user.sub}>{$user.pseudo ?? $user.email}</span>
 			{/if}
-			<button class="btn btn-ghost btn-sm" on:click={() => helpOpen.set(true)} title="Aide / tutoriel" aria-label="Aide">?</button>
-			<button class="btn btn-ghost btn-sm theme-toggle" on:click={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
+			<button class="btn btn-ghost btn-sm" onclick={() => helpOpen.set(true)} title="Aide / tutoriel" aria-label="Aide">?</button>
+			<button class="btn btn-ghost btn-sm theme-toggle" onclick={toggleTheme} title="Changer de thème" aria-label="Changer de thème">
 				{#if $theme === 'dark'}
 					<!-- lucide: sun -->
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

@@ -13,10 +13,13 @@
 
 	// Suit les titres rafraîchis par refreshTree ; garde la dernière valeur si
 	// l'album disparaît (le panneau est alors démonté par la page).
-	let album = $selection.album;
-	$: album = $selection.album ?? album;
-	$: isAdmin = $user?.role === 'admin';
-	$: coverUrl = api.getFolderCoverUrl(album.path, $imgVersions[album.path] ?? 0);
+	let lastAlbum = $selection.album;
+	const album = $derived.by(() => {
+		if ($selection.album) lastAlbum = $selection.album;
+		return lastAlbum;
+	});
+	let isAdmin = $derived($user?.role === 'admin');
+	let coverUrl = $derived(api.getFolderCoverUrl(album.path, $imgVersions[album.path] ?? 0));
 
 	function trackDisplayNum(t) {
 		const n = trackNum(t);
@@ -24,7 +27,7 @@
 	}
 
 	// ── Pochette ──────────────────────────────────────────────────────────────
-	let uploadingCover = false;
+	let uploadingCover = $state(false);
 
 	async function uploadAlbumCover(file) {
 		if (!file || uploadingCover) return;
@@ -43,9 +46,9 @@
 	}
 
 	// ── Renumérotation (mode « Numéroter les pistes ») ───────────────────────
-	let reorderMode    = false;
-	let reorderTracks  = [];
-	let reorderLoading = false;
+	let reorderMode    = $state(false);
+	let reorderTracks  = $state([]);
+	let reorderLoading = $state(false);
 
 	async function enterReorder() {
 		if (reorderLoading) return;
@@ -66,7 +69,7 @@
 	}
 
 	// ── Suppression du dossier (admin) ────────────────────────────────────────
-	let deletingFolder = false;
+	let deletingFolder = $state(false);
 
 	async function deleteAlbumFolder() {
 		if (deletingFolder) return;
@@ -90,7 +93,7 @@
 	}
 </script>
 
-<svelte:window on:paste={onPaste} />
+<svelte:window onpaste={onPaste} />
 
 <div class="meta-content">
 	<Crumbs items={[
@@ -106,7 +109,7 @@
 					class="album-cover-img"
 					src={coverUrl}
 					alt=""
-					on:error={(e) => e.currentTarget.style.display='none'}
+					onerror={(e) => e.currentTarget.style.display='none'}
 				/>
 			{/key}
 			<div class="album-cover-placeholder">💿</div>
@@ -120,7 +123,7 @@
 			</label>
 			<input
 				type="file" accept="image/*" id="album-cover-file" class="hidden-file"
-				on:change={(e) => uploadAlbumCover(e.currentTarget.files?.[0])}
+				onchange={(e) => uploadAlbumCover(e.currentTarget.files?.[0])}
 			/>
 		</div>
 
@@ -137,7 +140,7 @@
 			{#if isAdmin}
 				<button
 					class="btn btn-danger btn-sm folder-delete-btn"
-					on:click={deleteAlbumFolder}
+					onclick={deleteAlbumFolder}
 					disabled={deletingFolder}
 					title="Supprime le dossier album et tous ses titres (irréversible)"
 				>
@@ -155,7 +158,7 @@
 				{#if !reorderMode}
 					<button
 						class="section-action"
-						on:click={enterReorder}
+						onclick={enterReorder}
 						disabled={reorderLoading}
 						title="Réordonner les titres puis écrire les numéros de piste 1..N (TRCK n/total)"
 					>
@@ -177,7 +180,7 @@
 					{#each $albumTracks as track (track.path)}
 						<button
 							class="track-row {$selection.path === track.path ? 'track-selected' : ''}"
-							on:click={() => selectSong(track.path, true)}
+							onclick={() => selectSong(track.path, true)}
 						>
 							<span class="track-num {trackDisplayNum(track) === '—' ? 'track-num-missing' : ''}">{trackDisplayNum(track)}</span>
 							<span class="track-name">{songDisplayName(track.name)}</span>
@@ -197,7 +200,7 @@
 					{#each album.songs as song, i (song.path)}
 						<button
 							class="track-row {$selection.path === song.path ? 'track-selected' : ''}"
-							on:click={() => selectSong(song.path, true)}
+							onclick={() => selectSong(song.path, true)}
 						>
 							<span class="track-num">{i + 1}</span>
 							<span class="track-name">{songDisplayName(song.name)}</span>

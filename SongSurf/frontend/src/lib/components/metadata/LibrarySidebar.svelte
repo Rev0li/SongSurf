@@ -10,9 +10,9 @@
 	} from '$lib/metadata/library.js';
 	import { songDisplayName, countSongs } from '$lib/metadata/id3.js';
 
-	let filter = '';
-	let sidebarCollapsed = lsGet(LS.sidebar) === '1';
-	let expanded = new Set();
+	let filter = $state('');
+	let sidebarCollapsed = $state(lsGet(LS.sidebar) === '1');
+	let expanded = $state(new Set());
 	try { expanded = new Set(JSON.parse(lsGet(LS.expanded, '[]'))); } catch { /* ignore */ }
 
 	function toggleSidebar() {
@@ -28,23 +28,23 @@
 	}
 
 	// ── Filtre ────────────────────────────────────────────────────────────────
-	$: q = nrm(filter);
+	let q = $derived(nrm(filter));
 
-	$: filteredArtists = !$tree ? [] : ($tree.artists ?? []).map((a) => ({
+	let filteredArtists = $derived(!$tree ? [] : ($tree.artists ?? []).map((a) => ({
 		...a,
 		albums: (a.albums ?? []).map((al) => ({
 			...al,
 			songs: (al.songs ?? []).filter((s) => !q || nrm([a.name, al.name, s.name].join(' ')).includes(q)),
 		})).filter((al) => al.songs.length > 0),
-	})).filter((a) => a.albums.length > 0);
+	})).filter((a) => a.albums.length > 0));
 
-	$: filteredPlaylists = !$tree ? [] : ($tree.playlists ?? []).map((pl) => ({
+	let filteredPlaylists = $derived(!$tree ? [] : ($tree.playlists ?? []).map((pl) => ({
 		...pl,
 		songs: (pl.songs ?? []).filter((s) => !q || nrm([pl.name, s.name].join(' ')).includes(q)),
-	})).filter((pl) => pl.songs.length > 0);
+	})).filter((pl) => pl.songs.length > 0));
 
-	$: isEmpty = filteredArtists.length === 0 && filteredPlaylists.length === 0;
-	$: sel = $selection;
+	let isEmpty = $derived(filteredArtists.length === 0 && filteredPlaylists.length === 0);
+	let sel = $derived($selection);
 
 	// ── Glisser-déposer ───────────────────────────────────────────────────────
 	let dndType      = ''; // 'song' | 'album'
@@ -108,7 +108,7 @@
 </script>
 
 {#if sidebarCollapsed}
-	<button class="sidebar-rail" on:click={toggleSidebar} title="Afficher la bibliothèque">
+	<button class="sidebar-rail" onclick={toggleSidebar} title="Afficher la bibliothèque">
 		<span class="sidebar-rail-icon">»</span>
 		<span class="sidebar-rail-label">Bibliothèque</span>
 	</button>
@@ -117,7 +117,7 @@
 	<div class="sidebar-top">
 		<div class="sidebar-search-row">
 			<input class="form-input" placeholder="Rechercher…" bind:value={filter} />
-			<button class="sidebar-collapse-btn" on:click={toggleSidebar} title="Masquer la bibliothèque">«</button>
+			<button class="sidebar-collapse-btn" onclick={toggleSidebar} title="Masquer la bibliothèque">«</button>
 		</div>
 	</div>
 
@@ -130,22 +130,22 @@
 			{#each filteredArtists as artist (artist.path)}
 				<!-- Artist = drop zone for albums -->
 				<div class="tree-artist"
-					on:dragover={dndOverArtist}
-					on:dragleave={dndLeave}
-					on:drop={(e) => dndDropOnArtist(e, artist.path)}
+					ondragover={dndOverArtist}
+					ondragleave={dndLeave}
+					ondrop={(e) => dndDropOnArtist(e, artist.path)}
 				>
 					<div class="tree-node artist-node {sel.type === 'artist' && sel.artist?.path === artist.path ? 'artist-selected' : ''}">
-						<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(artist.path)}>
+						<button class="caret-btn" onclick={(e) => { e.stopPropagation(); toggleExpand(artist.path); }}>
 							{expanded.has(artist.path) || q ? '▾' : '▸'}
 						</button>
-						<button class="artist-label-btn" on:click={() => selectArtist(artist)}>
+						<button class="artist-label-btn" onclick={() => selectArtist(artist)}>
 							<span class="tree-artist-pic">
 								{#if artist.has_picture}
 									<img
 										src={api.getArtistPictureUrl(artist.path, $imgVersions[artist.path] ?? 0)}
 										alt="" loading="lazy"
-										on:load={(e) => e.currentTarget.style.display=''}
-										on:error={(e) => e.currentTarget.style.display='none'}
+										onload={(e) => e.currentTarget.style.display=''}
+										onerror={(e) => e.currentTarget.style.display='none'}
 									/>
 								{/if}
 								<span class="tree-artist-pic-fallback">🎤</span>
@@ -159,22 +159,22 @@
 						{#each artist.albums as album (album.path)}
 							<!-- Album = drop zone for songs -->
 							<div class="tree-album"
-								on:dragover={dndOverAlbum}
-								on:dragleave={dndLeave}
-								on:drop={(e) => dndDropOnAlbum(e, album.path)}
+								ondragover={dndOverAlbum}
+								ondragleave={dndLeave}
+								ondrop={(e) => dndDropOnAlbum(e, album.path)}
 							>
 								<div class="tree-node album-node {sel.type === 'album' && sel.album?.path === album.path ? 'album-selected' : ''}">
-									<button class="caret-btn" on:click|stopPropagation={() => toggleExpand(album.path)}>
+									<button class="caret-btn" onclick={(e) => { e.stopPropagation(); toggleExpand(album.path); }}>
 										{expanded.has(album.path) || q ? '▾' : '▸'}
 									</button>
 									<span
 										class="lib-drag-handle"
 										draggable="true"
 										title="Glisser l'album vers un autre artiste"
-										on:dragstart|stopPropagation={(e) => dndStart(e, album.path, 'album')}
-										on:dragend|stopPropagation={dndEnd}
+										ondragstart={(e) => { e.stopPropagation(); dndStart(e, album.path, 'album'); }}
+										ondragend={(e) => { e.stopPropagation(); dndEnd(); }}
 									>⠿</span>
-									<button class="album-label-btn" on:click={() => selectAlbum(album, artist)}>
+									<button class="album-label-btn" onclick={() => selectAlbum(album, artist)}>
 										<span class="tree-icon">💿</span>
 										<span class="tree-label">{album.name}</span>
 										<span class="tree-count">{album.songs.length}</span>
@@ -185,9 +185,9 @@
 										<button
 											class="song-row {sel.path === song.path ? 'selected' : ''}"
 											draggable="true"
-											on:dragstart={(e) => dndStart(e, song.path, 'song')}
-											on:dragend={dndEnd}
-											on:click={() => selectSong(song.path)}
+											ondragstart={(e) => dndStart(e, song.path, 'song')}
+											ondragend={dndEnd}
+											onclick={() => selectSong(song.path)}
 										>
 											<span class="song-name">{songDisplayName(song.name)}</span>
 										</button>
@@ -202,11 +202,11 @@
 			{#each filteredPlaylists as pl (pl.path)}
 				<!-- Playlists = drop zone for songs -->
 				<div class="tree-artist"
-					on:dragover={dndOverAlbum}
-					on:dragleave={dndLeave}
-					on:drop={(e) => dndDropOnAlbum(e, pl.path)}
+					ondragover={dndOverAlbum}
+					ondragleave={dndLeave}
+					ondrop={(e) => dndDropOnAlbum(e, pl.path)}
 				>
-					<button class="tree-node" on:click={() => toggleExpand(pl.path)}>
+					<button class="tree-node" onclick={() => toggleExpand(pl.path)}>
 						<span class="tree-caret">{expanded.has(pl.path) || q ? '▾' : '▸'}</span>
 						<span class="tree-icon">📁</span>
 						<span class="tree-label">{pl.name}</span>
@@ -217,9 +217,9 @@
 							<button
 								class="song-row {sel.path === song.path ? 'selected' : ''}"
 								draggable="true"
-								on:dragstart={(e) => dndStart(e, song.path, 'song')}
-								on:dragend={dndEnd}
-								on:click={() => selectSong(song.path)}
+								ondragstart={(e) => dndStart(e, song.path, 'song')}
+								ondragend={dndEnd}
+								onclick={() => selectSong(song.path)}
 							>
 								<span class="song-name">{songDisplayName(song.name)}</span>
 							</button>

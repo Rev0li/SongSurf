@@ -1,6 +1,6 @@
 # Carte fonctionnelle du frontend — SSF-05, étape 0
 
-> État au 2026-10-26 (branche `feat/ssf-05`). Sert de base au découpage du frontend (SSF-05) puis au refactor backend (SSF-04) : ce que l'interface utilise vraiment dit quelles routes garder.
+> État au 2026-10-26, mis à jour le 2026-11-02 (découpage de `/metadata` + Svelte 5, branche `feat/ssf-05`). Sert de base au découpage du frontend (SSF-05) puis au refactor backend (SSF-04) : ce que l'interface utilise vraiment dit quelles routes garder.
 >
 > Légende : ✅ essentiel · 🟡 secondaire (gardé, candidat à simplifier ou à mettre en retrait) · 🔁 doublon · 💀 mort (à supprimer)
 > **Les 🔁 et 💀 ne sont supprimés qu'après validation.**
@@ -10,12 +10,12 @@
 | Zone | Fichier(s) | Lignes |
 |---|---|---|
 | Page Téléchargement `/` | `routes/+page.svelte` + 4 composants (avant : 6, ~1 400 lignes) | ~640 |
-| Page Métadonnées `/metadata` | `routes/metadata/+page.svelte` (script 768 · balisage 755 · style 670) | **2 194** |
+| Page Métadonnées `/metadata` | `routes/metadata/+page.svelte` (coquille) + 12 composants `lib/components/metadata/` + `lib/metadata/{library,id3}.js` + `lib/styles/metadata.css` (avant : un seul fichier de 2 194 lignes) | ~2 300, aucun fichier > ~400 |
 | Coquille (tous écrans) | `routes/+layout.svelte`, `Header`, `Toast`, `ConfirmModal`, `HelpModal`, `WatcherInactivity` | ~630 |
 | Partagé | `lib/api.js`, `lib/stores.js`, `lib/utils.js` | ~300 |
 | Styles globaux | `lib/styles/*.css` | ~580 |
 
-Stack : Svelte 4.2, SvelteKit 2.9, Vite 5.4, adapter-static.
+Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (image Docker). `npm run check` = `svelte-check`.
 
 ---
 
@@ -44,6 +44,23 @@ Stack : Svelte 4.2, SvelteKit 2.9, Vite 5.4, adapter-static.
 | `LibraryTree` — arborescence artistes/albums/titres, filtre, glisser-déposer titre → album et album → artiste | Même fonction que la colonne gauche de `/metadata`, en moins complet | 🔁 à retirer de l'accueil (lien « Voir ma bibliothèque » vers `/metadata`) ; le bouton ZIP reste |
 
 ## 3. Page Métadonnées `/metadata`
+
+**Découpage (SSF-05, 2026-11-02).** La page ne fait plus que charger l'arbre et afficher le panneau de la sélection. L'état partagé vit dans `lib/metadata/library.js` (stores `tree`, `selection`, `imgVersions`, `albumTracks`, fonctions `select*`, `refreshTree`…). Chaque sélection incrémente `selection.seq` : le panneau est remonté et repart d'un état local vierge. Les styles communs à plusieurs composants sont dans `lib/styles/metadata.css`, préfixés `.meta-layout` (même spécificité que les anciens styles scopés).
+
+| Composant | Contenu | Mode (SSF-13) |
+|---|---|---|
+| `ArtistGallery` | Accueil : galerie des artistes | simple |
+| `Crumbs` | Fil d'Ariane | simple |
+| `ArtistPanel` | Photo, infos, grille des albums + badges | simple (photo d'artiste : expert) |
+| `AlbumPanel` | Pochette, tracklist triée par TRCK | simple |
+| `SongPanel` | Chargement du titre, flèches, bloc « Fichier » | simple (bloc Fichier : expert) |
+| `SongTagsEditor` | Tags principaux + Sauvegarder | simple · « Champs supplémentaires » et « Appliquer à l'album » : expert |
+| `LibrarySidebar` | Arborescence, filtre, glisser-déposer | **expert** |
+| `ArtistGenre` | Genre de l'artiste | **expert** (genre en mode simple : à trancher dans SSF-13) |
+| `ArtistAudit` | Audit iTunes | **expert** |
+| `AlbumReorder` | « Numéroter les pistes » | **expert** |
+| `SongDetails` | TXXX, audio, pochette par titre | **expert** |
+| Suppression (admin) | dans `ArtistPanel` / `AlbumPanel` | **expert** |
 
 ### 3.1 Navigation
 | Élément | Statut |
@@ -118,4 +135,4 @@ Découpage naturel du backend qui en découle : **téléchargement** (extract, d
 1. ✅ **Fait** — code mort supprimé : 3 fonctions de `utils.js` (+ `matchesFilter`, `lastCompleted`, `urlQueue`, devenus inutiles), 31 classes CSS globales. La route `admin/extract-covers` part avec SSF-04.
 2. ✅ **Fait** — une seule « 📋 File d'attente » (`UpcomingQueue`, celle du serveur, avec texte d'aide quand elle est vide) ; `UrlQueue` supprimé ; « Ajouter à la file » envoie directement, erreur → toast.
 3. ✅ **Fait** — arborescence retirée de l'accueil : `LibraryTree` remplacé par `LibraryCard` (bouton « 📚 Voir ma bibliothèque » + ZIP). Les onglets du haut disparaîtront avec la refonte.
-4. ⏳ **À discuter avant le découpage** — ce qu'on garde au premier plan (mobile, simplicité), éventuel **mode simple / mode expert**.
+4. ✅ **Tranché** — mode simple / expert et mobile → **SSF-13 (#27)**. Le découpage ci-dessus (§ 3) sépare déjà les briques expertes en composants.

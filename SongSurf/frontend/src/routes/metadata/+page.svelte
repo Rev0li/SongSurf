@@ -17,7 +17,7 @@
 
 	// ── Position de scroll de la galerie d'artistes ───────────────────────────
 	// Restaurée après un remount (ex : aller sur Téléchargement puis revenir).
-	let metaMainEl;
+	let metaMainEl = $state();
 	let homeScrollSaveTimer = null;
 
 	function saveHomeScroll() {
@@ -69,7 +69,7 @@
 <div class="meta-layout">
 	<LibrarySidebar />
 
-	<main class="meta-main" bind:this={metaMainEl} on:scroll={saveHomeScroll}>
+	<main class="meta-main" bind:this={metaMainEl} onscroll={saveHomeScroll}>
 		<!-- Un remount par sélection : chaque panneau repart d'un état local vierge -->
 		{#key $selection.seq}
 			{#if $selection.type === null}

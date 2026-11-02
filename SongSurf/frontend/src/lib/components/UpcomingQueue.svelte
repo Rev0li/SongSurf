@@ -22,8 +22,8 @@
 		return out;
 	}
 
-	$: pending = $downloadStatus.pending ?? [];
-	$: grouped = group(pending);
+	let pending = $derived($downloadStatus.pending ?? []);
+	let grouped = $derived(group(pending));
 </script>
 
 <div class="card">

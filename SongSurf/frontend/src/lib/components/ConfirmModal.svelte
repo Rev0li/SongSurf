@@ -14,13 +14,13 @@
 	}
 
 	// Le message peut contenir des sauts de ligne (\n) — on les conserve.
-	$: lines = $confirmState ? $confirmState.message.split('\n') : [];
+	let lines = $derived($confirmState ? $confirmState.message.split('\n') : []);
 </script>
 
-<svelte:window on:keydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} />
 
 {#if $confirmState}
-	<div class="cm-overlay" role="presentation" on:click|self={() => settle(false)}>
+	<div class="cm-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) settle(false); }}>
 		<div class="cm-card" role="alertdialog" aria-modal="true" aria-label={$confirmState.title}>
 			<h3 class="cm-title">{$confirmState.title}</h3>
 			<div class="cm-message">
@@ -29,14 +29,14 @@
 				{/each}
 			</div>
 			<div class="cm-actions">
-				<button class="btn btn-ghost btn-sm" on:click={() => settle(false)}>
+				<button class="btn btn-ghost btn-sm" onclick={() => settle(false)}>
 					{$confirmState.cancelLabel}
 				</button>
 				<button
 					class="btn btn-sm"
 					class:btn-danger={$confirmState.danger}
 					class:btn-primary={!$confirmState.danger}
-					on:click={() => settle(true)}
+					onclick={() => settle(true)}
 				>
 					{$confirmState.confirmLabel}
 				</button>

@@ -4,22 +4,22 @@
 	import { asText, inferPlaylistArtist } from '$lib/utils.js';
 
 	// ── State ──────────────────────────────────────────────────────────────────
-	let url = '';
-	let extract = null;
-	let panelActive = false;
+	let url = $state('');
+	let extract = $state(null);
+	let panelActive = $state(false);
 
 	// single song fields
-	let title = '';
-	let artist = '';
-	let album = '';
+	let title = $state('');
+	let artist = $state('');
+	let album = $state('');
 
 	// playlist fields
-	let playlistArtist = '';
-	let playlistAlbum = '';
-	let playlistYear = '';
+	let playlistArtist = $state('');
+	let playlistAlbum = $state('');
+	let playlistYear = $state('');
 
 	// ── Extract ───────────────────────────────────────────────────────────────
-	let extracting = false;
+	let extracting = $state(false);
 
 	async function onExtract() {
 		const raw = url.trim();
@@ -57,7 +57,7 @@
 	// Envoi direct au serveur, qui possède la file (SSF-03) : elle s'affiche dans
 	// « File d'attente » (UpcomingQueue). Un refus (cookies, quota, file pleine)
 	// devient un toast et le panneau reste ouvert pour réessayer.
-	let submitting = false;
+	let submitting = $state(false);
 
 	async function addToQueue() {
 		if (!extract || submitting) return;
@@ -122,10 +122,10 @@
 				bind:value={url}
 				placeholder="Coller un lien YouTube Music…"
 				autocomplete="off"
-				on:keydown={onKeydown}
+				onkeydown={onKeydown}
 				disabled={extracting}
 			/>
-			<button class="btn btn-primary" on:click={onExtract} disabled={extracting}>
+			<button class="btn btn-primary" onclick={onExtract} disabled={extracting}>
 				{extracting ? 'Analyse…' : 'Analyser'}
 			</button>
 		</div>
@@ -183,10 +183,10 @@
 				{/if}
 
 				<div class="metadata-actions">
-					<button class="btn btn-primary btn-block" on:click={addToQueue} disabled={submitting}>
+					<button class="btn btn-primary btn-block" onclick={addToQueue} disabled={submitting}>
 						{submitting ? 'Envoi…' : '➕ Ajouter à la file'}
 					</button>
-					<button class="btn btn-ghost btn-sm" on:click={reset}>Annuler</button>
+					<button class="btn btn-ghost btn-sm" onclick={reset}>Annuler</button>
 				</div>
 			</div>
 		</div>

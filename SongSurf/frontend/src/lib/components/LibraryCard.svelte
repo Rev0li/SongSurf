@@ -10,14 +10,14 @@
 	// Le serveur construit le ZIP en arrière-plan : on suit l'avancement via
 	// /api/zip-status, puis on lance le téléchargement. Un ZIP prêt (même après un
 	// redémarrage du serveur) se récupère sans le reconstruire.
-	let zip = { status: 'idle' };
+	let zip = $state({ status: 'idle' });
 	let zipPoll = null;
 	// Bibliothèque admin permanente : pas d'export ZIP (SSF-10, refusé aussi côté API).
-	$: isAdmin = $user?.role === 'admin';
-	$: zipBuilding = zip.status === 'building';
-	$: zipLabel = zipBuilding
+	let isAdmin = $derived($user?.role === 'admin');
+	let zipBuilding = $derived(zip.status === 'building');
+	let zipLabel = $derived(zipBuilding
 		? `⏳ ZIP ${zip.done ?? 0} / ${zip.total ?? '…'}`
-		: zip.status === 'ready' ? '📥 Récupérer le ZIP' : '📥 Télécharger ZIP';
+		: zip.status === 'ready' ? '📥 Récupérer le ZIP' : '📥 Télécharger ZIP');
 
 	onMount(resumeZip);
 	onDestroy(stopZipPolling);
@@ -100,7 +100,7 @@
 	<div class="lib-actions">
 		<a class="btn btn-primary" href="/metadata">📚 Voir ma bibliothèque</a>
 		{#if !isAdmin}
-			<button class="btn btn-success" on:click={downloadZip} disabled={zipBuilding}>
+			<button class="btn btn-success" onclick={downloadZip} disabled={zipBuilding}>
 				{zipLabel}
 			</button>
 		{/if}

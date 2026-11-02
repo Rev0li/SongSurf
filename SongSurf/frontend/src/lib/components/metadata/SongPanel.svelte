@@ -17,9 +17,9 @@
 	const path  = $selection.path;
 	const album = $selection.album; // contexte album (flèches) si on vient du panneau album
 
-	let meta    = null;
-	let loading = true;
-	let error   = '';
+	let meta    = $state(null);
+	let loading = $state(true);
+	let error   = $state('');
 
 	onMount(async () => {
 		try {
@@ -41,10 +41,10 @@
 	];
 
 	// ── Titre précédent / suivant dans l'album ────────────────────────────────
-	$: ordered = album ? ($albumTracks ?? album.songs ?? []) : null;
-	$: index   = ordered ? ordered.findIndex((t) => t.path === path) : -1;
-	$: prevTrack = ordered && index > 0 ? ordered[index - 1] : null;
-	$: nextTrack = ordered && index >= 0 && index < ordered.length - 1 ? ordered[index + 1] : null;
+	let ordered = $derived(album ? ($albumTracks ?? album.songs ?? []) : null);
+	let index   = $derived(ordered ? ordered.findIndex((t) => t.path === path) : -1);
+	let prevTrack = $derived(ordered && index > 0 ? ordered[index - 1] : null);
+	let nextTrack = $derived(ordered && index >= 0 && index < ordered.length - 1 ? ordered[index + 1] : null);
 
 	function goPrev() { if (prevTrack) selectSong(prevTrack.path, true); }
 	function goNext() { if (nextTrack) selectSong(nextTrack.path, true); }
@@ -60,7 +60,7 @@
 
 	// ── Titres de l'album visés par « Appliquer à l'album » ───────────────────
 	// selection.album si on vient du panneau album, sinon déduits de l'arbre.
-	$: albumSongs = (() => {
+	let albumSongs = $derived.by(() => {
 		if ($selection.album) return $selection.album.songs ?? [];
 		if (!meta?.path || !$tree) return [];
 		const p = meta.path.split('/');
@@ -68,14 +68,14 @@
 		const albumPath = p.slice(0, 2).join('/');
 		const artist = ($tree.artists ?? []).find((a) => a.path === p[0]);
 		return artist?.albums?.find((a) => a.path === albumPath)?.songs ?? [];
-	})();
+	});
 
 	// ── Pochette (écrit l'APIC du titre + cover.jpg du dossier album) ─────────
-	$: albumFolderPath = meta?.path ? meta.path.split('/').slice(0, -1).join('/') : '';
-	$: albumCoverUrl   = albumFolderPath ? api.getFolderCoverUrl(albumFolderPath, $imgVersions[albumFolderPath] ?? 0) : '';
+	let albumFolderPath = $derived(meta?.path ? meta.path.split('/').slice(0, -1).join('/') : '');
+	let albumCoverUrl   = $derived(albumFolderPath ? api.getFolderCoverUrl(albumFolderPath, $imgVersions[albumFolderPath] ?? 0) : '');
 
-	let uploadingCover = false;
-	let coverError     = '';
+	let uploadingCover = $state(false);
+	let coverError     = $state('');
 
 	async function uploadSongCover(file) {
 		if (!file || uploadingCover) return;
@@ -96,7 +96,7 @@
 	}
 </script>
 
-<svelte:window on:paste={onPaste} on:keydown={onKeydown} />
+<svelte:window onpaste={onPaste} onkeydown={onKeydown} />
 
 {#if loading}
 	<div class="meta-empty"><span class="meta-empty-icon">⏳</span><p>Chargement…</p></div>
@@ -108,7 +108,7 @@
 			<button
 				class="song-nav-arrow"
 				disabled={!prevTrack}
-				on:click={goPrev}
+				onclick={goPrev}
 				title={prevTrack ? `Titre précédent : ${songDisplayName(prevTrack.name)}` : 'Premier titre de l\'album'}
 				aria-label="Titre précédent"
 			>‹</button>
@@ -142,7 +142,7 @@
 			<button
 				class="song-nav-arrow"
 				disabled={!nextTrack}
-				on:click={goNext}
+				onclick={goNext}
 				title={nextTrack ? `Titre suivant : ${songDisplayName(nextTrack.name)}` : 'Dernier titre de l\'album'}
 				aria-label="Titre suivant"
 			>›</button>

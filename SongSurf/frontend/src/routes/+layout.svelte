@@ -12,6 +12,13 @@
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 	import HelpModal from '$lib/components/HelpModal.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	/**
+	 * @typedef {Object} Props
+	 * @property {import('svelte').Snippet} [children]
+	 */
+
+	/** @type {Props} */
+	let { children } = $props();
 
 	let lastErrorTimestamp = '';
 	let errorBaselineSet = false;
@@ -86,4 +93,4 @@
 <HelpModal />
 <ConfirmModal />
 
-<slot />
+{@render children?.()}
