@@ -299,12 +299,31 @@ def _write_owner_file(d: Path, pseudo: str) -> None:
         logger.warning(f"⚠️ .owner non écrit dans {d.name}: {e}")
 
 
-def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
-    """Updates TPE1/TALB tags to match the file's actual folder position.
+def _retarget_artists(artists: list[str], old_artist: str | None, new_artist: str) -> list[str]:
+    """TPE1 après un déplacement : seul l'artiste principal change, les featurings restent.
+
+    Même artiste (déplacement entre ses albums) → TPE1 inchangé. Sinon l'ancien
+    artiste est remplacé là où il apparaît, à défaut le premier de la liste.
+    """
+    if not artists:
+        return [new_artist]
+    if not old_artist or old_artist == new_artist:
+        return list(artists)
+    if old_artist in artists:
+        out = [new_artist if a == old_artist else a for a in artists]
+    else:
+        out = [new_artist, *artists[1:]]
+    return list(dict.fromkeys(out))  # dédoublonne en gardant l'ordre
+
+
+def _sync_mp3_tags(file_path: Path, music_dir: Path, old_artist: str | None = None) -> None:
+    """Met les tags d'un MP3 déplacé en accord avec son nouveau dossier (SSF-13).
 
     Structure assumed:
-      Artist/Album/song.mp3  →  artist=parts[0], album=parts[1]
-      Album/song.mp3         →  album=parts[0]  (playlist mode)
+      Artist/Album/song.mp3  →  TALB = Album, TPE2 = Artist, TPE1 : artiste
+                                principal remplacé (featurings gardés)
+      Album/song.mp3         →  TALB = Album  (playlist mode)
+    `old_artist` = dossier artiste d'origine (None si inconnu).
     """
     if file_path.suffix.lower() != '.mp3':
         return
@@ -318,16 +337,28 @@ def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
         else:
             return
         from mutagen.mp3 import MP3
-        from mutagen.id3 import ID3, TPE1, TALB
+        from mutagen.id3 import ID3, TPE1, TPE2, TALB
         audio = MP3(file_path, ID3=ID3)
         if audio.tags is None:
             audio.add_tags()
         if artist:
-            audio.tags['TPE1'] = TPE1(encoding=3, text=artist)
+            current = [str(a).strip() for a in (audio.tags['TPE1'].text if 'TPE1' in audio.tags else [])
+                       if str(a).strip()]
+            audio.tags['TPE1'] = TPE1(encoding=3, text=_retarget_artists(current, old_artist, artist))
+            audio.tags['TPE2'] = TPE2(encoding=3, text=artist)
         audio.tags['TALB'] = TALB(encoding=3, text=album)
         audio.save()
     except Exception as e:
         logger.warning(f"⚠️ sync_mp3_tags({file_path.name}): {e}")
+
+
+def _is_admin(user: dict | None) -> bool:
+    return bool(user) and user.get('role') == 'admin'
+
+
+def _admin_only_response():
+    """Outils experts (SSF-13) : réservés à l'admin, 403 pour un membre."""
+    return jsonify({'success': False, 'error': 'Réservé à l\'administrateur', 'code': 'admin_only'}), 403
 
 
 # ── Authentication ─────────────────────────────────────────────────────────────
@@ -615,8 +646,10 @@ def library_move_song():
             target = dst_dir / f"{src.stem} ({i}){src.suffix}"
             i += 1
 
+        src_parts  = src.relative_to(base).parts
+        old_artist = src_parts[0] if len(src_parts) == 3 else None
         shutil.move(str(src), str(target))
-        _sync_mp3_tags(target, music_dir)
+        _sync_mp3_tags(target, music_dir, old_artist=old_artist)
         return jsonify({'success': True, 'final_path': str(target.relative_to(music_dir))})
     except Exception as e:
         logger.error(f"❌ /api/library/move: {e}")
@@ -670,8 +703,9 @@ def library_move_folder():
         if old_parent != base and old_parent.exists() and not any(old_parent.iterdir()):
             old_parent.rmdir()
 
+        old_artist = old_parent.name if old_parent != base else None
         for mp3 in dst.rglob('*.mp3'):
-            _sync_mp3_tags(mp3, music_dir)
+            _sync_mp3_tags(mp3, music_dir, old_artist=old_artist)
 
         return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
     except Exception as e:
@@ -1366,9 +1400,11 @@ _backfill_state = {'status': 'idle', 'total': 0, 'done': 0, 'updated': 0,
 @auth_required
 def library_audit_artist():
     """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste.
-    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
+    Outil expert : admin uniquement (SSF-13)."""
     try:
         user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
@@ -1393,9 +1429,11 @@ def library_audit_artist():
 @auth_required
 def library_audit_apply():
     """Applique les recommandations cochées : [{path, field, value}].
-    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
+    Outil expert : admin uniquement (SSF-13)."""
     try:
         user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         changes   = (request.get_json(silent=True) or {}).get('changes') or []
 
@@ -1868,7 +1906,8 @@ def library_song_meta():
 @app.route('/api/library/album-tracks')
 @auth_required
 def library_album_tracks():
-    """Tracklist légère d'un album (titre + TRCK) pour le mode « Numéroter »."""
+    """Tracklist légère d'un album (titre, TRCK, artistes, année, genres) :
+    page album, mode « Numéroter » et assistant « À remplir »."""
     try:
         user      = _get_current_user()
         music_dir = _user_music_dir(user)
@@ -1893,10 +1932,191 @@ def library_album_tracks():
                 'name':         f.name,
                 'title':        tags['title'],
                 'track_number': tags['track_number'],
+                'artists':      tags['artists'],
+                'year':         tags['year'],
+                'genres':       tags['genres'],
             })
         return jsonify({'success': True, 'tracks': items})
     except Exception as e:
         logger.error(f"❌ /api/library/album-tracks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Complétude d'un album, mise en cache tant que ses MP3 ne changent pas
+# (signature = noms + mtime + taille) : l'écriture d'un tag invalide l'entrée.
+_album_status_cache: dict[str, tuple] = {}
+_album_status_lock = threading.Lock()
+
+
+def _album_status(album_dir: Path, music_dir: Path) -> dict | None:
+    """{path, name, tracks, missing{genre,year,track_number}, genres, complete} — None sans MP3."""
+    try:
+        mp3s = sorted(f for f in album_dir.iterdir() if f.is_file() and f.suffix.lower() == '.mp3')
+    except OSError:
+        return None
+    if not mp3s:
+        return None
+    sig = tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in mp3s)
+    key = str(album_dir)
+    with _album_status_lock:
+        hit = _album_status_cache.get(key)
+    if hit and hit[0] == sig:
+        result = hit[1]
+    else:
+        from library_audit import _read_tags
+        missing = {'genre': 0, 'year': 0, 'track_number': 0}
+        genres  = set()
+        for f in mp3s:
+            tags = _read_tags(f)
+            if not tags['genres']:
+                missing['genre'] += 1
+            genres.update(tags['genres'])
+            if not tags['year']:
+                missing['year'] += 1
+            if not tags['track_number']:
+                missing['track_number'] += 1
+        result = {'tracks': len(mp3s), 'missing': missing, 'genres': sorted(genres),
+                  'complete': not any(missing.values())}
+        with _album_status_lock:
+            _album_status_cache[key] = (sig, result)
+    return {'path': str(album_dir.relative_to(music_dir)), 'name': album_dir.name, **result}
+
+
+@app.route('/api/library/todo')
+@auth_required
+def library_todo():
+    """Albums aux infos incomplètes (année, n° de piste ou genre) de toute la
+    bibliothèque de l'utilisateur : bouton et assistant « À remplir » (SSF-13)."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        albums = []
+        if music_dir.exists():
+            for artist_dir in sorted((d for d in music_dir.iterdir() if d.is_dir()),
+                                     key=lambda p: p.name.lower()):
+                for album_dir in sorted((d for d in artist_dir.iterdir() if d.is_dir()),
+                                        key=lambda p: p.name.lower()):
+                    st = _album_status(album_dir, music_dir)
+                    if st and not st['complete']:
+                        albums.append({**st, 'artist': artist_dir.name,
+                                       'artist_path': str(artist_dir.relative_to(music_dir))})
+        return jsonify({'success': True, 'albums': albums})
+    except Exception as e:
+        logger.error(f"❌ /api/library/todo: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+_FORBIDDEN_NAME_CHARS = '<>:"/\\|?*'
+
+
+def _clean_folder_name(name: str) -> str:
+    """Nom de dossier sûr (mêmes caractères interdits que l'organizer)."""
+    for ch in _FORBIDDEN_NAME_CHARS:
+        name = name.replace(ch, '')
+    name = name.strip().rstrip('.')
+    return '' if name in ('', '.', '..') else name
+
+
+@app.route('/api/library/album-tags/save', methods=['POST'])
+@auth_required
+def library_album_tags_save():
+    """« Modifier l'album » et « À remplir » (SSF-13) : écrit sur tous les titres
+    d'un album les champs fournis parmi `album`, `year`, `genre`.
+
+    Nouveau nom d'album → TALB de chaque titre + dossier renommé (SongSurf et
+    Jellyfin restent d'accord). 409 si un album du même nom existe déjà.
+    """
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        data        = request.get_json(silent=True) or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        base   = music_dir.resolve()
+        folder = (music_dir / folder_path).resolve()
+        if folder == base or folder.parent == base or not folder.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        tags = {}
+        if 'year' in data:
+            year = str(data.get('year') or '').strip()
+            if year and not re.fullmatch(r'\d{4}', year):
+                return jsonify({'success': False, 'error': 'Année invalide (4 chiffres)'}), 400
+            tags['year'] = year
+        if 'genre' in data:
+            tags['genre'] = str(data.get('genre') or '').strip()
+
+        target = folder
+        if 'album' in data:
+            new_name = _clean_folder_name(str(data.get('album') or ''))
+            if not new_name:
+                return jsonify({'success': False, 'error': "Nom d'album invalide"}), 400
+            tags['album'] = new_name
+            if new_name != folder.name:
+                target = folder.parent / new_name
+                # Renommage de casse seule (« live » → « Live ») autorisé sur un FS insensible
+                if target.exists() and target.resolve() != folder:
+                    return jsonify({'success': False, 'error': 'Un album porte déjà ce nom',
+                                    'code': 'album_exists'}), 409
+                folder.rename(target)
+
+        mp3s = sorted(f for f in target.iterdir() if f.is_file() and f.suffix.lower() == '.mp3')
+        updated, errors = 0, []
+        for f in mp3s:
+            try:
+                if tags:
+                    _write_song_tags(f, tags)
+                updated += 1
+            except Exception as e:
+                errors.append({'path': str(f.relative_to(base)), 'error': str(e)})
+
+        logger.info(f"💾 Album {folder_path} → {target.name} : {sorted(tags)} sur {updated} titre(s)")
+        return jsonify({'success': True, 'path': str(target.relative_to(base)),
+                        'updated': updated, 'errors': errors})
+    except Exception as e:
+        logger.error(f"❌ /api/library/album-tags/save: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/delete-song', methods=['POST'])
+@auth_required
+def library_delete_song():
+    """Supprime un titre — admin uniquement (SSF-13). Album devenu sans MP3 →
+    dossier retiré (pochette comprise), puis l'artiste s'il est vide."""
+    try:
+        user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
+        music_dir = _user_music_dir(user)
+        path      = ((request.get_json(silent=True) or {}).get('path') or '').strip()
+        if not path:
+            return jsonify({'success': False, 'error': 'path requis'}), 400
+
+        base   = music_dir.resolve()
+        target = (music_dir / path).resolve()
+        if not target.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists() or not target.is_file() or target.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
+
+        target.unlink()
+        album = target.parent
+        removed_album = False
+        if album != base and not any(f.suffix.lower() == '.mp3' for f in album.rglob('*') if f.is_file()):
+            shutil.rmtree(album)
+            removed_album = True
+            artist = album.parent
+            if artist != base and artist.exists() and not any(artist.iterdir()):
+                artist.rmdir()
+
+        logger.info(f"🗑️ Titre supprimé : {path} par {user.get('email')}")
+        return jsonify({'success': True, 'removed_album': removed_album})
+    except Exception as e:
+        logger.error(f"❌ /api/library/delete-song: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1921,33 +2141,12 @@ def library_album_status():
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
 
-        from library_audit import _read_tags
         albums = []
         for album_dir in sorted([d for d in folder.iterdir() if d.is_dir()],
                                 key=lambda p: p.name.lower()):
-            mp3s = [f for f in album_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() == '.mp3']
-            if not mp3s:
-                continue
-            missing = {'genre': 0, 'year': 0, 'track_number': 0}
-            genres  = set()
-            for f in mp3s:
-                tags = _read_tags(f)
-                if not tags['genres']:
-                    missing['genre'] += 1
-                genres.update(tags['genres'])
-                if not tags['year']:
-                    missing['year'] += 1
-                if not tags['track_number']:
-                    missing['track_number'] += 1
-            albums.append({
-                'path':     str(album_dir.relative_to(music_dir)),
-                'name':     album_dir.name,
-                'tracks':   len(mp3s),
-                'missing':  missing,
-                'genres':   sorted(genres),
-                'complete': not any(missing.values()),
-            })
+            st = _album_status(album_dir, music_dir)
+            if st:
+                albums.append(st)
         return jsonify({'success': True, 'albums': albums})
     except Exception as e:
         logger.error(f"❌ /api/library/album-status: {e}")
@@ -1961,9 +2160,12 @@ def library_renumber_album():
 
     `paths` doit couvrir exactement les MP3 du dossier : garantit une
     numérotation 1..N cohérente (pas de trous ni de doublons).
+    Outil expert : admin uniquement (SSF-13).
     """
     try:
         user      = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -2011,9 +2213,12 @@ def library_set_artist_genre():
 
     `genre` accepte plusieurs valeurs séparées par « ; » (frame multi-valeurs,
     même convention que l'éditeur de métadonnées). Écrase le genre existant.
+    Outil expert : admin uniquement (SSF-13).
     """
     try:
         user      = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()

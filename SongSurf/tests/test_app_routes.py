@@ -367,14 +367,16 @@ def test_album_tracks_returns_titles_and_trck(flask_setup):
     assert r.status_code == 200
     data = r.get_json()
     assert data['tracks'] == [
-        {'path': 'Artist/AlbumTL/a.mp3', 'name': 'a.mp3', 'title': 'Aye', 'track_number': ''},
-        {'path': 'Artist/AlbumTL/b.mp3', 'name': 'b.mp3', 'title': 'Bee', 'track_number': '2/2'},
+        {'path': 'Artist/AlbumTL/a.mp3', 'name': 'a.mp3', 'title': 'Aye', 'track_number': '',
+         'artists': [], 'year': '', 'genres': []},
+        {'path': 'Artist/AlbumTL/b.mp3', 'name': 'b.mp3', 'title': 'Bee', 'track_number': '2/2',
+         'artists': [], 'year': '', 'genres': []},
     ]
 
 
 def test_renumber_album_writes_in_order(flask_setup):
     c, music, _, app_mod = flask_setup
-    album = music / USER_DIR / 'Artist' / 'AlbumRN'
+    album = music / ADMIN_DIR / 'Artist' / 'AlbumRN'
     _make_tagged_mp3(album / 'a.mp3')
     _make_tagged_mp3(album / 'b.mp3')
 
@@ -382,7 +384,7 @@ def test_renumber_album_writes_in_order(flask_setup):
         r = c.post('/api/library/renumber-album',
                    json={'folder_path': 'Artist/AlbumRN',
                          'paths': ['Artist/AlbumRN/b.mp3', 'Artist/AlbumRN/a.mp3']},
-                   headers=auth_headers(),
+                   headers=admin_headers(),
                    content_type='application/json')
     assert r.status_code == 200
     assert r.get_json() == {'success': True, 'total': 2}
@@ -393,7 +395,7 @@ def test_renumber_album_writes_in_order(flask_setup):
 
 def test_renumber_album_rejects_partial_paths(flask_setup):
     c, music, _, app_mod = flask_setup
-    album = music / USER_DIR / 'Artist' / 'AlbumPart'
+    album = music / ADMIN_DIR / 'Artist' / 'AlbumPart'
     _make_tagged_mp3(album / 'a.mp3')
     _make_tagged_mp3(album / 'b.mp3')
 
@@ -401,7 +403,7 @@ def test_renumber_album_rejects_partial_paths(flask_setup):
         r = c.post('/api/library/renumber-album',
                    json={'folder_path': 'Artist/AlbumPart',
                          'paths': ['Artist/AlbumPart/a.mp3']},  # b.mp3 manquant
-                   headers=auth_headers(),
+                   headers=admin_headers(),
                    content_type='application/json')
     assert r.status_code == 400
     mock_write.assert_not_called()
@@ -409,14 +411,14 @@ def test_renumber_album_rejects_partial_paths(flask_setup):
 
 def test_renumber_album_rejects_foreign_path(flask_setup):
     c, music, _, app_mod = flask_setup
-    album = music / USER_DIR / 'Artist' / 'AlbumFor'
+    album = music / ADMIN_DIR / 'Artist' / 'AlbumFor'
     _make_tagged_mp3(album / 'a.mp3')
-    _make_tagged_mp3(music / USER_DIR / 'Artist' / 'Autre' / 'x.mp3')
+    _make_tagged_mp3(music / ADMIN_DIR / 'Artist' / 'Autre' / 'x.mp3')
 
     r = c.post('/api/library/renumber-album',
                json={'folder_path': 'Artist/AlbumFor',
                      'paths': ['Artist/AlbumFor/a.mp3', 'Artist/Autre/x.mp3']},
-               headers=auth_headers(),
+               headers=admin_headers(),
                content_type='application/json')
     assert r.status_code == 400
 
@@ -433,7 +435,7 @@ def _make_real_mp3(path):
 
 def test_set_artist_genre_writes_all_albums(flask_setup):
     c, music, _, app_mod = flask_setup
-    artist = music / USER_DIR / 'ArtistG'
+    artist = music / ADMIN_DIR / 'ArtistG'
     _make_real_mp3(artist / 'Al1' / 'a.mp3')
     _make_real_mp3(artist / 'Al1' / 'b.mp3')
     _make_real_mp3(artist / 'Al2' / 'c.mp3')
@@ -441,7 +443,7 @@ def test_set_artist_genre_writes_all_albums(flask_setup):
 
     r = c.post('/api/library/set-artist-genre',
                json={'folder_path': 'ArtistG', 'genre': 'Rock; Pop'},
-               headers=auth_headers(),
+               headers=admin_headers(),
                content_type='application/json')
     assert r.status_code == 200
     data = r.get_json()
@@ -454,11 +456,11 @@ def test_set_artist_genre_writes_all_albums(flask_setup):
 
 def test_set_artist_genre_requires_genre(flask_setup):
     c, music, _, app_mod = flask_setup
-    _make_tagged_mp3(music / USER_DIR / 'ArtistGE' / 'Al' / 'a.mp3')
+    _make_tagged_mp3(music / ADMIN_DIR / 'ArtistGE' / 'Al' / 'a.mp3')
 
     r = c.post('/api/library/set-artist-genre',
                json={'folder_path': 'ArtistGE', 'genre': '  '},
-               headers=auth_headers(),
+               headers=admin_headers(),
                content_type='application/json')
     assert r.status_code == 400
 
@@ -468,7 +470,7 @@ def test_set_artist_genre_rejects_music_root_and_escape(flask_setup):
     for bad in ('.', '../autre'):
         r = c.post('/api/library/set-artist-genre',
                    json={'folder_path': bad, 'genre': 'Rock'},
-                   headers=auth_headers(),
+                   headers=admin_headers(),
                    content_type='application/json')
         assert r.status_code == 400, bad
 
@@ -503,18 +505,177 @@ def test_album_status_counts_missing_tags(flask_setup):
     assert albums['Trous']['missing'] == {'genre': 1, 'year': 1, 'track_number': 1}
 
 
-def test_audit_routes_open_to_members(flask_setup):
-    """Le scan iTunes (audit) est accessible à tous les membres, sur leur
-    propre bibliothèque — pas seulement à l'admin."""
-    c, *_ = flask_setup
-    # Pas de 403 : la route accepte le membre (404 car l'artiste n'existe pas).
-    assert c.get('/api/library/audit/artist?path=Nope',
-                 headers=auth_headers(role='member')).status_code != 403
-    # Apply avec une liste vide : pas de 403, traité normalement (200).
-    r = c.post('/api/library/audit/apply', json={'changes': []},
-               headers=auth_headers(role='member'),
-               content_type='application/json')
+def test_ssf13_expert_tools_admin_only(flask_setup):
+    """SSF-13 : audit iTunes, numérotation et genre de l'artiste = mode expert,
+    réservé à l'admin (403 pour un membre, rien n'est écrit)."""
+    c, music, _, app_mod = flask_setup
+    _make_tagged_mp3(music / USER_DIR / 'ArtistEx' / 'Al' / 'a.mp3')
+    member = auth_headers(role='member')
+    with patch.object(app_mod, '_write_song_tags') as mock_write:
+        calls = [
+            c.get('/api/library/audit/artist?path=ArtistEx', headers=member),
+            c.post('/api/library/audit/apply', json={'changes': [
+                {'path': 'ArtistEx/Al/a.mp3', 'field': 'year', 'value': '2001'}]}, headers=member),
+            c.post('/api/library/renumber-album', json={
+                'folder_path': 'ArtistEx/Al', 'paths': ['ArtistEx/Al/a.mp3']}, headers=member),
+            c.post('/api/library/set-artist-genre', json={
+                'folder_path': 'ArtistEx', 'genre': 'Rock'}, headers=member),
+        ]
+    assert [r.status_code for r in calls] == [403] * 4
+    assert all(r.get_json()['code'] == 'admin_only' for r in calls)
+    mock_write.assert_not_called()
+    # L'admin, lui, passe (404 : artiste absent de sa bibliothèque ; apply vide → 200)
+    assert c.get('/api/library/audit/artist?path=Nope', headers=admin_headers()).status_code == 404
+    assert c.post('/api/library/audit/apply', json={'changes': []},
+                  headers=admin_headers()).status_code == 200
+
+
+# ── SSF-13 : déplacement (tags), album entier, « À remplir », suppression ───
+
+def _tags(path):
+    from mutagen.id3 import ID3
+    id3 = ID3(path)
+    return {k: [str(v) for v in id3[k].text] for k in ('TPE1', 'TPE2', 'TALB', 'TDRC', 'TCON') if k in id3}
+
+
+def _real_mp3_with(path, **frames):
+    from mutagen.id3 import ID3
+    import mutagen.id3 as m
+    _make_real_mp3(path)
+    id3 = ID3()
+    for key, text in frames.items():
+        id3[key] = getattr(m, key)(encoding=3, text=text)
+    id3.save(path)
+
+
+def test_ssf13_retarget_artists_keeps_featurings(flask_setup):
+    *_, app_mod = flask_setup
+    f = app_mod._retarget_artists
+    assert f(['A', 'Feat'], 'A', 'B') == ['B', 'Feat']
+    assert f(['A', 'Feat'], 'A', 'A') == ['A', 'Feat']            # même artiste : inchangé
+    assert f(['Feat', 'A'], 'A', 'B') == ['Feat', 'B']             # ancien artiste remplacé là où il est
+    assert f(['X', 'Feat'], 'A', 'B') == ['B', 'Feat']             # absent → le premier
+    assert f(['B', 'A'], 'A', 'B') == ['B']                        # dédoublonné
+    assert f([], 'A', 'B') == ['B']
+
+
+def test_ssf13_move_song_keeps_featurings_and_sets_album_artist(flask_setup):
+    c, music, *_ = flask_setup
+    root = music / USER_DIR
+    _real_mp3_with(root / 'Orel' / 'Al1' / 's.mp3', TPE1=['Orel', 'Stromae'], TPE2='Orel', TALB='Al1')
+    (root / 'Justice' / 'Cross').mkdir(parents=True)
+    r = c.post('/api/library/move', json={'source': 'Orel/Al1/s.mp3', 'target_folder': 'Justice/Cross'},
+               headers=auth_headers())
     assert r.status_code == 200
+    tags = _tags(root / 'Justice' / 'Cross' / 's.mp3')
+    assert tags['TPE1'] == ['Justice', 'Stromae']
+    assert tags['TPE2'] == ['Justice'] and tags['TALB'] == ['Cross']
+
+
+def test_ssf13_move_song_same_artist_keeps_tpe1(flask_setup):
+    c, music, *_ = flask_setup
+    root = music / USER_DIR
+    _real_mp3_with(root / 'Daft' / 'Disc' / 's.mp3', TPE1=['Pharrell', 'Daft'], TALB='Disc')
+    (root / 'Daft' / 'RAM').mkdir(parents=True)
+    r = c.post('/api/library/move', json={'source': 'Daft/Disc/s.mp3', 'target_folder': 'Daft/RAM'},
+               headers=auth_headers())
+    assert r.status_code == 200
+    tags = _tags(root / 'Daft' / 'RAM' / 's.mp3')
+    assert tags['TPE1'] == ['Pharrell', 'Daft'] and tags['TALB'] == ['RAM'] and tags['TPE2'] == ['Daft']
+
+
+def test_ssf13_move_folder_retargets_artist(flask_setup):
+    c, music, *_ = flask_setup
+    root = music / USER_DIR
+    _real_mp3_with(root / 'Old' / 'Alb' / 's.mp3', TPE1=['Old', 'Guest'], TPE2='Old', TALB='Alb')
+    (root / 'New').mkdir(parents=True)
+    _real_mp3_with(root / 'New' / 'Other' / 'x.mp3', TPE1='New')
+    r = c.post('/api/library/move-folder', json={'folder_path': 'Old/Alb', 'new_parent': 'New'},
+               headers=auth_headers())
+    assert r.status_code == 200
+    tags = _tags(root / 'New' / 'Alb' / 's.mp3')
+    assert tags['TPE1'] == ['New', 'Guest'] and tags['TPE2'] == ['New']
+
+
+def test_ssf13_album_tags_save_writes_all_and_renames(flask_setup):
+    c, music, *_ = flask_setup
+    root = music / USER_DIR
+    for n in ('a', 'b'):
+        _real_mp3_with(root / 'ArtAT' / 'Old name' / f'{n}.mp3', TALB='Old name')
+    r = c.post('/api/library/album-tags/save', headers=auth_headers(), json={
+        'folder_path': 'ArtAT/Old name', 'album': 'New: name', 'year': '2017', 'genre': 'Hip-Hop/Rap; French Rap'})
+    assert r.status_code == 200, r.get_json()
+    data = r.get_json()
+    assert data['path'] == 'ArtAT/New name' and data['updated'] == 2 and data['errors'] == []
+    assert not (root / 'ArtAT' / 'Old name').exists()
+    for n in ('a', 'b'):
+        tags = _tags(root / 'ArtAT' / 'New name' / f'{n}.mp3')
+        assert tags['TALB'] == ['New name'] and tags['TDRC'] == ['2017']
+        assert tags['TCON'] == ['Hip-Hop/Rap', 'French Rap']
+
+
+def test_ssf13_album_tags_save_partial_and_errors(flask_setup):
+    c, music, *_ = flask_setup
+    root = music / USER_DIR
+    _real_mp3_with(root / 'ArtAP' / 'Al' / 'a.mp3', TALB='Al', TCON='Rock')
+    (root / 'ArtAP' / 'Taken').mkdir()
+    h = auth_headers()
+    # Année seule : genre et nom inchangés
+    r = c.post('/api/library/album-tags/save', headers=h, json={'folder_path': 'ArtAP/Al', 'year': '1999'})
+    assert r.status_code == 200 and r.get_json()['path'] == 'ArtAP/Al'
+    assert _tags(root / 'ArtAP' / 'Al' / 'a.mp3')['TCON'] == ['Rock']
+    assert c.post('/api/library/album-tags/save', headers=h,
+                  json={'folder_path': 'ArtAP/Al', 'year': '99'}).status_code == 400
+    r = c.post('/api/library/album-tags/save', headers=h, json={'folder_path': 'ArtAP/Al', 'album': 'Taken'})
+    assert r.status_code == 409 and r.get_json()['code'] == 'album_exists'
+    for bad in ('ArtAP', '.', '../x'):   # dossier artiste, racine, évasion
+        assert c.post('/api/library/album-tags/save', headers=h,
+                      json={'folder_path': bad, 'year': '2000'}).status_code == 400, bad
+    assert c.post('/api/library/album-tags/save', headers=h,
+                  json={'folder_path': 'ArtAP/Al', 'album': ' / '}).status_code == 400
+
+
+def test_ssf13_todo_lists_incomplete_albums(flask_setup):
+    c, *_ = flask_setup
+    other = auth_headers(sub='todo-user')
+    music = flask_setup[1] / uid_for('todo-user')
+    _make_tagged_mp3(music / 'Art' / 'Complet' / 'a.mp3', title='A', track='1/1')
+    from mutagen.id3 import ID3, TCON, TDRC
+    f = music / 'Art' / 'Complet' / 'a.mp3'
+    id3 = ID3(f); id3['TCON'] = TCON(encoding=3, text=['Pop']); id3['TDRC'] = TDRC(encoding=3, text='2001'); id3.save(f)
+    _make_tagged_mp3(music / 'Art' / 'Trous' / 'b.mp3', title='B', track='1/1')
+    r = c.get('/api/library/todo', headers=other)
+    assert r.status_code == 200
+    albums = r.get_json()['albums']
+    assert [a['path'] for a in albums] == ['Art/Trous']
+    assert albums[0]['artist'] == 'Art' and albums[0]['missing'] == {'genre': 1, 'year': 1, 'track_number': 0}
+    # Le cache suit les écritures : une fois complété, l'album disparaît de la liste
+    f = music / 'Art' / 'Trous' / 'b.mp3'
+    id3 = ID3(f); id3['TCON'] = TCON(encoding=3, text=['Pop']); id3['TDRC'] = TDRC(encoding=3, text='2001'); id3.save(f)
+    import os, time
+    os.utime(f, ns=(time.time_ns(), time.time_ns() + 10_000_000))
+    assert c.get('/api/library/todo', headers=other).get_json()['albums'] == []
+
+
+def test_ssf13_delete_song_admin_only_and_cleans_empty_album(flask_setup):
+    c, music, _, app_mod = flask_setup
+    _make_tagged_mp3(music / USER_DIR / 'ArtDS' / 'Al' / 'a.mp3')
+    assert c.post('/api/library/delete-song', json={'path': 'ArtDS/Al/a.mp3'},
+                  headers=auth_headers()).status_code == 403
+    assert (music / USER_DIR / 'ArtDS' / 'Al' / 'a.mp3').exists()
+
+    root = music / ADMIN_DIR
+    _make_tagged_mp3(root / 'ArtDS' / 'Al' / 'a.mp3')
+    _make_tagged_mp3(root / 'ArtDS' / 'Al' / 'b.mp3')
+    (root / 'ArtDS' / 'Al' / 'cover.jpg').write_bytes(b'x')
+    r = c.post('/api/library/delete-song', json={'path': 'ArtDS/Al/a.mp3'}, headers=admin_headers())
+    assert r.get_json() == {'success': True, 'removed_album': False}
+    r = c.post('/api/library/delete-song', json={'path': 'ArtDS/Al/b.mp3'}, headers=admin_headers())
+    assert r.get_json() == {'success': True, 'removed_album': True}
+    assert not (root / 'ArtDS').exists()   # album (pochette comprise) puis artiste vide retirés
+    for bad in ('../x.mp3', 'ArtDS/Al/nope.mp3'):
+        assert c.post('/api/library/delete-song', json={'path': bad},
+                      headers=admin_headers()).status_code in (400, 404), bad
 
 
 def test_genre_backfill_still_admin_only(flask_setup):
