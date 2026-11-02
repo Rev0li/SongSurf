@@ -55,7 +55,7 @@ export function removeToast(id) {
 // ── Confirmation modal ──────────────────────────────────────────────────────────
 // Remplace le confirm() natif par une modal SongSurf. Drop-in : await confirmAction(...).
 
-export const confirmState = writable(null); // { title, message, confirmLabel, cancelLabel, danger, resolve } | null
+export const confirmState = writable(null); // { title, message, confirmLabel, cancelLabel, danger, openedAt, resolve } | null
 
 /**
  * Affiche une modal de confirmation et résout à true (confirmé) / false (annulé).
@@ -70,6 +70,9 @@ export function confirmAction(opts) {
 			confirmLabel: opts.confirmLabel ?? 'OK',
 			cancelLabel: opts.cancelLabel ?? 'Annuler',
 			danger: opts.danger ?? false,
+			// Instant d'ouverture : la touche qui a ouvert la modal (ex. Entrée dans un champ)
+			// ne doit pas la valider dans la foulée — voir ConfirmModal.onKeydown.
+			openedAt: performance.now(),
 			resolve,
 		});
 	});

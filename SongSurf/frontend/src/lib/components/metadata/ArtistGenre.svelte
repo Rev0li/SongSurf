@@ -28,14 +28,34 @@
 		genre = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
 	}
 
+	// « Rap; Hip-hop (2 albums) · aucun (1 album) » — vide si le statut des albums n'est pas chargé.
+	function describeCurrentGenres() {
+		if (Object.keys(albumStatus).length === 0) return '';
+		const counts = new Map();
+		for (const al of albums) {
+			const st = albumStatus[al.path];
+			if (!st) continue;
+			const g = (st.genres ?? []).join('; ') || 'aucun';
+			counts.set(g, (counts.get(g) ?? 0) + 1);
+		}
+		return [...counts.entries()]
+			.map(([g, n]) => `${g} (${n} album${n > 1 ? 's' : ''})`)
+			.join(' · ');
+	}
+
 	async function apply() {
 		const value = genre.trim();
 		if (!value || saving) return;
 		const nSongs = countSongs(albums);
+		const current = describeCurrentGenres();
 		const ok = await confirmAction({
-			title: `Appliquer « ${value} » ?`,
-			message: `Le genre (TCON) sera réécrit sur les ${nSongs} titre${nSongs > 1 ? 's' : ''} `
-				+ `des ${albums.length} album${albums.length > 1 ? 's' : ''} de ${artist.name}.`,
+			title: `Changer le genre de ${artist.name} ?`,
+			message: [
+				...(current ? [`Genre actuel : ${current}`] : []),
+				`Nouveau genre : ${value}`,
+				`Il remplacera le genre (TCON) des ${nSongs} titre${nSongs > 1 ? 's' : ''} `
+					+ `de ${albums.length > 1 ? `ses ${albums.length} albums` : 'son album'}.`,
+			].join('\n'),
 			confirmLabel: 'Appliquer',
 		});
 		if (!ok) return;

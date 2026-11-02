@@ -8,10 +8,34 @@
 	}
 
 	function onKeydown(e) {
-		if (!$confirmState) return;
-		if (e.key === 'Escape') settle(false);
-		else if (e.key === 'Enter') settle(true);
+		if (!$confirmState || (e.key !== 'Enter' && e.key !== 'Escape')) return;
+		// La frappe qui a ouvert la modal (même événement, ex. Entrée dans un champ) et
+		// la répétition d'une touche maintenue ne confirment ni n'annulent rien.
+		if (e.repeat || e.timeStamp <= $confirmState.openedAt) { e.preventDefault(); return; }
+		// Entrée sur un bouton de la modal : c'est le bouton qui décide (Annuler ou confirmer).
+		if (e.key === 'Enter' && e.target?.closest?.('.cm-card button')) return;
+		e.preventDefault();
+		settle(e.key === 'Enter');
 	}
+
+	// Focus : à l'ouverture sur « Confirmer » — ou sur « Annuler » pour une action
+	// destructive (danger), pour qu'un Entrée réflexe ne supprime rien. Le champ d'origine
+	// ne reçoit plus les frappes ; il retrouve le focus à la fermeture.
+	let confirmBtn = $state();
+	let cancelBtn = $state();
+	let returnFocus = null;
+	$effect(() => {
+		if ($confirmState) {
+			if (!returnFocus) returnFocus = document.activeElement;
+			// Après la fin de la frappe en cours : sinon la même touche Entrée
+			// « cliquerait » le bouton qui vient de recevoir le focus.
+			const btn = $confirmState.danger ? cancelBtn : confirmBtn;
+			setTimeout(() => btn?.focus());
+		} else if (returnFocus) {
+			returnFocus.focus?.();
+			returnFocus = null;
+		}
+	});
 
 	// Le message peut contenir des sauts de ligne (\n) — on les conserve.
 	let lines = $derived($confirmState ? $confirmState.message.split('\n') : []);
@@ -29,10 +53,11 @@
 				{/each}
 			</div>
 			<div class="cm-actions">
-				<button class="btn btn-ghost btn-sm" onclick={() => settle(false)}>
+				<button bind:this={cancelBtn} class="btn btn-ghost btn-sm" onclick={() => settle(false)}>
 					{$confirmState.cancelLabel}
 				</button>
 				<button
+					bind:this={confirmBtn}
 					class="btn btn-sm"
 					class:btn-danger={$confirmState.danger}
 					class:btn-primary={!$confirmState.danger}
