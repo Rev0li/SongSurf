@@ -137,33 +137,46 @@ Compose overlays merged at runtime by `docker/compose-switch.sh` from `DEPLOY_TA
 
 ## Frontend architecture
 
-SvelteKit (adapter-static) — static bundle built in the Docker multi-stage build (Node → Python image) and served by Flask (`/` and `/_app/*`).
+SvelteKit (adapter-static) — static bundle built in the Docker multi-stage build (Node → Python image) and served by Flask (`/`, `/library`, `/metadata` and `/_app/*`; a reload on `/library` renders the app instead of a 404).
+
+Mobile first, music-app style (SSF-13): two tabs « Ajouter » (`/`) and « Ma musique » (`/library`), bottom tab bar on phones, top bar on desktop (≥ 900 px).
 
 ```
 frontend/src/
   routes/
-    +layout.svelte         theme init, session polling, nav
-    +page.svelte           dashboard: URL analyzer, queue, library, progress
-    metadata/+page.svelte  shell: loads the tree, shows the panel of the selection
+    +layout.svelte         theme, /api/status polling, shell (top bar, tabs, mini bar, sheets)
+    +page.svelte           Ajouter: paste a link, check the card, follow downloads
+    library/+page.svelte   Ma musique: home / ?artist= / ?album= (stack navigation)
+    metadata/+page.svelte  old address → redirects to /library
   lib/
     api.js                 fetch wrapper — all backend calls
     stores.js              user, downloadStatus, theme, toasts, confirmAction
-    metadata/              library.js (tree, selection, navigation, image versions) · id3.js
-    components/            DownloadPanel, ProgressZone, UpcomingQueue, LibraryCard,
-                           Header, Toast, ConfirmModal, HelpModal, WatcherInactivity
-      metadata/            LibrarySidebar, ArtistGallery, Crumbs, ArtistPanel (+ ArtistGenre,
-                           ArtistAudit), AlbumPanel (+ AlbumReorder), SongPanel
-                           (+ SongTagsEditor, SongDetails)
-    styles/                design-system.css, components.css, …, metadata.css (shared /metadata styles)
+    downloads.js           current song, queue, session history (done / failed + retry)
+    library/               data.js (tree, todo, image versions, URLs) · actions.js (« ⋯ » menus,
+                           uploads, admin deletions) · genres.js (genre cascade, English names)
+    ui/sheets.js           bottom sheets + shallow history entry (phone Back closes the sheet)
+    metadata/id3.js        ID3 labels / constants
+    components/
+      shell/               TopBar, TabBar, MiniBar
+      add/                 AddForm, DownloadList
+      library/             LibraryHome, ArtistView, AlbumView, TrackRow
+      sheets/              SheetHost, Account, Menu, TrackEdit, AlbumEdit, Move, FillWizard,
+                           Recover (ZIP), Tool (expert tools)
+      ui/                  Icon, Cover, Sheet, GenrePicker
+      metadata/            expert tools kept from SSF-05: ArtistAudit, AlbumReorder,
+                           ArtistGenre, SongDetails (styled by styles/metadata.css)
+      Toast, ConfirmModal, WatcherInactivity
+    styles/                design-system.css (tokens), components.css, layouts.css, app.css, metadata.css
 ```
 
 Svelte 5 (runes: `$state`, `$derived`, `$props`, `onclick`), SvelteKit 2, Vite 5, built with Node 22. `npm run check` runs `svelte-check`. Map of every screen/action/API route: `docs/FRONTEND_MAP.md`.
 
 Key flows:
 
-- **Queueing**: « Ajouter à la file » submits straight to the server (the server owns ordering and drains album by album); `UpcomingQueue` and `ProgressZone` reflect it via `/api/status` polling.
+- **Queueing**: « Ajouter » submits straight to the server (the server owns ordering and drains album by album); « En cours » and the mini bar reflect it via `/api/status` polling. A finished song refreshes « Ma musique »; a failed one shows « Réessayer » (the server returns the URL in `last_error`).
 - **Extension intake**: server-side fire-and-forget — the extension posts straight to `/api/queue-direct`, which extracts and enqueues without involving the page.
-- **`/metadata` navigation state + image caching**: expanded tree, sidebar, selection, scroll and the library tree itself (stale-while-revalidate) persist in localStorage (`ssf.meta.*`), so switching tabs and coming back restores the view without a cold reload. Cover/artist image URLs carry a stable per-path version (`?t=<n>`, stored in `ssf.meta.imgv`) bumped only when a cover is uploaded — combined with the backend's `Cache-Control` headers, the browser serves all images from cache across navigations instead of re-downloading them.
+- **Expert mode = admin only** (SSF-13): numbering, iTunes audit, artist genre and deletions are hidden for members and refused by the API (403 `admin_only`). Members complete missing tags with the « À remplir » wizard.
+- **State + image caching**: the library tree is cached in localStorage (`ssf.lib.tree`, stale-while-revalidate). Cover/artist image URLs carry a stable per-path version (`?t=<n>`, stored in `ssf.meta.imgv`) bumped only when a cover is uploaded — combined with the backend's `Cache-Control` headers, the browser serves all images from cache across navigations instead of re-downloading them.
 - Design tokens come from the MyCss design system (CSS custom properties, light/dark via `html.dark`).
 
 ---

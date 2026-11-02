@@ -59,8 +59,10 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}], playlists: [...]}` (flat folders = legacy) |
-| `/api/library/move` | POST | `{source, target_folder}` — move one MP3; re-syncs TPE1/TALB to the new folder position |
-| `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists) |
+| `/api/library/move` | POST | `{source, target_folder}` — move one MP3; tags follow the new folder (SSF-13): TALB = album folder, TPE2 = artist folder, and in TPE1 only the primary artist is replaced (old artist → new one; featurings kept; unchanged when the artist folder is the same) |
+| `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists); same tag rules as `move` on every MP3 |
+| `/api/library/delete-song` | POST | **Admin only** (403 `admin_only`). `{path}` — delete one MP3; an album left without MP3 is removed (cover included), then its artist folder if empty → `{removed_album}` |
+| `/api/library/todo` | GET | Albums with missing tags across the caller's whole library (« À remplir », SSF-13) → `[{path, name, artist, artist_path, tracks, missing: {genre, year, track_number}, genres, complete: false}]`. Per-album completeness is cached in memory and invalidated when an MP3 of the album changes (names + mtime + size) |
 | `/api/library/delete-folder` | POST | **Admin only** (403 otherwise). `{folder_path}` — permanently delete an artist or album folder (`shutil.rmtree`); an artist folder left empty after an album deletion is removed too. Returns `{deleted_songs}`. The library root itself is rejected |
 | `/api/library/folder-cover` | GET | `?folder_path=` → cover image (cover/folder/artist.*, falls back to embedded APIC). The APIC extraction is persisted as `cover.jpg` in the album folder (JPEG-converted, atomic write) so the MP3 is only parsed once. Sends `Cache-Control: private, max-age=86400` — safe because the frontend versions image URLs (`?t=<version>`, bumped only on cover upload) |
 | `/api/library/artist-picture` | GET | `?folder_path=` → artist picture (folder.* / artist.*). Same `Cache-Control: private, max-age=86400` |
@@ -71,15 +73,16 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 |---|---|---|
 | `/api/library/song-meta` | GET | `?path=` → full dump: file info, audio info (duration, bitrate…), all ID3 frames (multi-value frames joined with `"; "`), custom TXXX tags, cover presence |
 | `/api/library/song-meta/save` | POST | `{path, tags: {title, artist, album_artist, album, year, track_number, disc_number, genre, composer, copyright, publisher, bpm, key, language, isrc, encoded_by, comment}}` — empty value deletes the frame. **`artist`, `genre`, `composer` accept `;`-separated input → written as real ID3v2.4 multi-value frames. `album_artist` stays single-value (Jellyfin grouping key)** |
-| `/api/library/album-tracks` | GET | `?folder_path=` → lightweight tracklist `[{path, name, title, track_number}]` (powers the album panel TRCK display and the "Numéroter les pistes" reorder mode) |
+| `/api/library/album-tracks` | GET | `?folder_path=` → lightweight tracklist `[{path, name, title, track_number, artists[], year, genres[]}]` (album page, « À remplir », « Numéroter les pistes ») |
+| `/api/library/album-tags/save` | POST | `{folder_path: <Artist/Album>, album?, year?, genre?}` → writes the given fields on every MP3 of the album (SSF-13, all users). New `album` name → TALB **and** folder renamed (forbidden characters stripped; 409 `album_exists` if taken). `year` = 4 digits or empty; `genre` accepts `;` multi-values → `{path, updated, errors[]}` |
 | `/api/library/album-status` | GET | `?folder_path=<artist>` → per-album tag completeness `[{path, name, tracks, missing: {genre, year, track_number}, genres: [distinct TCON values], complete}]` (powers the artist-view badges + prefills the artist genre field) |
-| `/api/library/renumber-album` | POST | `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
-| `/api/library/set-artist-genre` | POST | `{folder_path: <artist>, genre}` → overwrites TCON on every MP3 under the artist folder (all albums, recursive). `genre` accepts `;`-separated multi-values → `{updated, errors[]}` |
+| `/api/library/renumber-album` | POST | **Admin only** (SSF-13). `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
+| `/api/library/set-artist-genre` | POST | **Admin only** (SSF-13). `{folder_path: <artist>, genre}` → overwrites TCON on every MP3 under the artist folder (all albums, recursive). `genre` accepts `;`-separated multi-values → `{updated, errors[]}` |
 | `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
-| `/api/library/audit/artist` | GET | **All members** (operates on the caller's own library). `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
-| `/api/library/audit/apply` | POST | **All members.** `{changes: [{path, field, value}]}` → writes the approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
+| `/api/library/audit/artist` | GET | **Admin only** (expert tool, SSF-13 ; 403 `admin_only` for members). `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
+| `/api/library/audit/apply` | POST | **Admin only** (SSF-13). `{changes: [{path, field, value}]}` → writes the approved recommendations via the shared ID3 writer → `{applied, errors[]}` |
 
 ### Admin-only
 
@@ -199,6 +202,9 @@ api.songMeta(path)                         // GET  /api/library/song-meta
 api.saveSongMeta(path, tags)               // POST /api/library/song-meta/save
 api.albumTracks(folderPath)                // GET  /api/library/album-tracks
 api.albumStatus(folderPath)                // GET  /api/library/album-status
+api.todo()                                 // GET  /api/library/todo
+api.saveAlbumTags(folderPath, fields)      // POST /api/library/album-tags/save
+api.deleteSong(path)                       // POST /api/library/delete-song (admin)
 api.renumberAlbum(folderPath, paths)       // POST /api/library/renumber-album
 api.setArtistGenre(folderPath, genre)      // POST /api/library/set-artist-genre
 api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
