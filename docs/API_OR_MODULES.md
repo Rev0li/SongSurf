@@ -23,17 +23,21 @@ Reference generated from the current code (`server/app.py`, `server/state_store.
   "current_download": { "url": "…", "metadata": {…}, "user_key": "…", "user_pseudo": "…", "started_at": "…" },
   "progress": { "percent": 67, "phase": "downloading", "speed": "812 KB/s", "eta": "8s" },
   "queue_size": 2,
+  "current_percent": 47.5,
   "batch_active": true, "batch_total": 12, "batch_done": 4, "batch_percent": 38.5,
   "daily_count": 7, "daily_limit": 50,
   "is_mine": true,
   "worker": { "songs_before_mine": null, "owner": null, "current": null },
   "pending": [ { "artist": "…", "title": "…", "album": "…" } ],
+  "jobs": [ { "job_id": 7, "total": 12, "remaining": 8, "active": true, "album": "…", "artist": "…", "title": "…" } ],
   "last_completed": {…}, "last_error": null,
   "cookies_present": true, "cookies_age_days": 0.4
 }
 ```
 `last_completed` / `last_error` / `cookies_*` / `daily_*` / `pending` are the **caller's own**; `daily_limit` is `0` (unlimited) for the admin. `current_download` is `null` when the worker is busy with another member's song (`is_mine: false`); `worker` then says who uses it: `songs_before_mine` = songs that start before the caller's next one (current song included, `null` if the caller has nothing queued); `owner` (pseudo) and `current` (`{artist, title}`) are filled **for the admin only**.
 `queue_size` = songs queued but not started, all users.
+`current_percent` (SSF-13) = estimated progress of the song in progress (0-100, never goes back): yt-dlp only reports the download, which is fast, and FFmpeg reports nothing, so the server estimates from the elapsed time against the real duration of previous songs (moving averages `song_rate` = processing seconds per audio second, `song_secs` = per song, kept in the SQLite `meta` table). The real phase bounds the estimate (downloading ≤ 45 %, converting 30-92 %, organizing 90-99 %). Queue items carry the song `duration` (seconds, 0 if unknown) for this.
+`jobs` (SSF-13) = the caller's jobs still queued (an album = one job): `remaining` includes the song in progress, done = `total - remaining`; the UI shows one progress line per album. `batch_*` is global (all users) and no longer used by the UI.
 Phases: `downloading` (0–50 weighted) → `converting` (55) → `organizing` (90) → `completed` (100).
 
 ### Extraction & download
@@ -129,6 +133,8 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | `enqueue_job(user_key, songs)` | One job (album or single song) = its songs as `pending` rows, in order |
 | `claim_next()` / `finish(id)` | Next song in round-robin order, marked `active` (pointer `rr_last_user` persisted) / removed once processed (success or failure) |
 | `pending_jobs(user_key)` · `pending_count()` · `pending_for(user_key)` · `songs_before(user_key)` | Per-user job count (queue limit), global pending songs, caller's pending songs, songs passing before the caller's next one |
+| `jobs_for(user_key)` | Caller's jobs still queued, with `total` (`job_total` stored in each item at enqueue) / `remaining` / `active` |
+| `meta_get(key)` / `meta_set(key, value)` | Small persistent values (round-robin pointer, song timing averages) |
 | `daily_count(user_key, day)` / `daily_increment(user_key, day)` | Per-user daily counter (older days purged) |
 | `zip_get` / `zip_set` / `zip_delete` | Per-user ZIP export state (`building` → `ready` / `error`) |
 

@@ -101,6 +101,7 @@
 					album: asText(album, 'Unknown Album'),
 					year: asText(year),
 					track_number: extract.track_number ?? '',
+					duration: extract.duration ?? 0, // estimation de l'avancement
 					album_artist: extract.album_artist ?? '',
 					// Artiste corrigé à la main → la liste multi-artistes extraite n'est plus fiable
 					artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],

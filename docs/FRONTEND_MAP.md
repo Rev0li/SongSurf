@@ -36,7 +36,7 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 |---|---|
 | Barre du haut | « ‹ Mon espace » (`/logout` : met SongSurf en veille et revient au portail), logo, rond du compte (thème, mise en veille) ; porte les onglets sur ordinateur |
 | Onglets du bas | Ajouter / Ma musique ; « Ma musique » touché depuis une sous-page ramène à l'accueil |
-| Mini-barre | Titre en cours + avancement du lot (ne recule jamais) ou « en attente, ton tour dans N titres » ; visible partout sauf sur Ajouter ; un appui ouvre Ajouter |
+| Mini-barre | L'ajout en cours : un album = « Titre 4 sur 12 » + sa barre (ne recule jamais), « +N ajouts » s'il y en a d'autres ; ou « en attente, ton tour dans N titres » ; visible partout sauf sur Ajouter ; un appui ouvre Ajouter |
 | Toasts, fenêtre de confirmation, avertissement d'inactivité | Inchangés |
 
 ## 2. Ajouter `/`
@@ -48,7 +48,7 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 | Fiche : pochette, titre / album, artiste, année ; « Corriger les infos avant d'ajouter » replié (titre, artiste, album, année) ; aperçu des titres d'un album | — |
 | Ajouter | `download`, `download-playlist` |
 | Ajouts restants aujourd'hui (membres) | `status` (`daily_count`, `daily_limit`) |
-| « En cours » : titre en cours (avancement), file regroupée par album, échecs (Réessayer avec l'URL renvoyée par le serveur, Retirer), terminés de la session (Voir → page de l'album), « Effacer les terminés » | `status` (`current_download`, `pending`, `last_completed`, `last_error.url`) ; historique gardé en `sessionStorage` (`ssf.dl.history`) |
+| « En cours » : une ligne par ajout — un album = une seule ligne « 3 / 12 titres » avec le titre en cours et une barre qui avance titre après titre (estimation au temps du serveur, transition linéaire de 1,4 s ≈ intervalle du polling) —, échecs regroupés par album (Réessayer / Tout réessayer avec l'URL renvoyée par le serveur, Retirer), terminés de la session regroupés par album, affichés une fois l'album fini (Voir → page de l'album), « Effacer les terminés » | `status` (`jobs`, `current_percent`, `current_download`, `pending`, `last_completed`, `last_error.url`) ; historique gardé en `sessionStorage` (`ssf.dl.history`) |
 | « Comment faire ? » quand rien n'est en cours | — |
 
 ## 3. Ma musique `/library`

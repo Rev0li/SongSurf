@@ -136,3 +136,30 @@ def test_zip_state_survives_restart(db):
     assert bob['status'] == 'error' and bob['error'] == ZIP_INTERRUPTED_MSG
     restarted.zip_delete('alice')
     assert restarted.zip_get('alice') is None
+
+
+def test_ssf13_jobs_for_counts_album_progress(db):
+    store = StateStore(db)
+    album = [{'url': f'u{i}', 'metadata': {'title': f't{i}', 'album': 'Racine carrée',
+                                           'artist': 'Stromae', 'album_artist': 'Stromae'}} for i in range(4)]
+    store.enqueue_job('alice', album)
+    store.enqueue_job('alice', [_song('solo')])
+    store.enqueue_job('bob', [_song('b1')])
+    item_id, item = store.claim_next()            # t0 en cours
+    assert item['job_total'] == 4
+    jobs = store.jobs_for('alice')
+    assert [(j['album'], j['artist'], j['total'], j['remaining'], j['active']) for j in jobs] == [
+        ('Racine carrée', 'Stromae', 4, 4, True), ('', '', 1, 1, False)]
+    assert jobs[1]['title'] == 'solo'
+    store.finish(item_id)
+    assert store.jobs_for('alice')[0]['remaining'] == 3   # 1 / 4 terminé
+    assert store.jobs_for('carol') == []
+
+
+def test_ssf13_meta_values_survive_restart(db):
+    store = StateStore(db)
+    assert store.meta_get('song_rate') is None and store.meta_get('song_rate', 'x') == 'x'
+    store.meta_set('song_rate', '0.1')
+    store.meta_set('song_rate', '0.2')
+    store.close()
+    assert StateStore(db).meta_get('song_rate') == '0.2'

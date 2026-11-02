@@ -75,27 +75,56 @@ export function clearDoneHistory() {
 	dlHistory.update((list) => list.filter((x) => x.status !== 'done'));
 }
 
-// Avancement du titre en cours (même pondération que le serveur pour le batch).
-const PHASE_PCT = { converting: 55, organizing: 90, completed: 100 };
-export function songPercent(progress) {
-	if (!progress) return 0;
-	if (progress.phase in PHASE_PCT) return PHASE_PCT[progress.phase];
-	return Math.round(Math.max(0, Math.min(100, Number(progress.percent ?? 0))) * 0.5);
+// Avancement : le serveur estime celui du titre en cours au temps écoulé
+// (current_percent, qui ne recule pas). Un album = un job = une seule ligne
+// « 3 / 12 titres » dont la barre avance titre après titre.
+// La barre d'un job ne recule jamais (petit creux possible entre deux titres).
+const maxSeen = new Map();
+function keepMax(key, pct) {
+	const v = Math.max(maxSeen.get(key) ?? 0, pct);
+	maxSeen.set(key, v);
+	return v;
 }
 
-/** Vue « En cours » : { current, pending, waitingOther, songsBefore } */
+/**
+ * Vue « En cours » : { jobs, running, current, pending, waitingOther, songsBefore, active, count }
+ * jobs : [{ key, isAlbum, album, artist, title, total, done, active, percent, currentTitle }]
+ * running : le job dont un titre est en cours (mini-barre), sinon null.
+ */
 export const myDownloads = derived(downloadStatus, ($s) => {
-	const current = $s.is_mine && $s.in_progress && $s.current_download ? $s.current_download.metadata ?? {} : null;
+	const mine = !!$s.is_mine && !!$s.in_progress && !!$s.current_download;
+	const current = mine ? $s.current_download.metadata ?? {} : null;
+	const curPct = mine ? Math.max(0, Math.min(100, Number($s.current_percent ?? 0))) : 0;
 	const pending = $s.pending ?? [];
 	const busyOther = !$s.is_mine && (!!$s.in_progress || ($s.queue_size ?? 0) > 0);
+
+	const live = new Set();
+	const jobs = ($s.jobs ?? []).map((j) => {
+		const total = Math.max(1, Number(j.total ?? 1));
+		const done = Math.max(0, total - Number(j.remaining ?? total));
+		const running = !!j.active && mine;
+		const key = `${j.job_id}:${total}:${j.album}`; // pas le titre : il change à chaque piste
+		live.add(key);
+		return {
+			key, total, done, isAlbum: total > 1,
+			album: asText(j.album), artist: asText(j.artist), title: asText(j.title, '…'),
+			active: running,
+			currentTitle: running ? asText(current?.title, '') : '',
+			percent: keepMax(key, ((done + (running ? curPct / 100 : 0)) / total) * 100),
+		};
+	});
+	for (const k of maxSeen.keys()) if (!live.has(k)) maxSeen.delete(k);
+
+	const count = jobs.reduce((n, j) => n + j.total - j.done, 0) || (current ? 1 : 0) + pending.length;
 	return {
+		jobs,
 		current,
-		percent: current ? songPercent($s.progress) : 0,
+		running: jobs.find((j) => j.active) ?? null,
 		pending,
 		waitingOther: busyOther && pending.length > 0,
 		songsBefore: Number($s.worker?.songs_before_mine ?? 0),
-		active: !!current || pending.length > 0,
-		count: (current ? 1 : 0) + pending.length,
+		active: !!current || pending.length > 0 || jobs.length > 0,
+		count,
 	};
 });
 

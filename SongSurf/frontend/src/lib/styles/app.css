@@ -81,7 +81,8 @@ html.dark {
 }
 @keyframes ss-spin { to { transform: rotate(360deg); } }
 .bar { height: 4px; border-radius: 4px; background: var(--bg-4); overflow: hidden; }
-.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+/* 1,4 s linéaire ≈ l'intervalle de /api/status : la barre glisse sans à-coups */
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width 1.4s linear; }
 .pct { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
 /* ── Listes et grilles ───────────────────────────────────────────────────── */

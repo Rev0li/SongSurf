@@ -1289,3 +1289,89 @@ def test_ssf13_spa_pages_served_with_auth(flask_setup, tmp_path):
             assert r.status_code == 503 and b'spa' not in r.data, route
             r = c.get(route, headers=auth_headers())
             assert r.status_code == 200 and b'spa' in r.data, route
+
+
+def test_ssf13_song_percent_moves_smoothly_and_never_goes_back(flask_setup):
+    _, _, _, app_mod = flask_setup
+    sp = app_mod._song_percent
+    # Conversion longue : l'avancement suit le temps au lieu de rester figé
+    assert sp('converting', 50, 2, 20) == 30.0          # plancher de la conversion
+    assert 40 < sp('converting', 50, 10, 20) < 50
+    assert sp('converting', 50, 1000, 20) == 92.0       # plafond tant que FFmpeg tourne
+    assert sp('downloading', 100, 0, 20) == 30.0        # vrai avancement du téléchargement
+    assert sp('downloading', 0, 100, 20) == 45.0        # plafond du téléchargement
+    assert sp('organizing', 0, 0, 20) == 90.0
+    assert sp('completed', 0, 0, 20) == 100.0
+    # Plus long que prévu : approche lente de 99 %, sans jamais l'atteindre
+    assert 90 < sp('organizing', 0, 30, 20) < 99
+    # Monotone dans le temps et quand la phase avance
+    steps = [('downloading', 0, 0), ('downloading', 60, 2), ('downloading', 100, 3), ('converting', 100, 3),
+             ('converting', 100, 12), ('converting', 100, 25), ('organizing', 100, 25), ('organizing', 100, 40),
+             ('completed', 100, 41)]
+    values = [sp(phase, raw, t, 20) for phase, raw, t in steps]
+    assert values == sorted(values)
+
+
+def test_ssf13_song_timing_is_learned_per_audio_second(flask_setup):
+    _, _, _, app_mod = flask_setup
+    for key in ('song_rate', 'song_secs'):
+        app_mod.store.meta_set(key, '0')                 # 0 = valeur par défaut
+    assert app_mod._expected_song_seconds(0) == app_mod.SONG_SECS_DEFAULT
+    assert app_mod._expected_song_seconds(200) == pytest.approx(200 * app_mod.SONG_RATE_DEFAULT)
+    app_mod._learn_song_timing(40, 200)                  # 0,2 s par s d'audio
+    rate = 0.08 + 0.3 * (0.2 - 0.08)
+    assert app_mod._expected_song_seconds(200) == pytest.approx(200 * rate, rel=1e-3)
+    assert app_mod._expected_song_seconds('?') == pytest.approx(20 + 0.3 * (40 - 20), rel=1e-3)
+    for key in ('song_rate', 'song_secs'):
+        app_mod.store.meta_set(key, '0')
+
+
+def test_ssf13_status_has_one_progress_line_per_album(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _drain_queue(app_mod)
+    bob = {'uid': uid_for('bob'), 'sub': 'bob', 'role': 'member'}
+    album = [_queued_song('bob', f'b{i}') for i in range(3)]
+    for song in album:
+        song['metadata']['album'] = 'Disque'
+    app_mod._enqueue_job(bob, album)
+    app_mod._enqueue_job(bob, [_queued_song('bob', 'solo')])
+    claimed = app_mod.store.claim_next()                 # b0 en cours
+    with app_mod.queue_lock:
+        app_mod.download_status['in_progress'] = True
+        app_mod.download_status['current_download'] = {
+            'url': 'u', 'metadata': claimed[1]['metadata'], 'user_key': uid_for('bob'), 'user_pseudo': 'bob'}
+    app_mod._song_clock.update(started=app_mod.time.monotonic() - 10, expected=20.0)
+    try:
+        with patch.object(app_mod.downloader, 'get_progress', return_value={'phase': 'converting', 'percent': 50}):
+            st = c.get('/api/status', headers=auth_headers(sub='bob')).get_json()
+            other = c.get('/api/status', headers=auth_headers(sub='carol')).get_json()
+        assert 40 < st['current_percent'] < 50              # plus de palier figé à 55 %
+        assert [(j['album'], j['total'], j['remaining'], j['active']) for j in st['jobs']] == [
+            ('Disque', 3, 3, True), (st['jobs'][1]['album'], 1, 1, False)]
+        assert other['jobs'] == []                          # jamais la file d'un autre membre
+    finally:
+        with app_mod.queue_lock:
+            app_mod.download_status['in_progress'] = False
+            app_mod.download_status['current_download'] = None
+        app_mod.store.finish(claimed[0])
+        _drain_queue(app_mod)
+
+
+def test_ssf13_queued_items_keep_song_duration(flask_setup):
+    c, _, _, app_mod = flask_setup
+    _drain_queue(app_mod)
+    give_cookies(app_mod, uid_for('dur'))
+    try:
+        r = c.post('/api/download-playlist', headers=auth_headers(sub='dur'), json={'playlist_metadata': {
+            'title': 'A', 'artist': 'X', 'songs': [
+                {'url': 'https://www.youtube.com/watch?v=aaaaaaaaaaa', 'title': 't1', 'duration': 181},
+                {'url': 'https://www.youtube.com/watch?v=bbbbbbbbbbb', 'title': 't2'}]}})
+        assert r.status_code == 200
+        items = []
+        while (claimed := app_mod.store.claim_next()) is not None:
+            items.append(claimed[1])
+            app_mod.store.finish(claimed[0])
+        assert [i['duration'] for i in items] == [181, 0]
+        assert app_mod._duration('12.7') == 12 and app_mod._duration('abc') == 0
+    finally:
+        _drain_queue(app_mod)

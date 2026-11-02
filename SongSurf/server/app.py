@@ -34,6 +34,7 @@ import logging
 import re
 import json
 import io
+import math
 import sys
 import glob
 
@@ -230,6 +231,14 @@ def _job_owner(user: dict) -> dict:
         'user_role':   user.get('role', 'member'),
         'added_at':    datetime.now().isoformat(),
     }
+
+
+def _duration(value) -> int:
+    """Durée d'un titre en secondes (0 si inconnue) : sert à estimer son avancement."""
+    try:
+        return max(0, int(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _enqueue_job(user: dict, songs):
@@ -493,6 +502,74 @@ def ping():
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
 
 
+# ── Avancement estimé du titre en cours (SSF-13) ───────────────────────────────
+# yt-dlp ne donne l'avancement que du téléchargement, qui va vite ; la conversion
+# FFmpeg, la plus longue, n'en donne aucun : la barre restait figée sur un palier
+# puis sautait. On estime donc au temps écoulé, par rapport à la durée réelle des
+# titres précédents (moyennes glissantes gardées en base, donc conservées quand
+# SongSurf est mis en veille). Les phases réelles servent de plancher et de plafond.
+SONG_SECS_DEFAULT = 20.0   # durée de traitement d'un titre sans durée connue (s)
+SONG_RATE_DEFAULT = 0.08   # s de traitement par s d'audio (3 min ≈ 15 s)
+_SMOOTHING        = 0.3    # poids du dernier titre dans la moyenne glissante
+_PHASE_BOUNDS = {          # phase → (plancher, plafond) en %
+    'downloading': (0.0, 45.0),
+    'converting':  (30.0, 92.0),
+    'organizing':  (90.0, 99.0),
+}
+_song_clock = {'started': None, 'expected': SONG_SECS_DEFAULT}
+
+
+def _timing_value(key: str, default: float) -> float:
+    try:
+        value = float(store.meta_get(key) or default)
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _expected_song_seconds(duration) -> float:
+    """Temps de traitement attendu pour un titre de `duration` secondes d'audio."""
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        return max(3.0, duration * _timing_value('song_rate', SONG_RATE_DEFAULT))
+    return _timing_value('song_secs', SONG_SECS_DEFAULT)
+
+
+def _learn_song_timing(elapsed: float, duration) -> None:
+    """Met à jour les moyennes après un titre réellement téléchargé."""
+    if elapsed <= 0:
+        return
+    def blend(key, default, sample):
+        old = _timing_value(key, default)
+        store.meta_set(key, f'{old + _SMOOTHING * (sample - old):.4f}')
+    blend('song_secs', SONG_SECS_DEFAULT, elapsed)
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        blend('song_rate', SONG_RATE_DEFAULT, elapsed / duration)
+
+
+def _song_percent(phase: str, raw_pct: float, elapsed: float, expected: float) -> float:
+    """Avancement d'un titre (0-100) qui ne recule pas quand la phase change.
+
+    Estimation au temps : 90 % à la durée attendue, puis approche lente de 99 %
+    si le titre est plus long que prévu. Bornée par la phase réelle.
+    """
+    if phase == 'completed':
+        return 100.0
+    ratio = elapsed / expected if expected > 0 else 0.0
+    estimate = 90.0 * ratio if ratio <= 1 else 90.0 + 9.0 * (1 - math.exp(-1.5 * (ratio - 1)))
+    floor, ceiling = _PHASE_BOUNDS.get(phase, (0.0, 45.0))
+    if phase == 'downloading':
+        floor = max(0.0, min(100.0, raw_pct)) * 0.3   # vrai avancement du téléchargement
+    return round(max(floor, min(ceiling, estimate)), 1)
+
+
 # ── Download status ────────────────────────────────────────────────────────────
 
 @app.route('/api/status')
@@ -514,20 +591,17 @@ def get_status():
     with queue_lock:
         status = download_status.copy()
         status['queue_size'] = queue_size
-        current_pct = 0
+        current_pct = 0.0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
-            phase   = status['progress'].get('phase', '')
-            raw_pct = max(0, min(100, int(status['progress'].get('percent', 0))))
-            # Map phase → weighted percent: download=0-50, converting=55, organizing=90, completed=100
-            if phase == 'converting':
-                current_pct = 55
-            elif phase == 'organizing':
-                current_pct = 90
-            elif phase == 'completed':
-                current_pct = 100
-            else:  # downloading or unknown
-                current_pct = int(raw_pct * 0.5)
+            started = _song_clock['started']
+            current_pct = _song_percent(
+                status['progress'].get('phase', ''),
+                float(status['progress'].get('percent', 0) or 0),
+                time.monotonic() - started if started is not None else 0.0,
+                _song_clock['expected'],
+            )
+        status['current_percent'] = current_pct
         if status.get('batch_active'):
             total    = max(1, int(status.get('batch_total', 0) or 0))
             done     = max(0, min(total, int(status.get('batch_done', 0) or 0)))
@@ -564,6 +638,8 @@ def get_status():
         {'artist': m.get('artist', ''), 'title': m.get('title', ''), 'album': m.get('album', '')}
         for m in (p.get('metadata') or {} for p in my_pending)
     ][:200]
+    # Un album = une ligne d'avancement « 3 / 12 titres » (SSF-13), pas un titre par ligne.
+    status['jobs'] = store.jobs_for(my_key)[:100]
     # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
     try:
         cookies_file = _user_cookies_file(current_user)
@@ -1095,7 +1171,8 @@ def start_download():
             'year':         data.get('year',   ''),
             'track_number': data.get('track_number', ''),
         }
-        _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
+        _enqueue_job(user, [{'url': url, 'metadata': metadata, 'duration': _duration(data.get('duration')),
+                             **_job_owner(user)}])
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
         return jsonify({'success': True, 'queue_size': store.pending_count()})
     except Exception as e:
@@ -1134,6 +1211,7 @@ def download_playlist():
                 'track_number': song.get('track_number', ''),
                 'track_total':  len(songs),
             },
+            'duration':    _duration(song.get('duration')),
             **_job_owner(user),
         } for song in songs]
 
@@ -1677,12 +1755,14 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'title':  override.get('title',  'Unknown Title')  or 'Unknown Title',
                     'year':   override.get('year',   ''),
                 }
+                duration = 0
             else:
                 result = downloader.extract_metadata(url, cookiefile=cookiefile)
                 if not result.get('success'):
                     logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
                     return
                 meta = result.get('metadata', {})
+                duration = meta.get('duration')
                 metadata = {
                     'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
                     # override artiste → la liste extraite n'est plus fiable
@@ -1696,7 +1776,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
             if _queue_full(user):
                 logger.warning("⚠️ queue-direct (song): file pleine")
                 return
-            _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
+            _enqueue_job(user, [{'url': url, 'metadata': metadata,
+                                 'duration': _duration(duration),
+                                 **_job_owner(user)}])
             logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
         else:
             result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
@@ -1718,6 +1800,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'track_number': song.get('track_number', ''),
                     'track_total':  len(songs),
                 },
+                'duration':    _duration(song.get('duration')),
                 **_job_owner(user),
             } for song in songs]
             if _queue_full(user):
@@ -2327,6 +2410,8 @@ def _process_song(item):
         # encore le « completed / 100 % » du titre précédent et la barre fait un bond
         # d'un titre entier en avant, puis recule quand le téléchargement démarre.
         downloader.progress.reset()
+        _song_clock['started']  = time.monotonic()
+        _song_clock['expected'] = _expected_song_seconds(item.get('duration'))
         download_status.update({
             'in_progress':      True,
             'current_download': {
@@ -2368,6 +2453,10 @@ def _process_song(item):
             org_result = org.organize(result['file_path'], metadata)
             if not org_result['success']:
                 raise Exception(org_result.get('error', 'Erreur organisation'))
+            try:
+                _learn_song_timing(time.monotonic() - _song_clock['started'], item.get('duration'))
+            except Exception as e:  # jamais bloquant
+                logger.warning(f"⚠️ Estimation de durée non mise à jour : {e}")
 
         downloader.progress.phase   = 'completed'
         downloader.progress.percent = 100
