@@ -33,7 +33,7 @@ make down / restart  # stop / full restart
 make config          # preview resolved compose config
 make dev             # Flask backend without Docker (DEV_MODE=true, port 8081)
 make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
-(cd frontend && npm run check)  # svelte-check (0 errors expected; a11y warnings pre-exist)
+(cd frontend && npm run check)  # svelte-check (0 errors, 0 warnings expected)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
