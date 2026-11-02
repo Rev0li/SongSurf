@@ -3,25 +3,23 @@
 	import { addToast } from '$lib/stores.js';
 	import { asText, inferPlaylistArtist } from '$lib/utils.js';
 
-	export let onAddToQueue = () => {};
-
 	// ── State ──────────────────────────────────────────────────────────────────
-	let url = '';
-	let extract = null;
-	let panelActive = false;
+	let url = $state('');
+	let extract = $state(null);
+	let panelActive = $state(false);
 
 	// single song fields
-	let title = '';
-	let artist = '';
-	let album = '';
+	let title = $state('');
+	let artist = $state('');
+	let album = $state('');
 
 	// playlist fields
-	let playlistArtist = '';
-	let playlistAlbum = '';
-	let playlistYear = '';
+	let playlistArtist = $state('');
+	let playlistAlbum = $state('');
+	let playlistYear = $state('');
 
 	// ── Extract ───────────────────────────────────────────────────────────────
-	let extracting = false;
+	let extracting = $state(false);
 
 	async function onExtract() {
 		const raw = url.trim();
@@ -56,34 +54,48 @@
 	}
 
 	// ── Add to queue ─────────────────────────────────────────────────────────
-	function addToQueue() {
-		if (!extract) return;
+	// Envoi direct au serveur, qui possède la file (SSF-03) : elle s'affiche dans
+	// « File d'attente » (UpcomingQueue). Un refus (cookies, quota, file pleine)
+	// devient un toast et le panneau reste ouvert pour réessayer.
+	let submitting = $state(false);
 
-		const item = extract.is_playlist ? {
-			isPlaylist: true,
-			label: asText(playlistAlbum, extract.title ?? 'Album'),
-			playlistMetadata: {
-				title:  asText(playlistAlbum, 'Unknown Album'),
-				artist: asText(playlistArtist, 'Unknown Artist'),
-				year:   asText(playlistYear),
-				songs:  extract.songs ?? [],
-			},
-		} : {
-			isPlaylist: false,
-			label: `${asText(artist, '?')} — ${asText(title, '?')}`,
-			url:    extract.url ?? '',
-			title:  asText(title,  'Unknown Title'),
-			artist: asText(artist, 'Unknown Artist'),
-			album:  asText(album,  'Unknown Album'),
-			year:   '',
-			track_number: extract.track_number ?? '',
-			album_artist: extract.album_artist ?? '',
-			// Artiste modifié à la main → la liste multi-artistes extraite n'est plus fiable
-			artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
-		};
+	async function addToQueue() {
+		if (!extract || submitting) return;
+		submitting = true;
 
-		onAddToQueue(item);
-		reset();
+		try {
+			let label;
+			if (extract.is_playlist) {
+				label = asText(playlistAlbum, extract.title ?? 'Album');
+				await api.downloadPlaylist({
+					playlist_metadata: {
+						title:  asText(playlistAlbum, 'Unknown Album'),
+						artist: asText(playlistArtist, 'Unknown Artist'),
+						year:   asText(playlistYear),
+						songs:  extract.songs ?? [],
+					},
+				});
+			} else {
+				label = `${asText(artist, '?')} — ${asText(title, '?')}`;
+				await api.download({
+					url:    extract.url ?? '',
+					title:  asText(title,  'Unknown Title'),
+					artist: asText(artist, 'Unknown Artist'),
+					album:  asText(album,  'Unknown Album'),
+					year:   '',
+					track_number: extract.track_number ?? '',
+					album_artist: extract.album_artist ?? '',
+					// Artiste modifié à la main → la liste multi-artistes extraite n'est plus fiable
+					artists: asText(artist) === asText(extract.artist, 'Unknown Artist') ? (extract.artists ?? []) : [],
+				});
+			}
+			addToast(`➕ Ajouté à la file : ${label}`, 'info');
+			reset();
+		} catch (err) {
+			addToast(err.message || 'Impossible d\'ajouter à la file.', 'error', 8000);
+		} finally {
+			submitting = false;
+		}
 	}
 
 	// ── Reset ─────────────────────────────────────────────────────────────────
@@ -110,10 +122,10 @@
 				bind:value={url}
 				placeholder="Coller un lien YouTube Music…"
 				autocomplete="off"
-				on:keydown={onKeydown}
+				onkeydown={onKeydown}
 				disabled={extracting}
 			/>
-			<button class="btn btn-primary" on:click={onExtract} disabled={extracting}>
+			<button class="btn btn-primary" onclick={onExtract} disabled={extracting}>
 				{extracting ? 'Analyse…' : 'Analyser'}
 			</button>
 		</div>
@@ -129,38 +141,38 @@
 			<div class="metadata-main">
 				{#if !extract?.is_playlist}
 					<div class="form-group">
-						<label class="form-label">Titre</label>
-						<input class="form-input" bind:value={title} placeholder="Titre" />
+						<label class="form-label" for="dl-title">Titre</label>
+						<input id="dl-title" class="form-input" bind:value={title} placeholder="Titre" />
 					</div>
 					<div class="form-group compact-row">
 						<div>
-							<label class="form-label">Artiste</label>
-							<input class="form-input" bind:value={artist} placeholder="Artiste" />
+							<label class="form-label" for="dl-artist">Artiste</label>
+							<input id="dl-artist" class="form-input" bind:value={artist} placeholder="Artiste" />
 						</div>
 						<div>
-							<label class="form-label">Album</label>
-							<input class="form-input" bind:value={album} placeholder="Album" />
+							<label class="form-label" for="dl-album">Album</label>
+							<input id="dl-album" class="form-input" bind:value={album} placeholder="Album" />
 						</div>
 					</div>
 				{:else}
 					<div class="playlist-title">{extract.title ?? ''}</div>
 					<div class="form-group compact-row">
 						<div>
-							<label class="form-label">Artiste</label>
-							<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
+							<label class="form-label" for="dl-pl-artist">Artiste</label>
+							<input id="dl-pl-artist" class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
 						</div>
 						<div>
-							<label class="form-label">Album / Playlist</label>
-							<input class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
+							<label class="form-label" for="dl-pl-album">Album / Playlist</label>
+							<input id="dl-pl-album" class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
 						</div>
 					</div>
 					<div class="form-group" style="max-width:120px">
-						<label class="form-label">Année</label>
-						<input class="form-input" bind:value={playlistYear} placeholder="2024" />
+						<label class="form-label" for="dl-pl-year">Année</label>
+						<input id="dl-pl-year" class="form-input" bind:value={playlistYear} placeholder="2024" />
 					</div>
 					{#if (extract?.songs?.length ?? 0) > 0}
 						<div class="form-group">
-							<label class="form-label">{extract.songs.length} titres</label>
+							<div class="form-label">{extract.songs.length} titres</div>
 							<div class="song-list-preview">
 								{#each extract.songs as song, i}
 									<div class="song-row">{i + 1}. {song.title ?? ''}</div>
@@ -171,10 +183,10 @@
 				{/if}
 
 				<div class="metadata-actions">
-					<button class="btn btn-primary btn-block" on:click={addToQueue}>
-						➕ Ajouter à la file
+					<button class="btn btn-primary btn-block" onclick={addToQueue} disabled={submitting}>
+						{submitting ? 'Envoi…' : '➕ Ajouter à la file'}
 					</button>
-					<button class="btn btn-ghost btn-sm" on:click={reset}>Annuler</button>
+					<button class="btn btn-ghost btn-sm" onclick={reset}>Annuler</button>
 				</div>
 			</div>
 		</div>

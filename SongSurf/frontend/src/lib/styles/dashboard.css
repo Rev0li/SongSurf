@@ -40,20 +40,6 @@
 }
 
 /* Options card ────────────────────────────────── */
-.option-card {
-  background: var(--bg-3);
-  border: 1px solid var(--sep);
-  border-radius: var(--r-md);
-  padding: var(--s3);
-}
-.option-toggle-row {
-  padding: var(--s2) 0;
-  border-bottom: 1px solid var(--sep);
-}
-.option-toggle-row:last-child { border-bottom: none; }
-.toggle-description { flex: 1; }
-.toggle-description strong { font-size: 13px; font-weight: 600; }
-.toggle-description small  { display: block; font-size: 11px; color: var(--text-3); }
 
 /* Download actions ────────────────────────────── */
 .metadata-actions {
@@ -79,126 +65,18 @@
 .song-list-preview .song-row:last-child { border-bottom: none; }
 
 /* ── Main content grid ───────────────────────────────────────────────────── */
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: var(--s5);
-  align-items: start;
-  margin-top: var(--s4);
-}
 
 /* ── Progress zone ───────────────────────────────────────────────────────── */
 #progress-zone .card-title { font-size: 14px; color: var(--text-2); margin-bottom: var(--s2); }
 
 /* ── Library tree ────────────────────────────────────────────────────────── */
-.library-tree {
-  max-height: 560px;
-  overflow-y: auto;
-  padding-right: var(--s1);
-}
-.library-tree::-webkit-scrollbar { width: 4px; }
-.library-tree::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 2px; }
-
-.library-tree details {
-  margin-bottom: var(--s2);
-  border-radius: var(--r-md);
-  border: 1px solid var(--sep);
-  background: var(--bg-3);
-  overflow: hidden;
-}
-.library-tree summary {
-  list-style: none;
-  cursor: pointer;
-  padding: var(--s3) var(--s3);
-  user-select: none;
-}
-.library-tree summary::-webkit-details-marker { display: none; }
-
-.lib-summary-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s2);
-}
-.lib-summary-left {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s2);
-  min-width: 0;
-}
-.lib-caret { font-size: 10px; color: var(--text-3); transition: transform .15s; }
-details[open] > summary .lib-caret { transform: rotate(90deg); }
-.lib-icon  { font-size: 13px; }
-.lib-name  {
-  font-size: 13px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 200px;
-}
-.lib-count {
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg-4);
-  padding: 1px 7px;
-  border-radius: var(--r-full);
-}
 
 /* Nested album inside artist */
-.library-tree details details {
-  margin: var(--s1) var(--s3) var(--s1);
-  border-color: var(--sep);
-  background: var(--bg-2);
-}
-
-.song-item {
-  padding: 5px var(--s3) 5px 36px;
-  font-size: 13px;
-  color: var(--text-2);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: grab;
-  border-top: 1px solid var(--sep);
-}
-.song-item:first-of-type { border-top: none; }
-.song-item:hover { background: var(--bg-4); color: var(--text); }
-.song-item:active { cursor: grabbing; }
-.lib-song-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.lib-drag-hint { font-size: 10px; color: var(--text-3); opacity: 0; transition: opacity .15s; }
-.song-item:hover .lib-drag-hint { opacity: 1; }
 
 .drop-target { outline: 2px solid var(--primary); outline-offset: -2px; }
 
-.selected-folder > summary { background: var(--accent-soft); }
-.selected-folder > summary .lib-name { color: var(--text); }
-
-.folder-actions {
-  background: transparent; border: none; cursor: pointer;
-  font-size: 12px; color: var(--text-3); padding: 2px 4px; border-radius: 4px;
-}
-.folder-actions:hover { background: var(--bg-4); color: var(--text); }
-
 /* ── Recent downloads ────────────────────────────────────────────────────── */
 #dl-list { }
-.dl-item {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  padding: 10px var(--s2);
-  border-bottom: 1px solid var(--sep);
-  font-size: 13px;
-}
-.dl-item:last-child { border-bottom: none; }
-.dl-folder-icon { font-size: 16px; flex-shrink: 0; }
-.dl-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-3);
-  background: var(--bg-3);
-  padding: 2px 8px;
-  border-radius: var(--r-full);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
@@ -206,18 +84,11 @@ details[open] > summary .lib-caret { transform: rotate(90deg); }
   .compact-row { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
-  .main-grid { grid-template-columns: 1fr; }
-  .side-column { order: -1; }
   .top-analyzer-wrap { top: 53px; }
 }
 @media (max-width: 480px) {
   .page-body { padding: 0 var(--s3) var(--s8); }
   .top-analyzer-wrap { padding: 0 var(--s3); }
-  .folder-actions { min-height: 44px; padding: 10px 8px; }
-  .lib-name { max-width: none; flex: 1; }
-  .lib-song-name { max-width: none; flex: 1; }
-  .lib-drag-hint { display: none; }
-  .library-tree { max-height: 360px; }
   .metadata-actions { flex-direction: column; }
   .metadata-actions .btn { width: 100%; }
 }

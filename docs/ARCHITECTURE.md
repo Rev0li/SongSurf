@@ -144,17 +144,24 @@ frontend/src/
   routes/
     +layout.svelte         theme init, session polling, nav
     +page.svelte           dashboard: URL analyzer, queue, library, progress
-    metadata/+page.svelte  library browser + full ID3 editor (multi-value via «;»)
+    metadata/+page.svelte  shell: loads the tree, shows the panel of the selection
   lib/
     api.js                 fetch wrapper — all backend calls
-    stores.js              user, theme, workerBusy, urlQueue, extensionQueue
-    components/            DownloadPanel, UrlQueue, LibraryTree,
-                           ProgressZone, Toast, WatcherInactivity
+    stores.js              user, downloadStatus, theme, toasts, confirmAction
+    metadata/              library.js (tree, selection, navigation, image versions) · id3.js
+    components/            DownloadPanel, ProgressZone, UpcomingQueue, LibraryCard,
+                           Header, Toast, ConfirmModal, HelpModal, WatcherInactivity
+      metadata/            LibrarySidebar, ArtistGallery, Crumbs, ArtistPanel (+ ArtistGenre,
+                           ArtistAudit), AlbumPanel (+ AlbumReorder), SongPanel
+                           (+ SongTagsEditor, SongDetails)
+    styles/                design-system.css, components.css, …, metadata.css (shared /metadata styles)
 ```
+
+Svelte 5 (runes: `$state`, `$derived`, `$props`, `onclick`), SvelteKit 2, Vite 5, built with Node 22. `npm run check` runs `svelte-check`. Map of every screen/action/API route: `docs/FRONTEND_MAP.md`.
 
 Key flows:
 
-- **UrlQueue** submits every item to the server at once (the server owns ordering and drains album by album), then reflects progress via the `workerBusy` store (`/api/status` polling); persists across navigation.
+- **Queueing**: « Ajouter à la file » submits straight to the server (the server owns ordering and drains album by album); `UpcomingQueue` and `ProgressZone` reflect it via `/api/status` polling.
 - **Extension intake**: server-side fire-and-forget — the extension posts straight to `/api/queue-direct`, which extracts and enqueues without involving the page.
 - **`/metadata` navigation state + image caching**: expanded tree, sidebar, selection, scroll and the library tree itself (stale-while-revalidate) persist in localStorage (`ssf.meta.*`), so switching tabs and coming back restores the view without a cold reload. Cover/artist image URLs carry a stable per-path version (`?t=<n>`, stored in `ssf.meta.imgv`) bumped only when a cover is uploaded — combined with the backend's `Cache-Control` headers, the browser serves all images from cache across navigations instead of re-downloading them.
 - Design tokens come from the MyCss design system (CSS custom properties, light/dark via `html.dark`).
@@ -170,6 +177,6 @@ Key flows:
 | Audio | FFmpeg (MP3, best VBR) |
 | Tags | Mutagen (ID3v2.4, multi-value frames) |
 | Images | Pillow (cover crop/resize → JPEG) |
-| Frontend | SvelteKit, adapter-static |
+| Frontend | Svelte 5 + SvelteKit 2, adapter-static |
 | Containers | Docker Compose overlays + Docker SDK (lifecycle) |
 | Auth | Portal gate (Caddy `forward_auth` + rev0auth), proof checked by Watcher |

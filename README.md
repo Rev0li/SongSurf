@@ -24,7 +24,7 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 
 - Docker + Docker Compose
 - For production auth: a reverse proxy that authenticates users and sends `X-User-Name` / `X-User-Role` / `X-User-Id` plus `X-Proxy-Token` (see `docs/CONNECTOR.md`)
-- For frontend development only: Node 20+
+- For frontend development only: Node 22+
 
 ## Quick start (local)
 

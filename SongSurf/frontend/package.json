@@ -6,13 +6,18 @@
   "scripts": {
     "dev": "vite dev --port 5173",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "3.0.5",
-    "@sveltejs/kit": "2.9.0",
-    "@sveltejs/vite-plugin-svelte": "3.1.2",
-    "svelte": "4.2.20",
-    "vite": "5.4.0"
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "4.0.4",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "vite": "5.4.21"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

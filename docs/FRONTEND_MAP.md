@@ -1,0 +1,138 @@
+# Carte fonctionnelle du frontend — SSF-05, étape 0
+
+> État au 2026-10-26, mis à jour le 2026-11-02 (découpage de `/metadata` + Svelte 5, branche `feat/ssf-05`). Sert de base au découpage du frontend (SSF-05) puis au refactor backend (SSF-04) : ce que l'interface utilise vraiment dit quelles routes garder.
+>
+> Légende : ✅ essentiel · 🟡 secondaire (gardé, candidat à simplifier ou à mettre en retrait) · 🔁 doublon · 💀 mort (à supprimer)
+> **Les 🔁 et 💀 ne sont supprimés qu'après validation.**
+
+## Vue d'ensemble
+
+| Zone | Fichier(s) | Lignes |
+|---|---|---|
+| Page Téléchargement `/` | `routes/+page.svelte` + 4 composants (avant : 6, ~1 400 lignes) | ~640 |
+| Page Métadonnées `/metadata` | `routes/metadata/+page.svelte` (coquille) + 12 composants `lib/components/metadata/` + `lib/metadata/{library,id3}.js` + `lib/styles/metadata.css` (avant : un seul fichier de 2 194 lignes) | ~2 300, aucun fichier > ~400 |
+| Coquille (tous écrans) | `routes/+layout.svelte`, `Header`, `Toast`, `ConfirmModal`, `HelpModal`, `WatcherInactivity` | ~630 |
+| Partagé | `lib/api.js`, `lib/stores.js`, `lib/utils.js` | ~300 |
+| Styles globaux | `lib/styles/*.css` | ~580 |
+
+Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (image Docker). `npm run check` = `svelte-check`.
+
+---
+
+## 1. Coquille (présente sur les deux pages)
+
+| Élément | Rôle | Statut |
+|---|---|---|
+| `+layout.svelte` — polling `/api/status` toutes les 1,5 s | Alimente progression, file, toasts de fin/erreur | ✅ |
+| `Header` — « ← Mon espace », logo, pseudo, onglets Téléchargement / Métadonnées | Navigation | ✅ |
+| `Header` — bascule clair/sombre | Confort | 🟡 |
+| `Header` — bouton « ? » → `HelpModal` (tutoriel, 2 catégories × 3 étapes, ouvert seul à la 1re visite) | Aide | 🟡 |
+| `Toast` | Retours d'action | ✅ |
+| `ConfirmModal` (`confirmAction()`) | Confirmations destructives (ZIP, suppression) | ✅ |
+| `WatcherInactivity` — avertissement avant mise en veille + « Je suis là » (`/watcher/inactivity-status`, `/watcher/keepalive`) | Évite une coupure pendant l'usage | ✅ |
+
+## 2. Page Téléchargement `/`
+
+| Élément | Rôle | Statut |
+|---|---|---|
+| `DownloadPanel` — champ URL + « Analyser » (`/api/extract`) | Point d'entrée principal | ✅ |
+| `DownloadPanel` — édition titre/artiste/album (ou artiste/album/année + liste des titres) puis « Ajouter à la file » | Corriger avant de télécharger | ✅ |
+| `ProgressZone` — barre de progression, titre en cours, « worker occupé par… » | Suivi | ✅ |
+| `UpcomingQueue` — titres **en attente côté serveur** (les miens), groupés par album | Suivi de la vraie file | ✅ |
+| `UrlQueue` — file **côté navigateur** : envoie chaque élément (`/api/download`, `/api/download-playlist`) puis affiche En attente / Envoi / Téléchargement / Terminé / Erreur | Depuis que le serveur possède la file (SSF-03), elle **double** `UpcomingQueue` : deux listes « file d'attente » à l'écran. Son seul rôle propre est d'afficher l'**erreur d'envoi** (cookies manquants, quota, file pleine) | 🔁 à fusionner avec `UpcomingQueue` : l'ajout envoie directement, l'erreur passe en toast |
+| `LibraryTree` — bouton **ZIP** (membres) avec avancement | Seul endroit pour exporter sa bibliothèque | ✅ |
+| `LibraryTree` — arborescence artistes/albums/titres, filtre, glisser-déposer titre → album et album → artiste | Même fonction que la colonne gauche de `/metadata`, en moins complet | 🔁 à retirer de l'accueil (lien « Voir ma bibliothèque » vers `/metadata`) ; le bouton ZIP reste |
+
+## 3. Page Métadonnées `/metadata`
+
+**Découpage (SSF-05, 2026-11-02).** La page ne fait plus que charger l'arbre et afficher le panneau de la sélection. L'état partagé vit dans `lib/metadata/library.js` (stores `tree`, `selection`, `imgVersions`, `albumTracks`, fonctions `select*`, `refreshTree`…). Chaque sélection incrémente `selection.seq` : le panneau est remonté et repart d'un état local vierge. Les styles communs à plusieurs composants sont dans `lib/styles/metadata.css`, préfixés `.meta-layout` (même spécificité que les anciens styles scopés).
+
+| Composant | Contenu | Mode (SSF-13) |
+|---|---|---|
+| `ArtistGallery` | Accueil : galerie des artistes | simple |
+| `Crumbs` | Fil d'Ariane | simple |
+| `ArtistPanel` | Photo, infos, grille des albums + badges | simple (photo d'artiste : expert) |
+| `AlbumPanel` | Pochette, tracklist triée par TRCK | simple |
+| `SongPanel` | Chargement du titre, flèches, bloc « Fichier » | simple (bloc Fichier : expert) |
+| `SongTagsEditor` | Tags principaux + Sauvegarder | simple · « Champs supplémentaires » et « Appliquer à l'album » : expert |
+| `LibrarySidebar` | Arborescence, filtre, glisser-déposer | **expert** |
+| `ArtistGenre` | Genre de l'artiste | **expert** (genre en mode simple : à trancher dans SSF-13) |
+| `ArtistAudit` | Audit iTunes | **expert** |
+| `AlbumReorder` | « Numéroter les pistes » | **expert** |
+| `SongDetails` | TXXX, audio, pochette par titre | **expert** |
+| Suppression (admin) | dans `ArtistPanel` / `AlbumPanel` | **expert** |
+
+### 3.1 Navigation
+| Élément | Statut |
+|---|---|
+| Colonne gauche : arbre artistes → albums → titres, filtre, repliable (rail) | ✅ |
+| Glisser-déposer titre → album, album → artiste (`move`, `move-folder`) | ✅ (ranger, c'est le cœur de la page) |
+| Persistance localStorage `ssf.meta.*` (arbre ouvert, colonne repliée, sélection, défilement) | ✅ |
+| Accueil : galerie des artistes (photos) | ✅ |
+| Fil d'Ariane 🏠 › artiste › album | ✅ |
+| Titre précédent / suivant dans l'album (flèches + clavier) | ✅ |
+| Playlists « à plat » (dossiers sans album, héritage) dans l'arbre | 🟡 mode retiré en 2026-06, ne sert que pour d'anciens dossiers |
+
+### 3.2 Panneau artiste
+| Élément | API | Statut |
+|---|---|---|
+| Photo d'artiste (affichage + envoi, collage) | `artist-picture`, `artist-cover/upload` | 🟡 |
+| Grille des albums + badges de complétude (genre, année, n° de piste manquants) | `album-status` | ✅ |
+| Genre de l'artiste appliqué à tous ses albums | `set-artist-genre` | 🟡 |
+| Audit iTunes (recommandations cochables puis appliquer) | `audit/artist`, `audit/apply` | 🟡 puissant mais avancé : à mettre en retrait (« Outils ») |
+| Supprimer l'artiste — **admin** | `delete-folder` | ✅ (admin) |
+
+### 3.3 Panneau album
+| Élément | API | Statut |
+|---|---|---|
+| Pochette (affichage + envoi) | `folder-cover`, `album-cover/upload` | ✅ |
+| Liste des pistes triée par n° réel (TRCK) | `album-tracks` | ✅ |
+| « 🔢 Numéroter les pistes » (glisser-déposer puis enregistrer) | `renumber-album` | 🟡 |
+| Supprimer l'album — **admin** | `delete-folder` | ✅ (admin) |
+
+### 3.4 Panneau titre
+| Élément | API | Statut |
+|---|---|---|
+| Édition des tags principaux (titre, artiste, album, année, n°, genre…) + Enregistrer | `song-meta`, `song-meta/save` | ✅ |
+| Alerte « champs manquants pour Jellyfin » | — | ✅ |
+| Champs secondaires (repliés) | `song-meta/save` | 🟡 |
+| « Appliquer ce champ à tout l'album » | `song-meta/save` × N | 🟡 utile, à garder discret |
+| Bloc « Fichier » (chemin, taille) en lecture seule | — | 🟡 |
+| Tags TXXX (MusicBrainz, ReplayGain…) en lecture seule | — | 🟡 technique |
+| « Plus de détails » : audio (débit, mode, encodeur) | — | 🟡 technique |
+| Pochette du titre (aperçu + envoi, collage) | `song-cover/upload` | 🟡 doublon partiel de la pochette d'album |
+
+---
+
+## 4. Code mort (💀)
+
+| Élément | Où |
+|---|---|
+| `extractYouTubeVideoId`, `resolveCoverCandidates`, `bustUrl` (appelées nulle part) | `lib/utils.js` |
+| 22 classes CSS globales jamais utilisées : `badge-primary btn-brand empty-state empty-state-icon header-nav progress-subtext progress-text toggle-row toggle-slider toggle-switch` · `dl-count dl-folder-icon dl-item folder-actions main-grid option-card option-toggle-row selected-folder side-column toggle-description` · `container` | `lib/styles/{components,dashboard,layouts}.css` |
+| Champ `thumbnail_candidates` lu par personne côté front (cf. `resolveCoverCandidates`) | réponse de `/api/extract` |
+
+---
+
+## 5. Conséquences pour le backend (SSF-04)
+
+32 routes `/api` dans `server/app.py`.
+
+| Appelant | Routes |
+|---|---|
+| **Frontend** | `me`, `status`, `extract`, `download`, `download-playlist`, `prepare-zip`, `zip-status`, `download-zip`, `library`, `library/move`, `move-folder`, `delete-folder`, `folder-cover`, `artist-picture`, `song-meta`, `song-meta/save`, `song-cover/upload`, `album-cover/upload`, `artist-cover/upload`, `album-tracks`, `album-status`, `renumber-album`, `set-artist-genre`, `audit/artist`, `audit/apply` |
+| **Extension** | `cookies/update`, `preview`, `queue-direct` (+ `/watcher/loading`) |
+| **rev0auth** (côté serveur) | `admin/dl-logs` (pages admin « SongSurf logs / activité ») |
+| **curl / automatisation** (gardé exprès) | `admin/genre-backfill`, `admin/genre-backfill/status` |
+| **Personne** 💀 | `admin/extract-covers` |
+
+Découpage naturel du backend qui en découle : **téléchargement** (extract, download*, queue-direct, preview, status) · **bibliothèque** (library, move*, delete-folder, images) · **métadonnées** (song-meta*, album-*, renumber, set-artist-genre, audit*) · **export** (ZIP) · **compte** (me, cookies) · **admin** (dl-logs, genre-backfill).
+
+---
+
+## 6. Décisions (validées le 2026-10-26) et état
+
+1. ✅ **Fait** — code mort supprimé : 3 fonctions de `utils.js` (+ `matchesFilter`, `lastCompleted`, `urlQueue`, devenus inutiles), 31 classes CSS globales. La route `admin/extract-covers` part avec SSF-04.
+2. ✅ **Fait** — une seule « 📋 File d'attente » (`UpcomingQueue`, celle du serveur, avec texte d'aide quand elle est vide) ; `UrlQueue` supprimé ; « Ajouter à la file » envoie directement, erreur → toast.
+3. ✅ **Fait** — arborescence retirée de l'accueil : `LibraryTree` remplacé par `LibraryCard` (bouton « 📚 Voir ma bibliothèque » + ZIP). Les onglets du haut disparaîtront avec la refonte.
+4. ✅ **Tranché** — mode simple / expert et mobile → **SSF-13 (#27)**. Le découpage ci-dessus (§ 3) sépare déjà les briques expertes en composants.

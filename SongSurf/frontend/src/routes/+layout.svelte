@@ -6,14 +6,20 @@
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, lastCompleted, theme, helpOpen, addToast } from '$lib/stores.js';
-	import { primaryArtist, asText } from '$lib/utils.js';
+	import { user, downloadStatus, theme, helpOpen, addToast } from '$lib/stores.js';
+	import { asText } from '$lib/utils.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 	import HelpModal from '$lib/components/HelpModal.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	/**
+	 * @typedef {Object} Props
+	 * @property {import('svelte').Snippet} [children]
+	 */
 
-	let lastCompletedTimestamp = '';
+	/** @type {Props} */
+	let { children } = $props();
+
 	let lastErrorTimestamp = '';
 	let errorBaselineSet = false;
 	let pollInterval;
@@ -23,19 +29,6 @@
 		try {
 			const st = await api.getStatus();
 			downloadStatus.set(st);
-
-			if (
-				st.last_completed?.timestamp &&
-				st.last_completed.timestamp !== lastCompletedTimestamp
-			) {
-				lastCompletedTimestamp = st.last_completed.timestamp;
-				const meta = st.last_completed.metadata ?? {};
-				lastCompleted.set({
-					artist: primaryArtist(meta.artist ?? 'Unknown Artist'),
-					title: asText(meta.title, 'Unknown Title'),
-					timestamp: st.last_completed.timestamp,
-				});
-			}
 
 			// Échec de téléchargement (ex. cookies/âge) → toast actionnable.
 			// Au 1er poll on ne fait qu'établir la ligne de base (pas de toast
@@ -100,4 +93,4 @@
 <HelpModal />
 <ConfirmModal />
 
-<slot />
+{@render children?.()}

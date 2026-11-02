@@ -28,13 +28,8 @@ export const workerBusyByOther = derived(
 	($s) => (!!$s.in_progress || ($s.queue_size ?? 0) > 0 || !!$s.batch_active) && !$s.is_mine
 );
 
-export const lastCompleted = writable(null); // { artist, title, timestamp } | null
-
 // Theme: 'light' | 'dark' — initialized in +layout.svelte onMount from localStorage
 export const theme = writable('light');
-
-// Persists the UrlQueue across navigation
-export const urlQueue = writable([]);
 
 // Help/tutorial modal open state (toggled by the "?" button in the header).
 // Auto-opened once on first visit — see +layout.svelte (localStorage 'ssf.help.seen').
@@ -60,7 +55,7 @@ export function removeToast(id) {
 // ── Confirmation modal ──────────────────────────────────────────────────────────
 // Remplace le confirm() natif par une modal SongSurf. Drop-in : await confirmAction(...).
 
-export const confirmState = writable(null); // { title, message, confirmLabel, cancelLabel, danger, resolve } | null
+export const confirmState = writable(null); // { title, message, confirmLabel, cancelLabel, danger, openedAt, resolve } | null
 
 /**
  * Affiche une modal de confirmation et résout à true (confirmé) / false (annulé).
@@ -75,6 +70,9 @@ export function confirmAction(opts) {
 			confirmLabel: opts.confirmLabel ?? 'OK',
 			cancelLabel: opts.cancelLabel ?? 'Annuler',
 			danger: opts.danger ?? false,
+			// Instant d'ouverture : la touche qui a ouvert la modal (ex. Entrée dans un champ)
+			// ne doit pas la valider dans la foulée — voir ConfirmModal.onKeydown.
+			openedAt: performance.now(),
 			resolve,
 		});
 	});

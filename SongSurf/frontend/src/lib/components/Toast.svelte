@@ -4,12 +4,16 @@
 
 <div class="toast-zone">
 	{#each $toasts as toast (toast.id)}
-		<div
-			class="alert {toast.type === 'error' ? 'alert-error' : 'alert-info'}"
-			role="alert"
-			on:click={() => removeToast(toast.id)}
-		>
-			{toast.message}
+		<!-- role=alert : annoncé par les lecteurs d'écran ; le bouton ferme le message (clic ou clavier) -->
+		<div role="alert">
+			<button
+				type="button"
+				class="alert {toast.type === 'error' ? 'alert-error' : 'alert-info'}"
+				title="Fermer"
+				onclick={() => removeToast(toast.id)}
+			>
+				{toast.message}
+			</button>
 		</div>
 	{/each}
 </div>
@@ -28,6 +32,12 @@
 		pointer-events: none;
 	}
 	.toast-zone .alert {
+		/* bouton affiché comme l'ancien bloc */
+		display: block;
+		width: 100%;
+		text-align: left;
+		line-height: inherit;
+		letter-spacing: inherit;
 		pointer-events: all;
 		cursor: pointer;
 		animation: slideIn 0.2s ease;

@@ -15,7 +15,7 @@ Browser ──portal session──► Caddy (forward_auth) ──identity + X-Pr
 
 - **Watcher** (`SongSurf/watcher/watcher.py`, always running): trusts the identity sent by Caddy only with a valid `X-Proxy-Token` (portal gate), injects identity headers, starts/stops the SongSurf container on demand, monitors inactivity.
 - **SongSurf** (`SongSurf/server/`, started on demand): Flask app — extraction, download queue, MP3 conversion, ID3 tagging, library management, metadata editor API.
-- **Frontend** (`SongSurf/frontend/`): SvelteKit (adapter-static), built into the Docker image and served by Flask. Both pages share `Header.svelte` (fixed 93px chrome: "← Mon espace" left, centered logo, pseudo + theme right, Téléchargement/Métadonnées tabs). `/metadata` persists navigation state (expanded tree, sidebar collapsed, selection) in localStorage under `ssf.meta.*`. Cover/artist image URLs are versioned (`?t=<n>` from `ssf.meta.imgv`, bumped only on cover upload — never `Date.now()`, which would defeat the browser cache); the image endpoints send `Cache-Control: private, max-age=86400`.
+- **Frontend** (`SongSurf/frontend/`): Svelte 5 (runes) + SvelteKit 2 (adapter-static), built with Node 22 into the Docker image and served by Flask. `/metadata` = thin route + `lib/metadata/library.js` (shared stores/navigation) + `lib/components/metadata/*` (one component per panel; SSF-13 expert-only bricks are separate components, see `docs/FRONTEND_MAP.md`) + `lib/styles/metadata.css` (shared styles prefixed `.meta-layout`). Both pages share `Header.svelte` (fixed 93px chrome: "← Mon espace" left, centered logo, pseudo + theme right, Téléchargement/Métadonnées tabs). `/metadata` persists navigation state (expanded tree, sidebar collapsed, selection) in localStorage under `ssf.meta.*`. Cover/artist image URLs are versioned (`?t=<n>` from `ssf.meta.imgv`, bumped only on cover upload — never `Date.now()`, which would defeat the browser cache); the image endpoints send `Cache-Control: private, max-age=86400`.
 - **Browser extension** (`chrome-extension/`): MV3, queues songs/albums/playlists from music.youtube.com into SongSurf, scrapes artist discographies, syncs YouTube cookies for yt-dlp.
 
 Repo layout note: the actual app lives under `SongSurf/SongSurf/` (nested). Paths below are relative to `SongSurf/SongSurf/` unless stated otherwise.
@@ -33,6 +33,7 @@ make down / restart  # stop / full restart
 make config          # preview resolved compose config
 make dev             # Flask backend without Docker (DEV_MODE=true, port 8081)
 make frontend-dev    # SvelteKit hot-reload dev server (port 5173)
+(cd frontend && npm run check)  # svelte-check (0 errors, 0 warnings expected)
 make deploy-nas      # rsync + rebuild + restart on the Synology NAS
 make bump-ytdlp      # pin the latest yt-dlp in server/requirements.txt (VERSION=… to force)
 
