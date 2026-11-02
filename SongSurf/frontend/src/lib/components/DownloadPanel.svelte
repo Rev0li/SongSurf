@@ -141,38 +141,38 @@
 			<div class="metadata-main">
 				{#if !extract?.is_playlist}
 					<div class="form-group">
-						<label class="form-label">Titre</label>
-						<input class="form-input" bind:value={title} placeholder="Titre" />
+						<label class="form-label" for="dl-title">Titre</label>
+						<input id="dl-title" class="form-input" bind:value={title} placeholder="Titre" />
 					</div>
 					<div class="form-group compact-row">
 						<div>
-							<label class="form-label">Artiste</label>
-							<input class="form-input" bind:value={artist} placeholder="Artiste" />
+							<label class="form-label" for="dl-artist">Artiste</label>
+							<input id="dl-artist" class="form-input" bind:value={artist} placeholder="Artiste" />
 						</div>
 						<div>
-							<label class="form-label">Album</label>
-							<input class="form-input" bind:value={album} placeholder="Album" />
+							<label class="form-label" for="dl-album">Album</label>
+							<input id="dl-album" class="form-input" bind:value={album} placeholder="Album" />
 						</div>
 					</div>
 				{:else}
 					<div class="playlist-title">{extract.title ?? ''}</div>
 					<div class="form-group compact-row">
 						<div>
-							<label class="form-label">Artiste</label>
-							<input class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
+							<label class="form-label" for="dl-pl-artist">Artiste</label>
+							<input id="dl-pl-artist" class="form-input" bind:value={playlistArtist} placeholder="Artiste" />
 						</div>
 						<div>
-							<label class="form-label">Album / Playlist</label>
-							<input class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
+							<label class="form-label" for="dl-pl-album">Album / Playlist</label>
+							<input id="dl-pl-album" class="form-input" bind:value={playlistAlbum} placeholder="Nom" />
 						</div>
 					</div>
 					<div class="form-group" style="max-width:120px">
-						<label class="form-label">Année</label>
-						<input class="form-input" bind:value={playlistYear} placeholder="2024" />
+						<label class="form-label" for="dl-pl-year">Année</label>
+						<input id="dl-pl-year" class="form-input" bind:value={playlistYear} placeholder="2024" />
 					</div>
 					{#if (extract?.songs?.length ?? 0) > 0}
 						<div class="form-group">
-							<label class="form-label">{extract.songs.length} titres</label>
+							<div class="form-label">{extract.songs.length} titres</div>
 							<div class="song-list-preview">
 								{#each extract.songs as song, i}
 									<div class="song-row">{i + 1}. {song.title ?? ''}</div>

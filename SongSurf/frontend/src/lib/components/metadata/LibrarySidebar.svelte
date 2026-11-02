@@ -130,6 +130,8 @@
 			{#each filteredArtists as artist (artist.path)}
 				<!-- Artist = drop zone for albums -->
 				<div class="tree-artist"
+					role="group"
+					aria-label="Artiste {artist.name}"
 					ondragover={dndOverArtist}
 					ondragleave={dndLeave}
 					ondrop={(e) => dndDropOnArtist(e, artist.path)}
@@ -159,6 +161,8 @@
 						{#each artist.albums as album (album.path)}
 							<!-- Album = drop zone for songs -->
 							<div class="tree-album"
+								role="group"
+								aria-label="Album {album.name}"
 								ondragover={dndOverAlbum}
 								ondragleave={dndLeave}
 								ondrop={(e) => dndDropOnAlbum(e, album.path)}
@@ -169,6 +173,7 @@
 									</button>
 									<span
 										class="lib-drag-handle"
+										aria-hidden="true"
 										draggable="true"
 										title="Glisser l'album vers un autre artiste"
 										ondragstart={(e) => { e.stopPropagation(); dndStart(e, album.path, 'album'); }}
@@ -202,6 +207,8 @@
 			{#each filteredPlaylists as pl (pl.path)}
 				<!-- Playlists = drop zone for songs -->
 				<div class="tree-artist"
+					role="group"
+					aria-label="Dossier {pl.name}"
 					ondragover={dndOverAlbum}
 					ondragleave={dndLeave}
 					ondrop={(e) => dndDropOnAlbum(e, pl.path)}
