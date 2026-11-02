@@ -1,0 +1,160 @@
+/* Styles partagés par les composants de la page /metadata (lib/components/metadata/).
+   Préfixés par .meta-layout : même spécificité que les anciens styles scopés
+   (.x.svelte-hash = 2 classes), sans fuite vers les autres pages.
+   Les styles propres à un seul composant restent dans son <style>. */
+
+/* ── États vides / chargement ─────────────────────────────── */
+.meta-layout .meta-empty {
+	height: 100%; display: flex; flex-direction: column;
+	align-items: center; justify-content: center;
+	gap: var(--s3); color: var(--text-3); text-align: center;
+}
+.meta-layout .meta-empty-icon { font-size: 40px; }
+.meta-layout .meta-empty p { font-size: 14px; max-width: 280px; line-height: 1.5; margin: 0; }
+
+.meta-layout .meta-content { max-width: 720px; margin: 0 auto; }
+.meta-layout .meta-sections { display: flex; flex-direction: column; gap: var(--s4); }
+
+/* ── Suppression de dossier (admin) ───────────────────────── */
+.meta-layout .folder-delete-btn {
+	margin-top: var(--s4);
+	align-self: flex-start;
+}
+
+/* ── Tracklist (panneau album + renumérotation) ───────────── */
+.meta-layout .tracklist { display: flex; flex-direction: column; }
+.meta-layout .track-row {
+	display: flex; align-items: center; gap: var(--s3);
+	width: 100%; padding: 9px var(--s4);
+	background: none; border: none;
+	border-bottom: 1px solid rgba(84,84,88,.2);
+	color: var(--text-2); font-size: 13px;
+	text-align: left; cursor: pointer;
+	transition: background .1s, color .1s;
+}
+.meta-layout .track-row:last-child { border-bottom: none; }
+.meta-layout .track-row:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.meta-layout .track-row.track-selected { background: rgba(10,132,255,.12); color: var(--blue); }
+.meta-layout .track-num {
+	flex-shrink: 0; width: 24px;
+	font-size: 12px; color: var(--text-3);
+	font-family: var(--font-mono);
+	text-align: right;
+}
+.meta-layout .track-num-missing { color: var(--orange); }
+.meta-layout .track-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.meta-layout .reorder-badge {
+	flex-shrink: 0;
+	font-size: 10px; color: var(--text-3);
+	font-family: var(--font-mono);
+	background: rgba(0,0,0,.2);
+	border-radius: 3px; padding: 1px 5px;
+}
+.meta-layout .reorder-badge-missing { color: var(--orange); background: rgba(255,159,10,.1); }
+
+/* ── Sections ─────────────────────────────────────────────── */
+.meta-layout .meta-section {
+	background: var(--bg-2); border: 1px solid var(--sep);
+	border-radius: var(--r-md); overflow: hidden;
+}
+.meta-layout .section-title {
+	margin: 0; padding: var(--s3) var(--s4);
+	font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+	color: var(--text-2); border-bottom: 1px solid var(--sep);
+	background: var(--bg-3);
+	display: flex; align-items: center; gap: var(--s3);
+}
+.meta-layout .details-sub { font-size: 11px; font-weight: 400; color: var(--text-3); text-transform: none; letter-spacing: 0; }
+
+.meta-layout .section-subtitle {
+	padding: var(--s2) var(--s4);
+	font-size: 11px; font-weight: 600; color: var(--text-3);
+	letter-spacing: .04em; text-transform: uppercase;
+	border-bottom: 1px solid rgba(84,84,88,.2);
+	background: rgba(0,0,0,.1);
+}
+
+/* ── Lignes clé / valeur ──────────────────────────────────── */
+.meta-layout .row-warn  { font-size: 11px; flex-shrink: 0; }
+.meta-layout .meta-grid { display: flex; flex-direction: column; }
+
+.meta-layout .meta-row {
+	display: flex; align-items: center;
+	gap: var(--s3); padding: var(--s2) var(--s4);
+	border-bottom: 1px solid rgba(84,84,88,.2);
+	min-height: 36px;
+}
+.meta-layout .meta-row:last-child { border-bottom: none; }
+.meta-layout .meta-row.row-warn { background: rgba(255,159,10,.06); }
+
+.meta-layout .meta-key {
+	flex-shrink: 0; width: 180px;
+	font-size: 12px; font-weight: 500; color: var(--text-3);
+}
+.meta-layout .meta-val {
+	flex: 1; font-size: 13px; color: var(--text);
+	word-break: break-word; line-height: 1.5;
+}
+.meta-layout .tag-present { color: var(--green); }
+.meta-layout .tag-absent  { color: var(--text-3); }
+.meta-layout .mono  { font-family: var(--font-mono); }
+.meta-layout .small { font-size: 11px; }
+
+/* ── Champs éditables ─────────────────────────────────────── */
+.meta-layout .meta-input {
+	flex: 1; background: var(--bg-3);
+	border: 1px solid rgba(255,255,255,.08);
+	border-radius: var(--r-sm);
+	color: var(--text); font-size: 13px;
+	padding: 5px 10px; outline: none;
+	font-family: inherit;
+	transition: border-color .15s;
+}
+.meta-layout .meta-input:focus { border-color: var(--blue); background: var(--bg-4); }
+.meta-layout .meta-input.input-warn { border-color: rgba(255,159,10,.4); }
+
+/* ── Barre d'actions ──────────────────────────────────────── */
+.meta-layout .save-bar {
+	display: flex; align-items: center; justify-content: flex-end;
+	gap: var(--s3); padding: var(--s3) var(--s4);
+	border-top: 1px solid var(--sep);
+	background: var(--bg-3);
+}
+.meta-layout .save-error { font-size: 12px; color: var(--red); flex: 1; }
+
+/* ── Upload d'image ───────────────────────────────────────── */
+.meta-layout .cover-upload-zone {
+	padding: var(--s4);
+	border-top: 1px solid rgba(84,84,88,.2);
+}
+.meta-layout .cover-hint { font-size: 12px; color: var(--text-3); margin: 0 0 var(--s2); }
+.meta-layout .cover-hint kbd {
+	font-size: 11px; background: var(--bg-4);
+	border: 1px solid var(--sep); border-radius: 3px;
+	padding: 1px 5px; font-family: inherit;
+}
+.meta-layout .cover-drop-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.meta-layout .hidden-file { display: none; }
+
+/* ── Globaux (glisser-déposer, upload en cours) ───────────── */
+.drop-target {
+	outline: 2px dashed var(--blue) !important;
+	outline-offset: -2px;
+	background: rgba(10, 132, 255, 0.07) !important;
+}
+.loading { opacity: .6; pointer-events: none; }
+
+/* ── Responsive (sm < 480px) ─────────────────────────────── */
+@media (max-width: 480px) {
+	/* Inputs need 16px to avoid iOS zoom */
+	.meta-layout .meta-input { font-size: 16px; }
+
+	/* Tag rows: label above value */
+	.meta-layout .meta-row { flex-direction: column; align-items: flex-start; gap: var(--s1); min-height: unset; padding: var(--s2) var(--s3); }
+	.meta-layout .meta-key { width: 100%; }
+	.meta-layout .meta-input { width: 100%; }
+
+	/* Save bar: stack buttons */
+	.meta-layout .save-bar { flex-wrap: wrap; }
+}
