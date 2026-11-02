@@ -1275,3 +1275,17 @@ def test_dl_logs_limit_capped_and_lenient(flask_setup):
 def test_dl_logs_admin_only(flask_setup):
     c, *_ = flask_setup
     assert c.get('/api/admin/dl-logs?limit=all', headers=auth_headers()).status_code == 403
+
+
+def test_ssf13_spa_pages_served_with_auth(flask_setup, tmp_path):
+    """/library et /metadata rendent l'appli (rechargement sur mobile), derrière l'auth."""
+    c, _, _, app_mod = flask_setup
+    build = tmp_path / 'build'
+    build.mkdir()
+    (build / 'index.html').write_text('<html>spa</html>')
+    with patch.object(app_mod, '_FRONTEND_BUILD', build):
+        for route in ('/library', '/metadata'):
+            r = c.get(route)                       # sans identité : jamais l'appli
+            assert r.status_code == 503 and b'spa' not in r.data, route
+            r = c.get(route, headers=auth_headers())
+            assert r.status_code == 200 and b'spa' in r.data, route

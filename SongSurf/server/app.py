@@ -448,6 +448,16 @@ def dashboard():
     return _spa()
 
 
+# Pages de l'appli (SSF-13) : un rechargement (ou « tirer pour rafraîchir » sur
+# mobile) sur /library doit rendre l'appli, pas un 404. /metadata = ancienne
+# adresse, redirigée côté client vers /library.
+@app.route('/library')
+@app.route('/metadata')
+@auth_required
+def spa_pages():
+    return _spa()
+
+
 @app.route('/_app/<path:filename>')
 def svelte_assets(filename):
     """Serve SvelteKit's generated JS/CSS bundles (no auth needed)."""
@@ -458,9 +468,8 @@ def svelte_assets(filename):
 def static_assets(filename):
     """Serve top-level static files copied from SvelteKit's static/ dir
     (fonts, help/ tutorial images, favicon…). Public assets — no auth.
-    Only real files are served; unknown paths 404 (SPA page routes are
-    handled client-side, so a direct hit on e.g. /metadata still 404s as
-    before). This catch-all is the least specific rule, so explicit API /
+    Only real files are served; unknown paths 404 (SPA pages have their own
+    routes above: /, /library, /metadata). This catch-all is the least specific rule, so explicit API /
     asset routes always win."""
     target = (_FRONTEND_BUILD / filename).resolve()
     if not target.is_relative_to(_FRONTEND_BUILD) or not target.is_file():
@@ -2403,7 +2412,7 @@ def _process_song(item):
             download_status['in_progress']    = False
             download_status['current_download'] = None
             _last_error_by_user[user_key] = {
-                'error': friendly, 'metadata': metadata,
+                'error': friendly, 'metadata': metadata, 'url': url,  # url : « Réessayer » (SSF-13)
                 'timestamp': datetime.now().isoformat(),
             }
             _batch_progress_after_song()
