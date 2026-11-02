@@ -31,10 +31,6 @@ export const workerBusyByOther = derived(
 // Theme: 'light' | 'dark' — initialized in +layout.svelte onMount from localStorage
 export const theme = writable('light');
 
-// Help/tutorial modal open state (toggled by the "?" button in the header).
-// Auto-opened once on first visit — see +layout.svelte (localStorage 'ssf.help.seen').
-export const helpOpen = writable(false);
-
 // ── Toasts ────────────────────────────────────────────────────────────────────
 
 export const toasts = writable([]); // [{ id, message, type }]

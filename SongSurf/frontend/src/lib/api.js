@@ -75,6 +75,20 @@ export const api = {
 	albumTracks(folderPath) {
 		return request(`/api/library/album-tracks?folder_path=${encodeURIComponent(folderPath)}`);
 	},
+	// SSF-13 : albums aux infos incomplètes de toute la bibliothèque (« À remplir »)
+	todo() {
+		return request('/api/library/todo');
+	},
+	// fields ⊂ { album, year, genre } — écrit sur tous les titres ; nouveau nom → dossier renommé
+	saveAlbumTags(folderPath, fields) {
+		return request('/api/library/album-tags/save', {
+			method: 'POST',
+			body: JSON.stringify({ folder_path: folderPath, ...fields }),
+		});
+	},
+	deleteSong(path) {
+		return request('/api/library/delete-song', { method: 'POST', body: JSON.stringify({ path }) });
+	},
 	albumStatus(folderPath) {
 		return request(`/api/library/album-status?folder_path=${encodeURIComponent(folderPath)}`);
 	},
