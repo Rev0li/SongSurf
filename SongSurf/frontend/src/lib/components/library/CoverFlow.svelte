@@ -260,6 +260,16 @@
 		margin-left: calc(var(--w) / -2); border-radius: 4px; text-decoration: none; will-change: transform;
 		-webkit-box-reflect: below 2px linear-gradient(transparent, transparent 62%, rgba(255, 255, 255, .32));
 		-webkit-tap-highlight-color: transparent; -webkit-user-drag: none;
+		/* Bords nets quand la pochette est inclinée (anticrénelage des plans 3D). */
+		backface-visibility: hidden; -webkit-backface-visibility: hidden; outline: 1px solid transparent;
+	}
+	/* Safari : pendant le mouvement (calque composité), l'arrondi + overflow:hidden
+	   ne découpe plus l'image et les coins clignotent carrés. Le masque force la
+	   découpe sur la pochette elle-même, en mouvement comme à l'arrêt. */
+	.item :global(.cover) {
+		-webkit-mask-image: -webkit-radial-gradient(white, black);
+		mask-image: radial-gradient(white, black);
+		isolation: isolate;
 	}
 	.item :global(img) { -webkit-user-drag: none; pointer-events: none; }
 	.item:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
