@@ -6,109 +6,224 @@
 <script>
 	// Cover Flow (page artiste), façon iPod : pochette de face au centre, les
 	// autres en deux piles inclinées à gauche et à droite, reflets sur fond noir.
-	// Défilement horizontal natif (doigt, pavé tactile, élan, aimantation par
-	// album) ; la molette verticale avance d'un album ; flèches au clavier.
-	// La position de défilement pilote la 3D. Toucher la pochette de face ouvre
-	// l'album, une autre la ramène au centre.
-	import { onMount } from 'svelte';
+	//
+	// Mouvement « surf » : pas de défilement natif aimanté (trop sec). On glisse
+	// librement (doigt, souris, pavé tactile, molette), l'élan continue puis
+	// s'arrête où il veut ; seulement après 2,5 s sans geste, la pochette la plus
+	// visible revient doucement au centre. Toucher la pochette de face ouvre l'album, une autre
+	// la ramène doucement au centre. Glisser verticalement fait défiler la page.
+	import { onMount, untrack } from 'svelte';
 	import { albumUrl, coverUrl, plural } from '$lib/library/data.js';
 	import Cover from '../ui/Cover.svelte';
 	import Icon from '../ui/Icon.svelte';
 
 	let { artistPath, albums, todoSet } = $props();
 
-	const SLOT = 72; // défilement (px) pour passer d'un album au suivant
+	// Réglages du mouvement
+	const DRAG_PX = 90;      // glisser de 90 px = un album
+	const WHEEL_PX = 140;    // molette / pavé tactile : 140 px = un album
+	const GLIDE_TAU = 0.8;   // élan : la vitesse est divisée par e toutes les 0,8 s…
+	const GLIDE_DECEL = 1.2; // …plus un léger freinage (album/s²) pour finir par s'arrêter
+	const RECENTER_MS = 2500; // immobile depuis 2,5 s → recentre la pochette la plus visible
+	const SPRING_W = 4;      // recentrage doux (amorti critique, ~1,2 s)
+	const RUBBER = 0.35;     // résistance au-delà du premier / dernier album
 
-	let scroller = $state();
-	let width = $state(0);
+	// Disposition des piles
+	const GAP = 80;    // décalage de la 1re pochette de chaque pile (% de sa largeur)
+	const STEP = 11;   // pas entre deux pochettes d'une même pile (%)
+	const TILT = 70;   // inclinaison des piles (degrés)
+	const DEPTH = 150; // recul des piles (px)
+
+	let pos = $state(untrack(() => lastIndex.get(artistPath) ?? 0)); // composant recréé à chaque artiste ({#key})
 	let items = $state([]);
-	let pos = $state(0);
-	let raf = 0;
-
-	let current = $derived(Math.min(albums.length - 1, Math.max(0, Math.round(pos))));
+	let last = $derived(albums.length - 1);
+	let current = $derived(Math.min(last, Math.max(0, Math.round(pos))));
 	let shown = $derived(albums[current]);
 
-	function onScroll() {
-		if (raf) return;
-		raf = requestAnimationFrame(() => {
-			raf = 0;
-			pos = scroller.scrollLeft / SLOT;
-			lastIndex.set(artistPath, Math.round(pos));
-		});
+	// ── Moteur ───────────────────────────────────────────────────────────────
+	// 'idle' (immobile) | 'drag' (au doigt) | 'glide' (élan libre) | 'wheel'
+	// (molette) | 'settle' (recentrage). Aucun aimant pendant le mouvement : le
+	// flot s'arrête où l'élan le mène, et ce n'est qu'après RECENTER_MS sans
+	// geste que la pochette la plus visible revient doucement au centre.
+	let mode = 'idle', v = 0, target = 0, raf = 0, tPrev = 0, recenter = 0;
+	let wheelGoal = 0, wheelAt = 0;
+
+	const clamp = (x) => Math.min(last, Math.max(0, x));
+
+	function kick() {
+		if (!raf) { tPrev = performance.now(); raf = requestAnimationFrame(frame); }
 	}
 
-	function go(i, focus = false) {
-		const n = Math.min(albums.length - 1, Math.max(0, i));
-		const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-		scroller.scrollTo({ left: n * SLOT, behavior: smooth ? 'smooth' : 'auto' });
-		if (focus) items[n]?.focus({ preventScroll: true }); // clavier seulement
-		return n;
+	function settle(to) {
+		clearTimeout(recenter);
+		target = clamp(to);
+		mode = 'settle';
+		kick();
 	}
 
-	// Molette verticale (souris) : un cran = un album. Aux extrémités, la page
-	// reprend la main pour ne pas bloquer le défilement.
-	let wheelAt = 0, target = 0;
+	function rest() {
+		mode = 'idle'; v = 0;
+		lastIndex.set(artistPath, clamp(Math.round(pos)));
+		clearTimeout(recenter);
+		if (Math.abs(pos - Math.round(pos)) > 0.002) {
+			recenter = setTimeout(() => { if (mode === 'idle') settle(Math.round(pos)); }, RECENTER_MS);
+		}
+	}
+
+	function interrupt() {
+		clearTimeout(recenter);
+	}
+
+	// Avance la physique par petits pas (1/120 s) : même mouvement quel que soit
+	// le nombre d'images par seconde de l'appareil.
+	function frame(now) {
+		let left = Math.min(0.25, (now - tPrev) / 1000);
+		tPrev = now;
+		raf = 0;
+		while (left > 0 && mode !== 'idle' && mode !== 'drag') {
+			const dt = Math.min(left, 1 / 120);
+			left -= dt;
+			step(dt, now);
+		}
+		if (mode !== 'idle' && mode !== 'drag') raf = requestAnimationFrame(frame);
+	}
+
+	function step(dt, now) {
+		if (mode === 'glide') {
+			pos += v * dt;
+			v *= Math.exp(-dt / GLIDE_TAU);
+			const brake = GLIDE_DECEL * dt;
+			v = Math.abs(v) <= brake ? 0 : v - Math.sign(v) * brake;
+			if (pos < 0 || pos > last) settle(pos < 0 ? 0 : last); // bord : on revient dans la liste
+			else if (v === 0) rest();
+		} else if (mode === 'wheel') {
+			pos += (wheelGoal - pos) * (1 - Math.exp(-dt / 0.12));
+			if (now - wheelAt > 200 && Math.abs(wheelGoal - pos) < 0.002) { pos = wheelGoal; rest(); }
+		} else if (mode === 'settle') {
+			const acc = -SPRING_W * SPRING_W * (pos - target) - 2 * SPRING_W * v;
+			v += acc * dt;
+			pos += v * dt;
+			if (Math.abs(pos - target) < 0.002 && Math.abs(v) < 0.02) { pos = target; rest(); }
+		}
+	}
+
+	// ── Glisser (doigt ou souris) ────────────────────────────────────────────
+	let flow = $state();
+	let drag = null; // { id, x0, p0, moved, samples }
+	let dragEnd = 0; // fin du dernier glisser : le « clic » qui suit n'ouvre rien
+
+	function rubber(p) {
+		if (p < 0) return p * RUBBER;
+		if (p > last) return last + (p - last) * RUBBER;
+		return p;
+	}
+
+	function onDown(e) {
+		if (e.pointerType === 'mouse' && e.button !== 0) return;
+		interrupt();
+		drag = { id: e.pointerId, x0: e.clientX, p0: pos, moved: false, samples: [[e.timeStamp, pos]], caught: mode !== 'idle' };
+		if (mode !== 'idle') { mode = 'drag'; v = 0; } // on attrape le flot en vol
+	}
+
+	function onMove(e) {
+		if (!drag || e.pointerId !== drag.id) return;
+		const dx = e.clientX - drag.x0;
+		if (!drag.moved) {
+			if (Math.abs(dx) < 6) return;
+			drag.moved = true;
+			mode = 'drag';
+			flow.setPointerCapture(e.pointerId);
+		}
+		pos = rubber(drag.p0 - dx / DRAG_PX);
+		drag.samples.push([e.timeStamp, pos]);
+		if (drag.samples.length > 6) drag.samples.shift();
+	}
+
+	function onUp(e) {
+		if (!drag || e.pointerId !== drag.id) return;
+		const { samples: s, moved, caught } = drag;
+		drag = null;
+		if (moved) dragEnd = performance.now();
+		if (!moved) {
+			if (caught) { dragEnd = performance.now(); pos < 0 || pos > last ? settle(pos < 0 ? 0 : last) : rest(); } // attrapé en vol : il reste là
+			return;
+		}
+		// vitesse au lâcher, sur les ~80 dernières ms
+		const [t1, p1] = s[s.length - 1];
+		let k = s.length - 1;
+		while (k > 0 && t1 - s[k - 1][0] < 80) k--;
+		const [t0, p0] = s[k];
+		v = t1 > t0 ? ((p1 - p0) / (t1 - t0)) * 1000 : 0;
+		v = Math.max(-18, Math.min(18, v));
+		mode = 'glide';
+		kick();
+	}
+
+	// ── Molette / pavé tactile ───────────────────────────────────────────────
 	function onWheel(e) {
-		if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return; // pavé tactile horizontal : natif
-		const dir = Math.sign(e.deltaY);
-		const from = Date.now() - wheelAt < 400 ? target : current;
-		if ((dir < 0 && from <= 0) || (dir > 0 && from >= albums.length - 1)) return;
+		const horiz = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+		const delta = horiz ? e.deltaX : e.deltaY;
+		const scale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
+		// Molette verticale aux extrémités : la page reprend la main.
+		if (!horiz && mode === 'idle' && ((delta < 0 && pos <= 0) || (delta > 0 && pos >= last))) return;
 		e.preventDefault();
-		if (Date.now() - wheelAt < 140) return;
-		wheelAt = Date.now();
-		target = go(from + dir);
+		interrupt();
+		if (mode !== 'wheel') { wheelGoal = pos; v = 0; mode = 'wheel'; }
+		wheelGoal = clamp(wheelGoal + (delta * scale) / WHEEL_PX);
+		wheelAt = performance.now();
+		kick();
 	}
 
 	onMount(() => {
-		const i = lastIndex.get(artistPath) ?? 0;
-		if (i > 0) { scroller.scrollLeft = i * SLOT; pos = i; }
-		scroller.addEventListener('wheel', onWheel, { passive: false });
-		return () => { cancelAnimationFrame(raf); scroller.removeEventListener('wheel', onWheel); };
+		flow.addEventListener('wheel', onWheel, { passive: false });
+		return () => { cancelAnimationFrame(raf); clearTimeout(recenter); flow.removeEventListener('wheel', onWheel); };
 	});
 
-	// d = écart au centre en albums (négatif = à gauche). Pochette de face pour
-	// d = 0 ; les autres forment deux piles : même angle, même profondeur, pas
-	// constant. En défilant, une pochette quitte sa pile, se redresse au centre
-	// puis rejoint l'autre pile.
-	const GAP = 66;    // décalage de la 1re pochette de chaque pile (% de sa largeur)
-	const STEP = 13;   // pas entre deux pochettes d'une même pile (%)
-	const TILT = 70;   // inclinaison des piles (degrés)
-	const DEPTH = 150; // recul des piles (px)
+	// ── Disposition 3D ───────────────────────────────────────────────────────
+	// d = écart au centre en albums (négatif = à gauche). De face pour d = 0 ;
+	// au-delà de 1, deux piles parallèles à pas constant. Entre 0 et 1, la
+	// pochette se décale, recule et pivote ensemble (pas de collision au centre).
 	function place(i, p) {
 		const d = i - p, a = Math.abs(d), s = Math.sign(d);
 		if (a > 9.5) return 'visibility:hidden';
 		const t = Math.min(a, 1), far = Math.max(0, a - 1);
-		const x = s * (t * GAP + far * STEP);
-		const z = -t * DEPTH;
-		const r = s * Math.min(1, a / 0.6) * TILT; // bascule franche : seule celle du centre est de face
-		const dim = 1 - t * 0.15 - Math.min(far, 5) * 0.04;
-		return `transform:translateX(${x}%) translateZ(${z}px) rotateY(${r}deg);z-index:${100 - Math.round(a * 10)};filter:brightness(${dim})`;
+		const ease = t * t * (3 - 2 * t);  // pivot et recul : départ et arrivée en douceur
+		const slide = 1 - (1 - t) * (1 - t); // glissement en avance sur le pivot : le centre se libère
+		const x = s * (slide * GAP + far * STEP);
+		const z = -ease * DEPTH;
+		const r = s * ease * TILT;
+		const dim = 1 - ease * 0.15 - Math.min(far, 5) * 0.04;
+		return `transform:translateX(${x}%) translateZ(${z}px) rotateY(${r}deg);z-index:${1000 - Math.round(a * 100)};filter:brightness(${dim})`;
 	}
 
 	function onClick(e, i) {
-		if (i !== current) { e.preventDefault(); go(i); }
+		if (performance.now() - dragEnd < 300) { e.preventDefault(); return; }
+		if (i !== current || mode !== 'idle') { e.preventDefault(); settle(i); } // une autre pochette : elle vient au centre
 	}
 	function onKey(e) {
-		if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); go(current + 1, true); }
-		else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(current - 1, true); }
+		const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+		if (!step) return;
+		e.preventDefault();
+		interrupt();
+		const to = clamp((mode === 'settle' ? target : current) + step);
+		settle(to);
+		items[to]?.focus({ preventScroll: true });
 	}
 </script>
 
 <div class="cf">
-	<div class="flow" bind:this={scroller} bind:clientWidth={width} onscroll={onScroll}>
-		<div class="rail" style="--sw:{width}px">
-			<div class="stage">
-				{#each albums as album, i (album.path)}
-					<a class="item" href={albumUrl(album.path)} style={place(i, pos)} bind:this={items[i]}
-						tabindex={i === current ? 0 : -1} aria-label="{album.name}, {plural(album.songs?.length ?? 0, 'titre')}"
-						onclick={(e) => onClick(e, i)} onkeydown={onKey}>
-						<Cover src={coverUrl(album.path)} label={album.name} radius={4} />
-					</a>
-				{/each}
-			</div>
-			{#each albums as album (album.path)}<div class="snap" aria-hidden="true"></div>{/each}
-			<div class="tail" aria-hidden="true"></div>
-		</div>
+	<!-- Glisser à la souris / au doigt ; le clavier est géré sur chaque pochette. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="flow" bind:this={flow}
+		onpointerdown={onDown} onpointermove={onMove} onpointerup={onUp} onpointercancel={onUp}
+		ondragstart={(e) => e.preventDefault()}>
+		{#each albums as album, i (album.path)}
+			<a class="item" href={albumUrl(album.path)} style={place(i, pos)} bind:this={items[i]} draggable="false"
+				tabindex={i === current ? 0 : -1} aria-label="{album.name}, {plural(album.songs?.length ?? 0, 'titre')}"
+				onclick={(e) => onClick(e, i)} onkeydown={onKey}>
+				<Cover src={coverUrl(album.path)} label={album.name} radius={4} />
+			</a>
+		{/each}
 	</div>
 
 	{#if shown}
@@ -124,31 +239,26 @@
 
 <style>
 	.cf {
-		--w: min(240px, 44vw);
+		--w: min(240px, 42vw);
 		display: flex; flex-direction: column; gap: 4px; padding-bottom: 14px;
 		border-radius: 20px; overflow: hidden; color: #fff;
 		background: radial-gradient(120% 90% at 50% 35%, #2a2a2a 0%, #0b0b0b 60%, #000 100%);
 	}
 	.flow {
-		height: calc(var(--w) * 1.42); overflow-x: auto; overflow-y: hidden;
-		scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain;
+		position: relative; height: calc(var(--w) * 1.42); overflow: hidden;
+		perspective: 900px; perspective-origin: 50% 40%;
+		touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab;
 		mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
 	}
-	.flow::-webkit-scrollbar { display: none; }
-	.rail { display: flex; height: 100%; width: max-content; }
-	.stage {
-		flex: none; width: var(--sw); height: 100%; margin-right: calc(var(--sw) * -1);
-		position: sticky; left: 0; perspective: 900px; perspective-origin: 50% 40%;
-	}
+	.flow:active { cursor: grabbing; }
 	.item {
 		position: absolute; left: 50%; top: calc(var(--w) * 0.12); width: var(--w);
 		margin-left: calc(var(--w) / -2); border-radius: 4px; text-decoration: none; will-change: transform;
 		-webkit-box-reflect: below 2px linear-gradient(transparent, transparent 62%, rgba(255, 255, 255, .32));
-		-webkit-tap-highlight-color: transparent;
+		-webkit-tap-highlight-color: transparent; -webkit-user-drag: none;
 	}
+	.item :global(img) { -webkit-user-drag: none; pointer-events: none; }
 	.item:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
-	.snap { flex: none; width: 72px; scroll-snap-align: start; }
-	.tail { flex: none; width: calc(var(--sw) - 72px); }
 	.caption { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; padding: 0 var(--s4); min-height: 40px; }
 	.name { font-weight: 700; font-size: 15px; display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 	.meta { font-size: 12.5px; color: rgba(255, 255, 255, .6); }
