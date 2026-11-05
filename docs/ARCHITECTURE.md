@@ -159,7 +159,7 @@ frontend/src/
     components/
       shell/               TopBar, TabBar, MiniBar
       add/                 AddForm, DownloadList
-      library/             LibraryHome, ArtistView, AlbumView, TrackRow
+      library/             LibraryHome, ArtistView, CoverFlow, AlbumView, TrackRow
       sheets/              SheetHost, Account, Menu, TrackEdit, AlbumEdit, Move, FillWizard,
                            Recover (ZIP), Tool (expert tools)
       ui/                  Icon, Cover, Sheet, GenrePicker

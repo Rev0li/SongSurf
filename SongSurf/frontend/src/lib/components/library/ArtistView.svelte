@@ -4,8 +4,17 @@
 	import { artistMenu, changeArtistPicture, pickImage } from '$lib/library/actions.js';
 	import Icon from '../ui/Icon.svelte';
 	import Cover from '../ui/Cover.svelte';
+	import CoverFlow from './CoverFlow.svelte';
 
 	let { path, onBack } = $props();
+
+	// Affichage des albums : Cover Flow (par défaut) ou grille, mémorisé sur l'appareil.
+	const LS_VIEW = 'ssf.artist.view';
+	let view = $state((() => { try { return localStorage.getItem(LS_VIEW) === 'grid' ? 'grid' : 'flow'; } catch { return 'flow'; } })());
+	function setView(v) {
+		view = v;
+		try { localStorage.setItem(LS_VIEW, v); } catch { /* navigation privée */ }
+	}
 
 	let artist = $derived(findArtist($tree, path));
 	let todoSet = $derived(new Set(($todo ?? []).map((a) => a.path)));
@@ -41,17 +50,29 @@
 			</div>
 		</div>
 
-		<h2 class="sec-title">Albums</h2>
-		<div class="grid-albums">
-			{#each artist.albums as album (album.path)}
-				<a class="tile" href={albumUrl(album.path)}>
-					<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
-					{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
-					<span class="tile-name">{album.name}</span>
-					<span class="tile-meta">{plural(album.songs?.length ?? 0, 'titre')}</span>
-				</a>
-			{/each}
+		<div class="sec-head">
+			<h2 class="sec-title">Albums</h2>
+			{#if artist.albums.length > 1}
+				<div class="view-toggle" role="group" aria-label="Affichage des albums">
+					<button type="button" class="icon-btn" aria-pressed={view === 'flow'} onclick={() => setView('flow')} title="Cover Flow" aria-label="Cover Flow"><Icon name="flow" /></button>
+					<button type="button" class="icon-btn" aria-pressed={view === 'grid'} onclick={() => setView('grid')} title="Grille" aria-label="Grille"><Icon name="grid" /></button>
+				</div>
+			{/if}
 		</div>
+		{#if view === 'flow' && artist.albums.length > 1}
+			{#key path}<CoverFlow artistPath={path} albums={artist.albums} {todoSet} />{/key}
+		{:else}
+			<div class="grid-albums">
+				{#each artist.albums as album (album.path)}
+					<a class="tile" href={albumUrl(album.path)}>
+						<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
+						{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
+						<span class="tile-name">{album.name}</span>
+						<span class="tile-meta">{plural(album.songs?.length ?? 0, 'titre')}</span>
+					</a>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </section>
 
@@ -63,4 +84,8 @@
 	.actions { display: flex; gap: var(--s2); align-items: center; margin-top: 4px; }
 	.with-ico { display: inline-flex; align-items: center; gap: 6px; }
 	.tile { text-decoration: none; }
+	.sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+	.view-toggle { display: flex; gap: 2px; background: var(--bg-4); border-radius: var(--r-full); padding: 2px; }
+	.view-toggle .icon-btn { width: 34px; height: 34px; }
+	.view-toggle .icon-btn[aria-pressed='true'] { background: var(--bg-2); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
 </style>

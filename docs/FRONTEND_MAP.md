@@ -23,7 +23,7 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 |---|---|
 | Coque | `routes/+layout.svelte` (polling `/api/status` 1,5 s, rafraîchit Ma musique quand un titre se termine), `components/shell/{TopBar,TabBar,MiniBar}.svelte`, `Toast`, `ConfirmModal`, `WatcherInactivity`, `components/sheets/SheetHost.svelte` |
 | Ajouter `/` | `routes/+page.svelte`, `components/add/{AddForm,DownloadList}.svelte`, `lib/downloads.js` |
-| Ma musique `/library` | `routes/library/+page.svelte`, `components/library/{LibraryHome,ArtistView,AlbumView,TrackRow}.svelte`, `lib/library/{data,actions,genres}.js` |
+| Ma musique `/library` | `routes/library/+page.svelte`, `components/library/{LibraryHome,ArtistView,CoverFlow,AlbumView,TrackRow}.svelte`, `lib/library/{data,actions,genres}.js` |
 | Panneaux | `components/sheets/` : `Account`, `Menu` (« ⋯ »), `TrackEdit`, `AlbumEdit`, `Move`, `FillWizard` (« À remplir »), `Recover` (ZIP), `Tool` (outils experts) |
 | Briques d'interface | `components/ui/{Icon,Cover,Sheet,GenrePicker}.svelte` |
 | Outils experts (inchangés depuis SSF-05) | `components/metadata/{ArtistAudit,AlbumReorder,ArtistGenre,SongDetails}.svelte` + `lib/styles/metadata.css` (préfixe `.meta-layout`) + `lib/metadata/id3.js` |
@@ -56,13 +56,14 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 ### 3.1 Accueil
 | Élément | API |
 |---|---|
-| Recherche (artistes, albums, titres) ; Artistes / Albums / Titres (titres affichés par 200) | `library` (arbre mis en cache dans `ssf.lib.tree`) |
+| Recherche permissive (accents, casse, ponctuation, ordre des mots : « angele » trouve Angèle ; un album se trouve aussi par son artiste, un titre par son artiste ou son album, `matcher()` dans `lib/utils.js`) ; Artistes / Albums / Titres (titres affichés par 200) | `library` (arbre mis en cache dans `ssf.lib.tree`) |
 | « À remplir » : albums aux infos manquantes (année, n° de piste, genre) → assistant | `todo` |
 | « Récupérer ma musique » (membres) → panneau en 3 étapes (préparer, télécharger, bibliothèque vidée seulement si le fichier est complet) | `prepare-zip`, `zip-status`, `download-zip` |
 
 ### 3.2 Artiste / album
 | Élément | API |
 |---|---|
+| Albums de l'artiste en **Cover Flow vertical** (par défaut) ou en grille : bouton à droite de « Albums » (dès 2 albums), choix mémorisé dans `ssf.artist.view`. Défilement natif aimanté par album ; toucher la pochette de face ouvre l'album, une autre la ramène au centre ; flèches ↑↓ au clavier ; au retour d'un album, reprise sur le même | — |
 | Photo d'artiste, pochette d'album (affichage, changement, Ctrl+V) | `artist-picture`, `folder-cover`, `artist-cover/upload`, `album-cover/upload` |
 | Liste des titres triée par n° réel, ⚠ si année ou n° manquant | `album-tracks` (titre, n°, artistes, année, genres) |
 | « Modifier l'album » : nom (tags **et** dossier), année, genre sur tous les titres, fenêtre avant → après | `album-tags/save` |
