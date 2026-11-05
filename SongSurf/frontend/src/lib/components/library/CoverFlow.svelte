@@ -213,14 +213,14 @@
 	}
 </script>
 
-<div class="cf">
+<div class="cf" data-morph-panel>
 	<!-- Glisser à la souris / au doigt ; le clavier est géré sur chaque pochette. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="flow" bind:this={flow}
 		onpointerdown={onDown} onpointermove={onMove} onpointerup={onUp} onpointercancel={onUp}
 		ondragstart={(e) => e.preventDefault()}>
 		{#each albums as album, i (album.path)}
-			<a class="item" href={albumUrl(album.path)} style={place(i, pos)} bind:this={items[i]} draggable="false"
+			<a class="item" href={albumUrl(album.path)} style={place(i, pos)} data-morph={album.path} data-side={i < current ? -1 : 1} bind:this={items[i]} draggable="false"
 				tabindex={i === current ? 0 : -1} aria-label="{album.name}, {plural(album.songs?.length ?? 0, 'titre')}"
 				onclick={(e) => onClick(e, i)} onkeydown={onKey}>
 				<Cover src={coverUrl(album.path)} label={album.name} radius={4} />

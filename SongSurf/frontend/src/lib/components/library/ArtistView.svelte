@@ -5,15 +5,31 @@
 	import Icon from '../ui/Icon.svelte';
 	import Cover from '../ui/Cover.svelte';
 	import CoverFlow from './CoverFlow.svelte';
+	import { tick } from 'svelte';
+	import { snapshot, morph } from '$lib/ui/coverMorph.js';
 
 	let { path, onBack } = $props();
 
 	// Affichage des albums : Cover Flow (par défaut) ou grille, mémorisé sur l'appareil.
 	const LS_VIEW = 'ssf.artist.view';
 	let view = $state((() => { try { return localStorage.getItem(LS_VIEW) === 'grid' ? 'grid' : 'flow'; } catch { return 'flow'; } })());
-	function setView(v) {
-		view = v;
+	// Bascule animée (lib/ui/coverMorph.js) : les pochettes se dispersent puis se
+	// posent dans le nouvel affichage, le fond noir s'évapore ou se condense.
+	let albumsEl = $state();
+	let morphing = false;
+	async function setView(v) {
+		if (v === view || morphing) return;
 		try { localStorage.setItem(LS_VIEW, v); } catch { /* navigation privée */ }
+		if (matchMedia('(prefers-reduced-motion: reduce)').matches || !albumsEl) { view = v; return; }
+		morphing = true;
+		try {
+			const before = snapshot(albumsEl);
+			view = v;
+			await tick();
+			await morph(before, snapshot(albumsEl), { toFlow: v === 'flow' });
+		} finally {
+			morphing = false;
+		}
 	}
 
 	let artist = $derived(findArtist($tree, path));
@@ -59,20 +75,22 @@
 				</div>
 			{/if}
 		</div>
-		{#if view === 'flow' && artist.albums.length > 1}
-			{#key path}<CoverFlow artistPath={path} albums={artist.albums} {todoSet} />{/key}
-		{:else}
-			<div class="grid-albums">
-				{#each artist.albums as album (album.path)}
-					<a class="tile" href={albumUrl(album.path)}>
-						<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
-						{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
-						<span class="tile-name">{album.name}</span>
-						<span class="tile-meta">{plural(album.songs?.length ?? 0, 'titre')}</span>
-					</a>
-				{/each}
-			</div>
-		{/if}
+		<div bind:this={albumsEl}>
+			{#if view === 'flow' && artist.albums.length > 1}
+				{#key path}<CoverFlow artistPath={path} albums={artist.albums} {todoSet} />{/key}
+			{:else}
+				<div class="grid-albums">
+					{#each artist.albums as album (album.path)}
+						<a class="tile" href={albumUrl(album.path)} data-morph={album.path}>
+							<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
+							{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
+							<span class="tile-name">{album.name}</span>
+							<span class="tile-meta">{plural(album.songs?.length ?? 0, 'titre')}</span>
+						</a>
+					{/each}
+				</div>
+			{/if}
+		</div>
 	{/if}
 </section>
 
