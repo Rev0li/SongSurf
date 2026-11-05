@@ -15,6 +15,7 @@
 		songTitle, plural, countSongs,
 	} from '$lib/library/data.js';
 	import { trackMenu } from '$lib/library/actions.js';
+	import { matcher } from '$lib/utils.js';
 	import Icon from '../ui/Icon.svelte';
 	import Cover from '../ui/Cover.svelte';
 	import TrackRow from './TrackRow.svelte';
@@ -29,12 +30,18 @@
 	let todoCount = $derived(($todo ?? []).length);
 	let todoSet = $derived(new Set(($todo ?? []).map((a) => a.path)));
 
-	let q = $derived($ui.q.trim().toLowerCase());
-	let found = $derived(q ? {
-		artists: artists.filter((a) => a.name.toLowerCase().includes(q)),
-		albums: albums.filter(({ album }) => album.name.toLowerCase().includes(q)),
-		songs: songs.filter(({ song }) => song.name.toLowerCase().includes(q)).slice(0, 100),
-	} : null);
+	// Recherche permissive (accents, casse, ponctuation, ordre des mots) : un album
+	// se trouve aussi par son artiste, un titre par son artiste ou son album.
+	let q = $derived($ui.q.trim());
+	let found = $derived.by(() => {
+		if (!q) return null;
+		const hit = matcher(q);
+		return {
+			artists: artists.filter((a) => hit(a.name)),
+			albums: albums.filter(({ artist, album }) => hit(`${album.name} ${artist?.name ?? ''}`)),
+			songs: songs.filter(({ artist, album, song }) => hit(`${song.name} ${artist?.name ?? ''} ${album.name}`)).slice(0, 100),
+		};
+	});
 
 	const setSeg = (seg) => { ui.update((u) => ({ ...u, seg })); limit = PAGE; };
 	const songSub = ({ artist, album }) => `${artist?.name ?? 'Playlist'} · ${album.name}`;
