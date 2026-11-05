@@ -29,10 +29,10 @@
 	const RUBBER = 0.35;     // résistance au-delà du premier / dernier album
 
 	// Disposition des piles
-	const GAP = 80;    // décalage de la 1re pochette de chaque pile (% de sa largeur)
-	const STEP = 11;   // pas entre deux pochettes d'une même pile (%)
-	const TILT = 70;   // inclinaison des piles (degrés)
-	const DEPTH = 150; // recul des piles (px)
+	const GAP = 70;    // décalage de la 1re pochette de chaque pile (% de sa largeur)
+	const STEP = 12;   // pas entre deux pochettes d'une même pile (%)
+	const TILT = 55;   // inclinaison des piles (degrés) : vue de trois quarts
+	const DEPTH = 230; // recul des piles (px) : le bord avant reste plus petit que la pochette de face
 
 	let pos = $state(untrack(() => lastIndex.get(artistPath) ?? 0)); // composant recréé à chaque artiste ({#key})
 	let items = $state([]);
@@ -191,7 +191,9 @@
 		const slide = 1 - (1 - t) * (1 - t); // glissement en avance sur le pivot : le centre se libère
 		const x = s * (slide * GAP + far * STEP);
 		const z = -ease * DEPTH;
-		const r = s * ease * TILT;
+		// Chaque pile regarde le centre : bord extérieur en avant, bord intérieur
+		// en retrait derrière la pochette de face (gauche : rotateY +, droite : −).
+		const r = -s * ease * TILT;
 		const dim = 1 - ease * 0.15 - Math.min(far, 5) * 0.04;
 		return `transform:translateX(${x}%) translateZ(${z}px) rotateY(${r}deg);z-index:${1000 - Math.round(a * 100)};filter:brightness(${dim})`;
 	}
@@ -239,7 +241,7 @@
 
 <style>
 	.cf {
-		--w: min(240px, 42vw);
+		--w: min(240px, 36vw);
 		display: flex; flex-direction: column; gap: 4px; padding-bottom: 14px;
 		border-radius: 20px; overflow: hidden; color: #fff;
 		background: radial-gradient(120% 90% at 50% 35%, #2a2a2a 0%, #0b0b0b 60%, #000 100%);
