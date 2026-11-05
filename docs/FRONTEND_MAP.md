@@ -38,6 +38,7 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 | Onglets du bas | Ajouter / Ma musique ; « Ma musique » touché depuis une sous-page ramène à l'accueil |
 | Mini-barre | L'ajout en cours : un album = « Titre 4 sur 12 » + sa barre (ne recule jamais), « +N ajouts » s'il y en a d'autres ; ou « en attente, ton tour dans N titres » ; visible partout sauf sur Ajouter ; un appui ouvre Ajouter |
 | Toasts, fenêtre de confirmation, avertissement d'inactivité | Inchangés |
+| Webapp (écran d'accueil) | `static/manifest.json` (plein écran, `start_url` `/`) chargé avec `crossorigin="use-credentials"` (sinon Caddy refuse sans cookie du portail), icônes `icon-192/512.png`, `icon-maskable-512.png`, `apple-touch-icon.png`, `favicon.svg` ; balises `apple-mobile-web-app-*` dans `src/app.html`. Icônes PNG redessinées depuis le favicon (fond rose plein, note noire) |
 
 ## 2. Ajouter `/`
 
