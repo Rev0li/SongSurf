@@ -11,20 +11,20 @@
 	import Icon from '../ui/Icon.svelte';
 	import Cover from '../ui/Cover.svelte';
 	import TrackRow from './TrackRow.svelte';
-	import { untrack } from 'svelte';
-	import { zoomInto } from '$lib/ui/albumZoom.js';
+	import { beforeNavigate } from '$app/navigation';
+	import { zoomFrom } from '$lib/ui/albumZoom.js';
 
 	let { path, onBack } = $props();
 
 	let located = $derived(findAlbum($tree, path));
 
-	// Arrivée depuis une pochette touchée : elle se pose ici (lib/ui/albumZoom.js),
-	// le reste de la page entre en cascade.
-	let pageEl = $state();
+	// Vol de pochette (lib/ui/albumZoom.js) : à l'arrivée, la pochette touchée se
+	// pose sur data-zoom-hero ; en repartant vers l'artiste ou « Ma musique »,
+	// elle revient se poser à sa place dans le Cover Flow / la grille.
 	let heroEl = $state();
-	$effect(() => {
-		const [hero, page, p] = [heroEl, pageEl, path];
-		if (hero && page) untrack(() => zoomInto(hero, p, [...page.querySelectorAll('.hero > :not(.cover), .rows > li:nth-child(-n+12), .tip')]));
+	beforeNavigate(({ to, willUnload }) => {
+		if (willUnload || !heroEl || to?.url.pathname !== '/library' || to.url.searchParams.has('album')) return;
+		zoomFrom(heroEl, path, null, 'back');
 	});
 	let tracks = $state(null);
 	let loadedFor = '';
@@ -73,7 +73,7 @@
 <svelte:window onpaste={onPaste} />
 <svelte:head><title>{located?.album.name ?? 'Album'} — SongSurf</title></svelte:head>
 
-<section class="page" bind:this={pageEl}>
+<section class="page">
 	<button type="button" class="link-btn back" onclick={() => onBack(located?.artist ? artistUrl(located.artist.path) : LIBRARY_URL)}>
 		<Icon name="back" />{located?.artist?.name ?? 'Ma musique'}
 	</button>
@@ -86,7 +86,7 @@
 		{/if}
 	{:else}
 		<div class="hero">
-			<div class="cover" bind:this={heroEl}><Cover src={coverUrl(path)} label={located.album.name} radius={16} /></div>
+			<div class="cover" bind:this={heroEl} data-zoom-hero={path}><Cover src={coverUrl(path)} label={located.album.name} radius={16} /></div>
 			<h1>{located.album.name}</h1>
 			{#if located.artist}<a class="link-btn" href={artistUrl(located.artist.path)}>{located.artist.name}</a>{/if}
 			<p class="why">{year || 'Année inconnue'} · {plural(located.album.songs?.length ?? 0, 'titre')}{genre ? ` · ${genre}` : ''}</p>

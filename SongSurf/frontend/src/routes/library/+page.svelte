@@ -5,6 +5,7 @@
 	import { goto, afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { refreshLibrary } from '$lib/library/data.js';
+	import { land } from '$lib/ui/albumZoom.js';
 	import LibraryHome from '$lib/components/library/LibraryHome.svelte';
 	import ArtistView from '$lib/components/library/ArtistView.svelte';
 	import AlbumView from '$lib/components/library/AlbumView.svelte';
@@ -17,6 +18,7 @@
 	let previous = '';
 	afterNavigate(({ from }) => {
 		previous = from?.url ? from.url.pathname + from.url.search : '';
+		land(); // vol de pochette en attente (ouverture / retour d'album)
 	});
 	function back(parentHref) {
 		if (previous === parentHref) history.back();
