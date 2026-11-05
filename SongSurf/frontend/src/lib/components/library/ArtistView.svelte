@@ -7,6 +7,7 @@
 	import CoverFlow from './CoverFlow.svelte';
 	import { tick } from 'svelte';
 	import { snapshot, morph } from '$lib/ui/coverMorph.js';
+	import { zoomFrom } from '$lib/ui/albumZoom.js';
 
 	let { path, onBack } = $props();
 
@@ -81,7 +82,7 @@
 			{:else}
 				<div class="grid-albums">
 					{#each artist.albums as album (album.path)}
-						<a class="tile" href={albumUrl(album.path)} data-morph={album.path}>
+						<a class="tile" href={albumUrl(album.path)} data-morph={album.path} onclick={(e) => zoomFrom(e.currentTarget.querySelector('.cover'), album.path, e)}>
 							<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
 							{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
 							<span class="tile-name">{album.name}</span>

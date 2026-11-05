@@ -16,6 +16,7 @@
 	import { albumUrl, coverUrl, plural } from '$lib/library/data.js';
 	import Cover from '../ui/Cover.svelte';
 	import Icon from '../ui/Icon.svelte';
+	import { zoomFrom } from '$lib/ui/albumZoom.js';
 
 	let { artistPath, albums, todoSet } = $props();
 
@@ -200,7 +201,8 @@
 
 	function onClick(e, i) {
 		if (performance.now() - dragEnd < 300) { e.preventDefault(); return; }
-		if (i !== current || mode !== 'idle') { e.preventDefault(); settle(i); } // une autre pochette : elle vient au centre
+		if (i !== current || mode !== 'idle') { e.preventDefault(); settle(i); return; } // une autre pochette : elle vient au centre
+		zoomFrom(items[i]?.querySelector('.cover'), albums[i].path, e); // pochette de face : elle s'envole vers la page album
 	}
 	function onKey(e) {
 		const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;

@@ -142,7 +142,7 @@ export async function morph(before, after, { toFlow }) {
 		const wrap = document.createElement('div');
 		wrap.style.cssText = `position:absolute;left:${L.x}px;top:${L.y}px;width:${L.w}px;height:${L.h}px;overflow:hidden;will-change:transform,opacity;box-shadow:0 14px 34px rgba(0,0,0,.35);z-index:${f.hidden ? 0 : f.z};`;
 		const clone = (f.hidden ? g.cover : (toFlow ? g.cover : f.cover)).cloneNode(true);
-		Object.assign(clone.style, { width: '100%', height: '100%', borderRadius: '0', opacity: '' });
+		Object.assign(clone.style, { borderRadius: '0', opacity: '' }); // pas de width inline : Cover.svelte en dépend pour la taille des initiales
 		wrap.appendChild(clone);
 		stage.appendChild(wrap);
 

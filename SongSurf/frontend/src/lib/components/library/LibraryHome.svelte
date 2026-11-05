@@ -16,6 +16,7 @@
 	} from '$lib/library/data.js';
 	import { trackMenu } from '$lib/library/actions.js';
 	import { matcher } from '$lib/utils.js';
+	import { zoomFrom } from '$lib/ui/albumZoom.js';
 	import Icon from '../ui/Icon.svelte';
 	import Cover from '../ui/Cover.svelte';
 	import TrackRow from './TrackRow.svelte';
@@ -62,7 +63,7 @@
 {#snippet albumGrid(list)}
 	<div class="grid-albums">
 		{#each list as { artist, album } (album.path)}
-			<a class="tile" href={albumUrl(album.path)}>
+			<a class="tile" href={albumUrl(album.path)} onclick={(e) => zoomFrom(e.currentTarget.querySelector('.cover'), album.path, e)}>
 				<Cover src={coverUrl(album.path)} label={album.name} radius={14} />
 				{#if todoSet.has(album.path)}<span class="tile-badge" title="Infos à compléter"><Icon name="warn" size={14} /></span>{/if}
 				<span class="tile-name">{album.name}</span>
