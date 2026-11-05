@@ -28,7 +28,7 @@
 		moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
 		power: '<path d="M12 3v9"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/>',
 		grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
-		flow: '<rect x="5" y="8" width="14" height="8" rx="1.5"/><path d="M8 4.5h8M8 19.5h8"/>',
+		flow: '<rect x="8" y="5" width="8" height="14" rx="1.5"/><path d="M4.5 8v8M19.5 8v8"/>',
 	};
 </script>
 
