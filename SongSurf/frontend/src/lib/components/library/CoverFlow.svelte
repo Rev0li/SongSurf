@@ -49,15 +49,21 @@
 	}
 
 	// d = écart au centre en albums (négatif = au-dessus). Pochette de face pour
-	// d = 0, puis inclinée vers le centre et de plus en plus tassée.
+	// d = 0 ; les autres forment deux piles : toutes au même angle et à la même
+	// profondeur, serrées à pas constant (pas de courbe « roue »). En défilant,
+	// une pochette quitte sa pile, se redresse au centre puis rejoint l'autre pile.
+	const GAP = 72;   // décalage de la 1re pochette de chaque pile (% de sa hauteur)
+	const STEP = 11;  // pas entre deux pochettes d'une même pile (%)
+	const TILT = 68;  // inclinaison des piles (degrés)
+	const DEPTH = 170; // recul des piles (px)
 	function place(i, p) {
 		const d = i - p, a = Math.abs(d), s = Math.sign(d);
-		if (a > 6.5) return 'visibility:hidden';
+		if (a > 8.5) return 'visibility:hidden';
 		const t = Math.min(a, 1), far = Math.max(0, a - 1);
-		const y = s * (t * 74 + far * 17);          // % de la hauteur d'une pochette
-		const z = -(t * 120 + far * 40);
-		const r = -s * t * 52;
-		const dim = 1 - Math.min(a, 4) * 0.1;
+		const y = s * (t * GAP + far * STEP);
+		const z = -t * DEPTH;
+		const r = -s * Math.min(1, a / 0.6) * TILT; // bascule franche : seule celle du centre est de face
+		const dim = 1 - t * 0.12 - Math.min(far, 5) * 0.03;
 		return `transform:translateY(${y}%) translateZ(${z}px) rotateX(${r}deg);z-index:${100 - Math.round(a * 10)};filter:brightness(${dim})`;
 	}
 
@@ -106,7 +112,7 @@
 		mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent);
 	}
 	.flow::-webkit-scrollbar { display: none; }
-	.stage { position: sticky; top: 0; height: var(--h); margin-bottom: calc(var(--h) * -1); perspective: 700px; }
+	.stage { position: sticky; top: 0; height: var(--h); margin-bottom: calc(var(--h) * -1); perspective: 1000px; }
 	.item {
 		position: absolute; left: 50%; top: 50%; width: var(--w);
 		margin: calc(var(--w) / -2) 0 0 calc(var(--w) / -2);
