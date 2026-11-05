@@ -143,6 +143,8 @@ export async function morph(before, after, { toFlow }) {
 		wrap.style.cssText = `position:absolute;left:${L.x}px;top:${L.y}px;width:${L.w}px;height:${L.h}px;overflow:hidden;will-change:transform,opacity;box-shadow:0 14px 34px rgba(0,0,0,.35);z-index:${f.hidden ? 0 : f.z};`;
 		const clone = (f.hidden ? g.cover : (toFlow ? g.cover : f.cover)).cloneNode(true);
 		Object.assign(clone.style, { borderRadius: 'inherit', opacity: '' }); // arrondi suivi par la copie elle-même (Safari) ; pas de width inline (taille des initiales)
+		clone.querySelectorAll('.cover').forEach((c) => { c.style.borderRadius = 'inherit'; });
+		clone.style.webkitMaskImage = '-webkit-radial-gradient(white, black)'; // Safari : force la découpe arrondie (sur la copie, pas le cadre : l'ombre resterait masquée)
 		wrap.appendChild(clone);
 		stage.appendChild(wrap);
 

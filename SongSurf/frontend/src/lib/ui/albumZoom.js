@@ -48,6 +48,10 @@ export function zoomFrom(coverEl, path, event, dir = 'open') {
 	// découpe pas toujours un enfant avec l'arrondi du parent). Pas de width inline :
 	// Cover.svelte en dépend pour la taille des initiales.
 	Object.assign(clone.style, { borderRadius: 'inherit', opacity: '' });
+	// La pochette de la page album contient une 2e .cover (arrondi 16 px) : toutes
+	// les couches suivent l'arrondi du cadre, sinon l'image garde ses coins d'origine.
+	clone.querySelectorAll('.cover').forEach((c) => { c.style.borderRadius = 'inherit'; });
+	clone.style.webkitMaskImage = '-webkit-radial-gradient(white, black)'; // Safari : force la découpe arrondie (sur la copie, pas le cadre : l'ombre resterait masquée)
 	wrap.appendChild(clone);
 	layer.appendChild(wrap);
 	document.body.appendChild(layer);
