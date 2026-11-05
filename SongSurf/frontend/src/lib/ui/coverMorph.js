@@ -142,7 +142,7 @@ export async function morph(before, after, { toFlow }) {
 		const wrap = document.createElement('div');
 		wrap.style.cssText = `position:absolute;left:${L.x}px;top:${L.y}px;width:${L.w}px;height:${L.h}px;overflow:hidden;will-change:transform,opacity;box-shadow:0 14px 34px rgba(0,0,0,.35);z-index:${f.hidden ? 0 : f.z};`;
 		const clone = (f.hidden ? g.cover : (toFlow ? g.cover : f.cover)).cloneNode(true);
-		Object.assign(clone.style, { borderRadius: '0', opacity: '' }); // pas de width inline : Cover.svelte en dépend pour la taille des initiales
+		Object.assign(clone.style, { borderRadius: 'inherit', opacity: '' }); // arrondi suivi par la copie elle-même (Safari) ; pas de width inline (taille des initiales)
 		wrap.appendChild(clone);
 		stage.appendChild(wrap);
 
@@ -165,11 +165,12 @@ export async function morph(before, after, { toFlow }) {
 	await Promise.all(anims.map((p) => p.catch(() => {})));
 
 	if (toFlow) {
-		// Les copies sont posées exactement sur les vraies pochettes : court fondu enchaîné.
-		const real = after.root.querySelector('[data-morph-panel]');
-		real?.style.removeProperty('opacity');
-		real?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
-		await layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
+		// Le vrai Cover Flow réapparaît d'un coup, SOUS le calque (même fond, mêmes
+		// places) ; seules les copies s'effacent ensuite. Un fondu croisé des deux
+		// fonds ferait pâlir le noir à mi-chemin.
+		after.root.querySelector('[data-morph-panel]')?.style.removeProperty('opacity');
+		ghost.remove();
+		await layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
 	}
 	layer.remove();
 }

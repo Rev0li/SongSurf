@@ -44,7 +44,10 @@ export function zoomFrom(coverEl, path, event, dir = 'open') {
 	const wrap = document.createElement('div');
 	wrap.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;overflow:hidden;border-radius:${radius}px;box-shadow:0 10px 30px rgba(0,0,0,.25);`;
 	const clone = coverEl.cloneNode(true);
-	Object.assign(clone.style, { borderRadius: '0', opacity: '' }); // pas de width inline : Cover.svelte en dépend pour la taille des initiales
+	// Arrondi hérité du cadre volant : la copie découpe elle-même son image (Safari ne
+	// découpe pas toujours un enfant avec l'arrondi du parent). Pas de width inline :
+	// Cover.svelte en dépend pour la taille des initiales.
+	Object.assign(clone.style, { borderRadius: 'inherit', opacity: '' });
 	wrap.appendChild(clone);
 	layer.appendChild(wrap);
 	document.body.appendChild(layer);
