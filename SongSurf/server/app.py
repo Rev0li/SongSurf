@@ -34,6 +34,7 @@ import logging
 import re
 import json
 import io
+import math
 import sys
 import glob
 
@@ -232,6 +233,14 @@ def _job_owner(user: dict) -> dict:
     }
 
 
+def _duration(value) -> int:
+    """Durée d'un titre en secondes (0 si inconnue) : sert à estimer son avancement."""
+    try:
+        return max(0, int(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _enqueue_job(user: dict, songs):
     """Empile un job (liste de titres) de `user` dans la file persistante.
 
@@ -299,12 +308,31 @@ def _write_owner_file(d: Path, pseudo: str) -> None:
         logger.warning(f"⚠️ .owner non écrit dans {d.name}: {e}")
 
 
-def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
-    """Updates TPE1/TALB tags to match the file's actual folder position.
+def _retarget_artists(artists: list[str], old_artist: str | None, new_artist: str) -> list[str]:
+    """TPE1 après un déplacement : seul l'artiste principal change, les featurings restent.
+
+    Même artiste (déplacement entre ses albums) → TPE1 inchangé. Sinon l'ancien
+    artiste est remplacé là où il apparaît, à défaut le premier de la liste.
+    """
+    if not artists:
+        return [new_artist]
+    if not old_artist or old_artist == new_artist:
+        return list(artists)
+    if old_artist in artists:
+        out = [new_artist if a == old_artist else a for a in artists]
+    else:
+        out = [new_artist, *artists[1:]]
+    return list(dict.fromkeys(out))  # dédoublonne en gardant l'ordre
+
+
+def _sync_mp3_tags(file_path: Path, music_dir: Path, old_artist: str | None = None) -> None:
+    """Met les tags d'un MP3 déplacé en accord avec son nouveau dossier (SSF-13).
 
     Structure assumed:
-      Artist/Album/song.mp3  →  artist=parts[0], album=parts[1]
-      Album/song.mp3         →  album=parts[0]  (playlist mode)
+      Artist/Album/song.mp3  →  TALB = Album, TPE2 = Artist, TPE1 : artiste
+                                principal remplacé (featurings gardés)
+      Album/song.mp3         →  TALB = Album  (playlist mode)
+    `old_artist` = dossier artiste d'origine (None si inconnu).
     """
     if file_path.suffix.lower() != '.mp3':
         return
@@ -318,16 +346,28 @@ def _sync_mp3_tags(file_path: Path, music_dir: Path) -> None:
         else:
             return
         from mutagen.mp3 import MP3
-        from mutagen.id3 import ID3, TPE1, TALB
+        from mutagen.id3 import ID3, TPE1, TPE2, TALB
         audio = MP3(file_path, ID3=ID3)
         if audio.tags is None:
             audio.add_tags()
         if artist:
-            audio.tags['TPE1'] = TPE1(encoding=3, text=artist)
+            current = [str(a).strip() for a in (audio.tags['TPE1'].text if 'TPE1' in audio.tags else [])
+                       if str(a).strip()]
+            audio.tags['TPE1'] = TPE1(encoding=3, text=_retarget_artists(current, old_artist, artist))
+            audio.tags['TPE2'] = TPE2(encoding=3, text=artist)
         audio.tags['TALB'] = TALB(encoding=3, text=album)
         audio.save()
     except Exception as e:
         logger.warning(f"⚠️ sync_mp3_tags({file_path.name}): {e}")
+
+
+def _is_admin(user: dict | None) -> bool:
+    return bool(user) and user.get('role') == 'admin'
+
+
+def _admin_only_response():
+    """Outils experts (SSF-13) : réservés à l'admin, 403 pour un membre."""
+    return jsonify({'success': False, 'error': 'Réservé à l\'administrateur', 'code': 'admin_only'}), 403
 
 
 # ── Authentication ─────────────────────────────────────────────────────────────
@@ -417,6 +457,16 @@ def dashboard():
     return _spa()
 
 
+# Pages de l'appli (SSF-13) : un rechargement (ou « tirer pour rafraîchir » sur
+# mobile) sur /library doit rendre l'appli, pas un 404. /metadata = ancienne
+# adresse, redirigée côté client vers /library.
+@app.route('/library')
+@app.route('/metadata')
+@auth_required
+def spa_pages():
+    return _spa()
+
+
 @app.route('/_app/<path:filename>')
 def svelte_assets(filename):
     """Serve SvelteKit's generated JS/CSS bundles (no auth needed)."""
@@ -427,9 +477,8 @@ def svelte_assets(filename):
 def static_assets(filename):
     """Serve top-level static files copied from SvelteKit's static/ dir
     (fonts, help/ tutorial images, favicon…). Public assets — no auth.
-    Only real files are served; unknown paths 404 (SPA page routes are
-    handled client-side, so a direct hit on e.g. /metadata still 404s as
-    before). This catch-all is the least specific rule, so explicit API /
+    Only real files are served; unknown paths 404 (SPA pages have their own
+    routes above: /, /library, /metadata). This catch-all is the least specific rule, so explicit API /
     asset routes always win."""
     target = (_FRONTEND_BUILD / filename).resolve()
     if not target.is_relative_to(_FRONTEND_BUILD) or not target.is_file():
@@ -453,6 +502,74 @@ def ping():
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
 
 
+# ── Avancement estimé du titre en cours (SSF-13) ───────────────────────────────
+# yt-dlp ne donne l'avancement que du téléchargement, qui va vite ; la conversion
+# FFmpeg, la plus longue, n'en donne aucun : la barre restait figée sur un palier
+# puis sautait. On estime donc au temps écoulé, par rapport à la durée réelle des
+# titres précédents (moyennes glissantes gardées en base, donc conservées quand
+# SongSurf est mis en veille). Les phases réelles servent de plancher et de plafond.
+SONG_SECS_DEFAULT = 20.0   # durée de traitement d'un titre sans durée connue (s)
+SONG_RATE_DEFAULT = 0.08   # s de traitement par s d'audio (3 min ≈ 15 s)
+_SMOOTHING        = 0.3    # poids du dernier titre dans la moyenne glissante
+_PHASE_BOUNDS = {          # phase → (plancher, plafond) en %
+    'downloading': (0.0, 45.0),
+    'converting':  (30.0, 92.0),
+    'organizing':  (90.0, 99.0),
+}
+_song_clock = {'started': None, 'expected': SONG_SECS_DEFAULT}
+
+
+def _timing_value(key: str, default: float) -> float:
+    try:
+        value = float(store.meta_get(key) or default)
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _expected_song_seconds(duration) -> float:
+    """Temps de traitement attendu pour un titre de `duration` secondes d'audio."""
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        return max(3.0, duration * _timing_value('song_rate', SONG_RATE_DEFAULT))
+    return _timing_value('song_secs', SONG_SECS_DEFAULT)
+
+
+def _learn_song_timing(elapsed: float, duration) -> None:
+    """Met à jour les moyennes après un titre réellement téléchargé."""
+    if elapsed <= 0:
+        return
+    def blend(key, default, sample):
+        old = _timing_value(key, default)
+        store.meta_set(key, f'{old + _SMOOTHING * (sample - old):.4f}')
+    blend('song_secs', SONG_SECS_DEFAULT, elapsed)
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        blend('song_rate', SONG_RATE_DEFAULT, elapsed / duration)
+
+
+def _song_percent(phase: str, raw_pct: float, elapsed: float, expected: float) -> float:
+    """Avancement d'un titre (0-100) qui ne recule pas quand la phase change.
+
+    Estimation au temps : 90 % à la durée attendue, puis approche lente de 99 %
+    si le titre est plus long que prévu. Bornée par la phase réelle.
+    """
+    if phase == 'completed':
+        return 100.0
+    ratio = elapsed / expected if expected > 0 else 0.0
+    estimate = 90.0 * ratio if ratio <= 1 else 90.0 + 9.0 * (1 - math.exp(-1.5 * (ratio - 1)))
+    floor, ceiling = _PHASE_BOUNDS.get(phase, (0.0, 45.0))
+    if phase == 'downloading':
+        floor = max(0.0, min(100.0, raw_pct)) * 0.3   # vrai avancement du téléchargement
+    return round(max(floor, min(ceiling, estimate)), 1)
+
+
 # ── Download status ────────────────────────────────────────────────────────────
 
 @app.route('/api/status')
@@ -474,20 +591,17 @@ def get_status():
     with queue_lock:
         status = download_status.copy()
         status['queue_size'] = queue_size
-        current_pct = 0
+        current_pct = 0.0
         if status['in_progress']:
             status['progress'] = downloader.get_progress()
-            phase   = status['progress'].get('phase', '')
-            raw_pct = max(0, min(100, int(status['progress'].get('percent', 0))))
-            # Map phase → weighted percent: download=0-50, converting=55, organizing=90, completed=100
-            if phase == 'converting':
-                current_pct = 55
-            elif phase == 'organizing':
-                current_pct = 90
-            elif phase == 'completed':
-                current_pct = 100
-            else:  # downloading or unknown
-                current_pct = int(raw_pct * 0.5)
+            started = _song_clock['started']
+            current_pct = _song_percent(
+                status['progress'].get('phase', ''),
+                float(status['progress'].get('percent', 0) or 0),
+                time.monotonic() - started if started is not None else 0.0,
+                _song_clock['expected'],
+            )
+        status['current_percent'] = current_pct
         if status.get('batch_active'):
             total    = max(1, int(status.get('batch_total', 0) or 0))
             done     = max(0, min(total, int(status.get('batch_done', 0) or 0)))
@@ -524,6 +638,8 @@ def get_status():
         {'artist': m.get('artist', ''), 'title': m.get('title', ''), 'album': m.get('album', '')}
         for m in (p.get('metadata') or {} for p in my_pending)
     ][:200]
+    # Un album = une ligne d'avancement « 3 / 12 titres » (SSF-13), pas un titre par ligne.
+    status['jobs'] = store.jobs_for(my_key)[:100]
     # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
     try:
         cookies_file = _user_cookies_file(current_user)
@@ -615,8 +731,10 @@ def library_move_song():
             target = dst_dir / f"{src.stem} ({i}){src.suffix}"
             i += 1
 
+        src_parts  = src.relative_to(base).parts
+        old_artist = src_parts[0] if len(src_parts) == 3 else None
         shutil.move(str(src), str(target))
-        _sync_mp3_tags(target, music_dir)
+        _sync_mp3_tags(target, music_dir, old_artist=old_artist)
         return jsonify({'success': True, 'final_path': str(target.relative_to(music_dir))})
     except Exception as e:
         logger.error(f"❌ /api/library/move: {e}")
@@ -670,8 +788,9 @@ def library_move_folder():
         if old_parent != base and old_parent.exists() and not any(old_parent.iterdir()):
             old_parent.rmdir()
 
+        old_artist = old_parent.name if old_parent != base else None
         for mp3 in dst.rglob('*.mp3'):
-            _sync_mp3_tags(mp3, music_dir)
+            _sync_mp3_tags(mp3, music_dir, old_artist=old_artist)
 
         return jsonify({'success': True, 'new_path': str(dst.relative_to(music_dir))})
     except Exception as e:
@@ -1052,7 +1171,8 @@ def start_download():
             'year':         data.get('year',   ''),
             'track_number': data.get('track_number', ''),
         }
-        _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
+        _enqueue_job(user, [{'url': url, 'metadata': metadata, 'duration': _duration(data.get('duration')),
+                             **_job_owner(user)}])
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
         return jsonify({'success': True, 'queue_size': store.pending_count()})
     except Exception as e:
@@ -1091,6 +1211,7 @@ def download_playlist():
                 'track_number': song.get('track_number', ''),
                 'track_total':  len(songs),
             },
+            'duration':    _duration(song.get('duration')),
             **_job_owner(user),
         } for song in songs]
 
@@ -1366,9 +1487,11 @@ _backfill_state = {'status': 'idle', 'total': 0, 'done': 0, 'updated': 0,
 @auth_required
 def library_audit_artist():
     """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste.
-    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
+    Outil expert : admin uniquement (SSF-13)."""
     try:
         user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
@@ -1393,9 +1516,11 @@ def library_audit_artist():
 @auth_required
 def library_audit_apply():
     """Applique les recommandations cochées : [{path, field, value}].
-    Opère sur la bibliothèque de l'utilisateur courant — accessible à tous."""
+    Outil expert : admin uniquement (SSF-13)."""
     try:
         user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         changes   = (request.get_json(silent=True) or {}).get('changes') or []
 
@@ -1630,12 +1755,14 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'title':  override.get('title',  'Unknown Title')  or 'Unknown Title',
                     'year':   override.get('year',   ''),
                 }
+                duration = 0
             else:
                 result = downloader.extract_metadata(url, cookiefile=cookiefile)
                 if not result.get('success'):
                     logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
                     return
                 meta = result.get('metadata', {})
+                duration = meta.get('duration')
                 metadata = {
                     'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
                     # override artiste → la liste extraite n'est plus fiable
@@ -1649,7 +1776,9 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
             if _queue_full(user):
                 logger.warning("⚠️ queue-direct (song): file pleine")
                 return
-            _enqueue_job(user, [{'url': url, 'metadata': metadata, **_job_owner(user)}])
+            _enqueue_job(user, [{'url': url, 'metadata': metadata,
+                                 'duration': _duration(duration),
+                                 **_job_owner(user)}])
             logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
         else:
             result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
@@ -1671,6 +1800,7 @@ def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | No
                     'track_number': song.get('track_number', ''),
                     'track_total':  len(songs),
                 },
+                'duration':    _duration(song.get('duration')),
                 **_job_owner(user),
             } for song in songs]
             if _queue_full(user):
@@ -1868,7 +1998,8 @@ def library_song_meta():
 @app.route('/api/library/album-tracks')
 @auth_required
 def library_album_tracks():
-    """Tracklist légère d'un album (titre + TRCK) pour le mode « Numéroter »."""
+    """Tracklist légère d'un album (titre, TRCK, artistes, année, genres) :
+    page album, mode « Numéroter » et assistant « À remplir »."""
     try:
         user      = _get_current_user()
         music_dir = _user_music_dir(user)
@@ -1893,10 +2024,191 @@ def library_album_tracks():
                 'name':         f.name,
                 'title':        tags['title'],
                 'track_number': tags['track_number'],
+                'artists':      tags['artists'],
+                'year':         tags['year'],
+                'genres':       tags['genres'],
             })
         return jsonify({'success': True, 'tracks': items})
     except Exception as e:
         logger.error(f"❌ /api/library/album-tracks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Complétude d'un album, mise en cache tant que ses MP3 ne changent pas
+# (signature = noms + mtime + taille) : l'écriture d'un tag invalide l'entrée.
+_album_status_cache: dict[str, tuple] = {}
+_album_status_lock = threading.Lock()
+
+
+def _album_status(album_dir: Path, music_dir: Path) -> dict | None:
+    """{path, name, tracks, missing{genre,year,track_number}, genres, complete} — None sans MP3."""
+    try:
+        mp3s = sorted(f for f in album_dir.iterdir() if f.is_file() and f.suffix.lower() == '.mp3')
+    except OSError:
+        return None
+    if not mp3s:
+        return None
+    sig = tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in mp3s)
+    key = str(album_dir)
+    with _album_status_lock:
+        hit = _album_status_cache.get(key)
+    if hit and hit[0] == sig:
+        result = hit[1]
+    else:
+        from library_audit import _read_tags
+        missing = {'genre': 0, 'year': 0, 'track_number': 0}
+        genres  = set()
+        for f in mp3s:
+            tags = _read_tags(f)
+            if not tags['genres']:
+                missing['genre'] += 1
+            genres.update(tags['genres'])
+            if not tags['year']:
+                missing['year'] += 1
+            if not tags['track_number']:
+                missing['track_number'] += 1
+        result = {'tracks': len(mp3s), 'missing': missing, 'genres': sorted(genres),
+                  'complete': not any(missing.values())}
+        with _album_status_lock:
+            _album_status_cache[key] = (sig, result)
+    return {'path': str(album_dir.relative_to(music_dir)), 'name': album_dir.name, **result}
+
+
+@app.route('/api/library/todo')
+@auth_required
+def library_todo():
+    """Albums aux infos incomplètes (année, n° de piste ou genre) de toute la
+    bibliothèque de l'utilisateur : bouton et assistant « À remplir » (SSF-13)."""
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        albums = []
+        if music_dir.exists():
+            for artist_dir in sorted((d for d in music_dir.iterdir() if d.is_dir()),
+                                     key=lambda p: p.name.lower()):
+                for album_dir in sorted((d for d in artist_dir.iterdir() if d.is_dir()),
+                                        key=lambda p: p.name.lower()):
+                    st = _album_status(album_dir, music_dir)
+                    if st and not st['complete']:
+                        albums.append({**st, 'artist': artist_dir.name,
+                                       'artist_path': str(artist_dir.relative_to(music_dir))})
+        return jsonify({'success': True, 'albums': albums})
+    except Exception as e:
+        logger.error(f"❌ /api/library/todo: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+_FORBIDDEN_NAME_CHARS = '<>:"/\\|?*'
+
+
+def _clean_folder_name(name: str) -> str:
+    """Nom de dossier sûr (mêmes caractères interdits que l'organizer)."""
+    for ch in _FORBIDDEN_NAME_CHARS:
+        name = name.replace(ch, '')
+    name = name.strip().rstrip('.')
+    return '' if name in ('', '.', '..') else name
+
+
+@app.route('/api/library/album-tags/save', methods=['POST'])
+@auth_required
+def library_album_tags_save():
+    """« Modifier l'album » et « À remplir » (SSF-13) : écrit sur tous les titres
+    d'un album les champs fournis parmi `album`, `year`, `genre`.
+
+    Nouveau nom d'album → TALB de chaque titre + dossier renommé (SongSurf et
+    Jellyfin restent d'accord). 409 si un album du même nom existe déjà.
+    """
+    try:
+        user      = _get_current_user()
+        music_dir = _user_music_dir(user)
+        data        = request.get_json(silent=True) or {}
+        folder_path = (data.get('folder_path') or '').strip()
+        if not folder_path:
+            return jsonify({'success': False, 'error': 'folder_path requis'}), 400
+
+        base   = music_dir.resolve()
+        folder = (music_dir / folder_path).resolve()
+        if folder == base or folder.parent == base or not folder.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not folder.exists() or not folder.is_dir():
+            return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
+
+        tags = {}
+        if 'year' in data:
+            year = str(data.get('year') or '').strip()
+            if year and not re.fullmatch(r'\d{4}', year):
+                return jsonify({'success': False, 'error': 'Année invalide (4 chiffres)'}), 400
+            tags['year'] = year
+        if 'genre' in data:
+            tags['genre'] = str(data.get('genre') or '').strip()
+
+        target = folder
+        if 'album' in data:
+            new_name = _clean_folder_name(str(data.get('album') or ''))
+            if not new_name:
+                return jsonify({'success': False, 'error': "Nom d'album invalide"}), 400
+            tags['album'] = new_name
+            if new_name != folder.name:
+                target = folder.parent / new_name
+                # Renommage de casse seule (« live » → « Live ») autorisé sur un FS insensible
+                if target.exists() and target.resolve() != folder:
+                    return jsonify({'success': False, 'error': 'Un album porte déjà ce nom',
+                                    'code': 'album_exists'}), 409
+                folder.rename(target)
+
+        mp3s = sorted(f for f in target.iterdir() if f.is_file() and f.suffix.lower() == '.mp3')
+        updated, errors = 0, []
+        for f in mp3s:
+            try:
+                if tags:
+                    _write_song_tags(f, tags)
+                updated += 1
+            except Exception as e:
+                errors.append({'path': str(f.relative_to(base)), 'error': str(e)})
+
+        logger.info(f"💾 Album {folder_path} → {target.name} : {sorted(tags)} sur {updated} titre(s)")
+        return jsonify({'success': True, 'path': str(target.relative_to(base)),
+                        'updated': updated, 'errors': errors})
+    except Exception as e:
+        logger.error(f"❌ /api/library/album-tags/save: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/library/delete-song', methods=['POST'])
+@auth_required
+def library_delete_song():
+    """Supprime un titre — admin uniquement (SSF-13). Album devenu sans MP3 →
+    dossier retiré (pochette comprise), puis l'artiste s'il est vide."""
+    try:
+        user = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
+        music_dir = _user_music_dir(user)
+        path      = ((request.get_json(silent=True) or {}).get('path') or '').strip()
+        if not path:
+            return jsonify({'success': False, 'error': 'path requis'}), 400
+
+        base   = music_dir.resolve()
+        target = (music_dir / path).resolve()
+        if not target.is_relative_to(base):
+            return jsonify({'success': False, 'error': 'Chemin invalide'}), 400
+        if not target.exists() or not target.is_file() or target.suffix.lower() != '.mp3':
+            return jsonify({'success': False, 'error': 'Fichier MP3 introuvable'}), 404
+
+        target.unlink()
+        album = target.parent
+        removed_album = False
+        if album != base and not any(f.suffix.lower() == '.mp3' for f in album.rglob('*') if f.is_file()):
+            shutil.rmtree(album)
+            removed_album = True
+            artist = album.parent
+            if artist != base and artist.exists() and not any(artist.iterdir()):
+                artist.rmdir()
+
+        logger.info(f"🗑️ Titre supprimé : {path} par {user.get('email')}")
+        return jsonify({'success': True, 'removed_album': removed_album})
+    except Exception as e:
+        logger.error(f"❌ /api/library/delete-song: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1921,33 +2233,12 @@ def library_album_status():
         if not folder.exists() or not folder.is_dir():
             return jsonify({'success': False, 'error': 'Dossier introuvable'}), 404
 
-        from library_audit import _read_tags
         albums = []
         for album_dir in sorted([d for d in folder.iterdir() if d.is_dir()],
                                 key=lambda p: p.name.lower()):
-            mp3s = [f for f in album_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() == '.mp3']
-            if not mp3s:
-                continue
-            missing = {'genre': 0, 'year': 0, 'track_number': 0}
-            genres  = set()
-            for f in mp3s:
-                tags = _read_tags(f)
-                if not tags['genres']:
-                    missing['genre'] += 1
-                genres.update(tags['genres'])
-                if not tags['year']:
-                    missing['year'] += 1
-                if not tags['track_number']:
-                    missing['track_number'] += 1
-            albums.append({
-                'path':     str(album_dir.relative_to(music_dir)),
-                'name':     album_dir.name,
-                'tracks':   len(mp3s),
-                'missing':  missing,
-                'genres':   sorted(genres),
-                'complete': not any(missing.values()),
-            })
+            st = _album_status(album_dir, music_dir)
+            if st:
+                albums.append(st)
         return jsonify({'success': True, 'albums': albums})
     except Exception as e:
         logger.error(f"❌ /api/library/album-status: {e}")
@@ -1961,9 +2252,12 @@ def library_renumber_album():
 
     `paths` doit couvrir exactement les MP3 du dossier : garantit une
     numérotation 1..N cohérente (pas de trous ni de doublons).
+    Outil expert : admin uniquement (SSF-13).
     """
     try:
         user      = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -2011,9 +2305,12 @@ def library_set_artist_genre():
 
     `genre` accepte plusieurs valeurs séparées par « ; » (frame multi-valeurs,
     même convention que l'éditeur de métadonnées). Écrase le genre existant.
+    Outil expert : admin uniquement (SSF-13).
     """
     try:
         user      = _get_current_user()
+        if not _is_admin(user):
+            return _admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -2113,6 +2410,8 @@ def _process_song(item):
         # encore le « completed / 100 % » du titre précédent et la barre fait un bond
         # d'un titre entier en avant, puis recule quand le téléchargement démarre.
         downloader.progress.reset()
+        _song_clock['started']  = time.monotonic()
+        _song_clock['expected'] = _expected_song_seconds(item.get('duration'))
         download_status.update({
             'in_progress':      True,
             'current_download': {
@@ -2154,6 +2453,10 @@ def _process_song(item):
             org_result = org.organize(result['file_path'], metadata)
             if not org_result['success']:
                 raise Exception(org_result.get('error', 'Erreur organisation'))
+            try:
+                _learn_song_timing(time.monotonic() - _song_clock['started'], item.get('duration'))
+            except Exception as e:  # jamais bloquant
+                logger.warning(f"⚠️ Estimation de durée non mise à jour : {e}")
 
         downloader.progress.phase   = 'completed'
         downloader.progress.percent = 100
@@ -2198,7 +2501,7 @@ def _process_song(item):
             download_status['in_progress']    = False
             download_status['current_download'] = None
             _last_error_by_user[user_key] = {
-                'error': friendly, 'metadata': metadata,
+                'error': friendly, 'metadata': metadata, 'url': url,  # url : « Réessayer » (SSF-13)
                 'timestamp': datetime.now().isoformat(),
             }
             _batch_progress_after_song()

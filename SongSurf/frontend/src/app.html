@@ -2,7 +2,17 @@
 <html lang="fr">
 <head>
 	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+	<!-- Webapp installable (écran d'accueil) : manifeste + icônes + ouverture plein écran.
+	     use-credentials : sans cookie du portail, Caddy refuserait le manifeste (401). -->
+	<link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
+	<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-title" content="SongSurf" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+	<meta name="theme-color" content="#F7F4EF" />
 	<script>try{if(localStorage.getItem('theme')==='dark')document.documentElement.classList.add('dark')}catch{}</script>
 	<!-- Geist (texte courant) via Bunny Fonts — uniformisé avec auth. JGS reste pour les titres. -->
 	<link rel="preconnect" href="https://fonts.bunny.net" />

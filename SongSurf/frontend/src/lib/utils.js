@@ -32,3 +32,24 @@ export function inferPlaylistArtist(data) {
 export function nrm(text) {
 	return (text ?? '').toString().toLowerCase().trim();
 }
+
+// ── Recherche permissive ─────────────────────────────────────────────────────
+// « Angèle », « ANGELE » et « angele » donnent la même clé : sans accents, sans
+// casse, ponctuation remplacée par des espaces (l'amour = l’amour = l amour).
+export function fold(text) {
+	return (text ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+		.replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/ß/g, 'ss')
+		.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+/** Prépare une recherche : renvoie (texte) => bool. Tous les mots doivent être
+ *  présents, dans n'importe quel ordre ; « acdc » trouve aussi « AC/DC ». */
+export function matcher(query) {
+	const words = fold(query).split(' ').filter(Boolean);
+	const compact = words.join('');
+	if (!words.length) return () => true;
+	return (text) => {
+		const hay = fold(text);
+		return words.every((w) => hay.includes(w)) || hay.replaceAll(' ', '').includes(compact);
+	};
+}

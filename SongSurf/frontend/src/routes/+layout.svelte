@@ -2,16 +2,20 @@
 	import '$lib/styles/design-system.css';
 	import '$lib/styles/components.css';
 	import '$lib/styles/layouts.css';
-	import '$lib/styles/dashboard.css';
+	import '$lib/styles/app.css';
 
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { user, downloadStatus, theme, helpOpen, addToast } from '$lib/stores.js';
-	import { asText } from '$lib/utils.js';
+	import { user, downloadStatus, theme, addToast } from '$lib/stores.js';
+	import { ingestStatus } from '$lib/downloads.js';
+	import { refreshLibrary } from '$lib/library/data.js';
 	import Toast from '$lib/components/Toast.svelte';
 	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
-	import HelpModal from '$lib/components/HelpModal.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	import TopBar from '$lib/components/shell/TopBar.svelte';
+	import TabBar from '$lib/components/shell/TabBar.svelte';
+	import MiniBar from '$lib/components/shell/MiniBar.svelte';
+	import SheetHost from '$lib/components/sheets/SheetHost.svelte';
 	/**
 	 * @typedef {Object} Props
 	 * @property {import('svelte').Snippet} [children]
@@ -20,32 +24,22 @@
 	/** @type {Props} */
 	let { children } = $props();
 
-	let lastErrorTimestamp = '';
-	let errorBaselineSet = false;
 	let pollInterval;
 	let unsubTheme;
+	let libraryRefresh = null;
 
 	async function pollStatus() {
 		try {
 			const st = await api.getStatus();
 			downloadStatus.set(st);
 
-			// Échec de téléchargement (ex. cookies/âge) → toast actionnable.
-			// Au 1er poll on ne fait qu'établir la ligne de base (pas de toast
-			// pour une erreur résiduelle d'une session précédente).
-			if (!errorBaselineSet) {
-				lastErrorTimestamp = st.last_error?.timestamp ?? '';
-				errorBaselineSet = true;
-			} else if (
-				st.last_error?.timestamp &&
-				st.last_error.timestamp !== lastErrorTimestamp
-			) {
-				lastErrorTimestamp = st.last_error.timestamp;
-				const meta = st.last_error.metadata ?? {};
-				const who = asText(meta.title, '') || asText(meta.album, '');
-				const prefix = who ? `« ${who} » : ` : '';
-				addToast(`${prefix}${asText(st.last_error.error, 'Téléchargement échoué.')}`, 'error', 8000);
+			// Titre terminé → « Ma musique » se met à jour (regroupé : un album = une
+			// rafale de titres). Échec (cookies, âge…) → message + « Réessayer » dans « En cours ».
+			const { completed, failed } = ingestStatus(st);
+			if (completed && !libraryRefresh) {
+				libraryRefresh = setTimeout(() => { libraryRefresh = null; refreshLibrary(); }, 2500);
 			}
+			if (failed) addToast(`« ${failed.title} » : ${failed.error}`, 'error', 8000);
 		} catch {
 			// ignore transient errors
 		}
@@ -68,18 +62,13 @@
 			// DEV_MODE or unauthenticated — user stays null
 		}
 
-		// Auto-ouverture du tutoriel au tout premier passage
-		if (!localStorage.getItem('ssf.help.seen')) {
-			helpOpen.set(true);
-			localStorage.setItem('ssf.help.seen', '1');
-		}
-
 		pollStatus();
 		pollInterval = setInterval(pollStatus, 1500);
 	});
 
 	onDestroy(() => {
 		clearInterval(pollInterval);
+		clearTimeout(libraryRefresh);
 		unsubTheme?.();
 	});
 </script>
@@ -90,7 +79,12 @@
 
 <Toast />
 <WatcherInactivity />
-<HelpModal />
 <ConfirmModal />
 
-{@render children?.()}
+<TopBar />
+<main class="shell-main">
+	{@render children?.()}
+</main>
+<MiniBar />
+<TabBar />
+<SheetHost />

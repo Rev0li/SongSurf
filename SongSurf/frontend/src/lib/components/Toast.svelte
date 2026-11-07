@@ -21,7 +21,7 @@
 <style>
 	.toast-zone {
 		position: fixed;
-		top: 72px;
+		top: calc(var(--topbar-h, 56px) + 8px);
 		left: 50%;
 		transform: translateX(-50%);
 		width: min(540px, 90vw);
@@ -41,7 +41,11 @@
 		pointer-events: all;
 		cursor: pointer;
 		animation: slideIn 0.2s ease;
+		box-shadow: var(--shadow-soft);
 	}
+	/* Fond opaque : le toast passe au-dessus du contenu (SSF-13) */
+	.toast-zone .alert-info { background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
+	.toast-zone .alert-error { background: color-mix(in srgb, var(--red) 14%, var(--bg-2)); }
 	@keyframes slideIn {
 		from { opacity: 0; transform: translateY(-8px); }
 		to   { opacity: 1; transform: translateY(0); }

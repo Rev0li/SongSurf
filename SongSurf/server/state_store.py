@@ -126,7 +126,9 @@ class StateStore:
                 job_id = row[0]
                 self._db.executemany(
                     'INSERT INTO queue_items (job_id, user_key, item_json, created_at) VALUES (?, ?, ?, ?)',
-                    [(job_id, user_key, json.dumps(s, ensure_ascii=False), now) for s in songs],
+                    # job_total : taille du job à l'ajout, pour l'avancement « 3 / 12 titres »
+                    [(job_id, user_key, json.dumps({**s, 'job_total': len(songs)}, ensure_ascii=False), now)
+                     for s in songs],
                 )
                 self._db.execute('COMMIT')
             except Exception:
@@ -156,6 +158,35 @@ class StateStore:
                 (user_key,),
             ).fetchall()
         return [json.loads(r['item_json']) for r in rows]
+
+    def jobs_for(self, user_key: str) -> list:
+        """Jobs de l'utilisateur encore dans la file (en attente ou en cours), dans
+        l'ordre d'ajout : [{job_id, total, remaining, active, album, artist, title}].
+        `remaining` compte aussi le titre en cours ; terminés = total - remaining."""
+        with self._lock:
+            rows = self._db.execute(
+                'SELECT job_id, status, item_json FROM queue_items WHERE user_key = ? ORDER BY id',
+                (user_key,),
+            ).fetchall()
+        jobs: dict = {}
+        for r in rows:
+            item = json.loads(r['item_json'])
+            job = jobs.get(r['job_id'])
+            if job is None:
+                meta = item.get('metadata') or {}
+                job = jobs[r['job_id']] = {
+                    'job_id': r['job_id'], 'total': 0, 'remaining': 0, 'active': False,
+                    'album': meta.get('album', ''),
+                    'artist': meta.get('album_artist') or meta.get('artist', ''),
+                    'title': meta.get('title', ''),
+                }
+            job['remaining'] += 1
+            job['total'] = max(job['total'], int(item.get('job_total') or 0))
+            if r['status'] == 'active':
+                job['active'] = True
+        for job in jobs.values():
+            job['total'] = max(job['total'], job['remaining'])  # file d'avant job_total
+        return list(jobs.values())
 
     def songs_before(self, user_key: str) -> int | None:
         """Nombre de titres d'autres utilisateurs qui passeront avant le prochain
@@ -201,6 +232,21 @@ class StateStore:
         ).fetchall()
         last = self._db.execute("SELECT value FROM meta WHERE key = 'rr_last_user'").fetchone()
         return round_robin_order([(r['id'], r['user_key']) for r in items], last[0] if last else None)
+
+    # ── Valeurs diverses (table meta) ─────────────────────────────────────────
+
+    def meta_get(self, key: str, default: str | None = None) -> str | None:
+        with self._lock:
+            row = self._db.execute('SELECT value FROM meta WHERE key = ?', (key,)).fetchone()
+        return row[0] if row else default
+
+    def meta_set(self, key: str, value: str) -> None:
+        with self._lock:
+            self._db.execute(
+                'INSERT INTO meta (key, value) VALUES (?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+                (key, value),
+            )
 
     # ── Quota journalier ──────────────────────────────────────────────────────
 
