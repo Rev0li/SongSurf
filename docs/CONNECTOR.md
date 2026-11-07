@@ -14,26 +14,23 @@ Browser ──portal session cookie──► Caddy (VPS) ── forward_auth ─
                                      │ no session → 302 to portal login (navigation) / 401 (API)
                                      │ no SongSurf access → 403
                                      ▼ access granted
-                                  Watcher (X-User-Name, X-User-Role, X-User-Id, X-Proxy-Token)
-                                     │ checks X-Proxy-Token, injects its own headers
-                                     ▼
-                                  SongSurf :8081
-                                     │ verifies X-Watcher-Token, trusts X-User-* (no re-validation)
+                                  SongSurf :SONGSURF_PORT (X-User-Name, X-User-Role, X-User-Id, X-Proxy-Token)
+                                     │ checks X-Proxy-Token, then trusts X-User-* (no re-validation)
                                      ▼
                                   /data/music/<uid>/      ← admin: permanent · member: deleted after ZIP export
 ```
 
-Requests that don't reach the Watcher through Caddy never get an identity: no login redirect in the Watcher (Caddy does it), just a 401 JSON (API / extension) or a « passe par le portail » page.
+Requests that don't reach SongSurf through Caddy never get an identity: no login redirect in SongSurf (Caddy does it), just a 401 JSON (API / extension) or a « passe par le portail » page.
 
 ---
 
-## Headers sent by Caddy to the Watcher
+## Headers sent by Caddy to SongSurf
 
 | Header | Content |
 |---|---|
 | `X-User-Name` | exact pseudo (original case), unique, immutable → becomes `sub` |
-| `X-User-Role` | `guest` · `member` · `mod` · `admin` (lowercased by the Watcher) |
-| `X-User-Id` | portal UUID, stable → forwarded to SongSurf as `X-User-Portal-Id`, the **storage key** |
+| `X-User-Role` | `guest` · `member` · `mod` · `admin` (lowercased by SongSurf) |
+| `X-User-Id` | portal UUID, stable → `uid`, the **storage key** (required) |
 | `X-Proxy-Token` | proof that the request comes from Caddy |
 
 Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-Proxy-Token` itself. CORS preflights (`OPTIONS`) are exempted from the gate.
@@ -41,30 +38,22 @@ Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-P
 ### Proof
 
 - Secret: `SONGSURF_PROXY_SECRET` (`openssl rand -hex 32`) — **must be byte-identical** in `SongSurf/SongSurf/.secrets` (NAS) and the secret file Caddy reads on the VPS. Rotation = update both, restart both.
-- The Watcher compares it with `hmac.compare_digest`. Missing or wrong → the `X-User-*` are ignored (the Watcher listens on the home network — any LAN device could otherwise claim to be admin); a wrong proof is logged.
+- SongSurf compares it with `hmac.compare_digest` (`_user_from_portal_headers()` in `server/app.py`). Missing or wrong → the `X-User-*` are ignored (SongSurf listens on the home network — any LAN device could otherwise claim to be admin); a wrong proof is logged.
 - Empty secret → service locked (every request 401), warning at boot.
 
 `sub` is the exact pseudo, used only for display, logs and activity events. Everything stored per user (library, cookies, queue, quota, ZIP) is keyed by the **portal UUID** (SSF-03), admin included — unique and stable by construction, never derived from the pseudo. A request without a valid UUID is refused by SongSurf.
 
 ---
 
-## Headers injected by Watcher into every SongSurf request
+## Former Watcher hop (removed in SSF-16, 2026-11)
 
-```
-X-Watcher-Token:   <WATCHER_SECRET>    internal shared secret (constant-time checked)
-X-User-Id:         <X-User-Name>       the pseudo (sub)
-X-User-Role:       <X-User-Role, lowercased>
-X-User-Email:      ''                  (kept for compatibility, the portal sends none)
-X-User-Portal-Id:  <X-User-Id>         portal UUID = storage key (required)
-```
-
-Client-sent `X-User-*`, `X-Proxy-Token` and `X-Watcher-Token` are dropped before forwarding. SongSurf rejects any request without a valid `X-Watcher-Token` (401), which is why port 8081 must never be reachable from outside the host.
+Until SSF-16 a separate **Watcher** container checked the proof, then re-sent the identity to SongSurf as `X-Watcher-Token` / `X-User-Id` (pseudo) / `X-User-Portal-Id` (UUID), and started/stopped SongSurf on demand. SongSurf now checks the proof itself and runs continuously; those internal headers open nothing anymore. Caddy did not change: SongSurf listens on the port the Watcher used.
 
 ---
 
 ## Logout
 
-`/logout` puts SongSurf to sleep (unless a download is running) and redirects to `REVAUTH_HOME_URL` (the portal's member space). The session belongs to the portal: SongSurf has no cookie to clear.
+`/logout` redirects to `REVAUTH_HOME_URL` (the portal's member space). The session belongs to the portal: SongSurf has no cookie to clear. Downloads keep running.
 
 ---
 
@@ -87,7 +76,7 @@ Each folder holds a `.owner` file with the pseudo, so the NAS stays readable. Co
 
 ## Failure modes
 
-| Situation | Watcher behavior |
+| Situation | SongSurf behavior |
 |---|---|
 | No / wrong `X-Proxy-Token` | identity ignored → 401 JSON (API, extension) or 401 « passe par le portail » page |
 | `SONGSURF_PROXY_SECRET` empty | every request 401 + warning in logs (no crash) |
@@ -98,5 +87,6 @@ Each folder holds a `.owner` file with the pseudo, so the NAS stays readable. Co
 
 ## History
 
-- Phase 3 (until 2026-10): rev0auth signed an HS256 JWT (`AUTH_JWT_SECRET`) handed over as `?token=`, kept by the Watcher in an `access_token` cookie.
+- Phase 3 (until 2026-10): rev0auth signed an HS256 JWT (`AUTH_JWT_SECRET`) handed over as `?token=`, kept by the Watcher (removed in SSF-16) in an `access_token` cookie.
 - AUTH-09 switch (2026-10-20): SSF-11 accepted both, SSF-12 removed the JWT (`?token=`, cookie, `AUTH_JWT_SECRET`, `AUTH_SERVICE_LOGIN_URL`, `make token`, `login_success` / `login_rejected` events).
+- SSF-16 (2026-11): Watcher removed, SongSurf checks `X-Proxy-Token` itself and runs continuously (`WATCHER_SECRET`, `container_start` / `container_stop` events gone).

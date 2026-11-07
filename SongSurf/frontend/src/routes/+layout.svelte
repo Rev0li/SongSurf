@@ -10,7 +10,6 @@
 	import { ingestStatus } from '$lib/downloads.js';
 	import { refreshLibrary } from '$lib/library/data.js';
 	import Toast from '$lib/components/Toast.svelte';
-	import WatcherInactivity from '$lib/components/WatcherInactivity.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import TopBar from '$lib/components/shell/TopBar.svelte';
 	import TabBar from '$lib/components/shell/TabBar.svelte';
@@ -78,7 +77,6 @@
 </svelte:head>
 
 <Toast />
-<WatcherInactivity />
 <ConfirmModal />
 
 <TopBar />

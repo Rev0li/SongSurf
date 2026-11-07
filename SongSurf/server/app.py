@@ -4,11 +4,11 @@
 SongSurf — music download server
 
 Auth model (portal gate, see docs/CONNECTOR.md):
-  - Watcher injects X-Watcher-Token + X-User-Id (pseudo) + X-User-Role
-    + X-User-Portal-Id (portal UUID, the storage key)
-  - SongSurf trusts these headers (authentication is done upstream)
-  - WATCHER_SECRET set   → require token match, then read user from headers
-  - WATCHER_SECRET unset + DEV_MODE=true → inject dev user (standalone testing)
+  - Caddy asks the portal (forward_auth), then sends X-User-Name (pseudo),
+    X-User-Role, X-User-Id (portal UUID, the storage key) + the proof X-Proxy-Token
+  - SongSurf trusts these headers only if X-Proxy-Token matches
+    SONGSURF_PROXY_SECRET (constant time); empty secret → locked
+  - DEV_MODE=true → local admin dev user, no proof (never in production)
 
 Storage: /data/music/<portal UUID>/Artist/Album/ (DEV_MODE: flat /data/music/Artist/Album/)
 Persistent state (queue, quotas, ZIP exports): SQLite in /data/state (state_store.py)
@@ -16,7 +16,8 @@ Persistent state (queue, quotas, ZIP exports): SQLite in /data/state (state_stor
 Phase 3: see docs/CONNECTOR.md
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, Response, abort
+from flask import (Flask, request, jsonify, send_file, send_from_directory, Response, abort,
+                   redirect, render_template)
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -60,8 +61,17 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 MAX_REQUEST_MB = 20
 app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_MB * 1024 * 1024
 
-WATCHER_SECRET = os.getenv('WATCHER_SECRET', '')
-DEV_MODE       = os.getenv('DEV_MODE', 'false').lower() == 'true'
+DEV_MODE              = os.getenv('DEV_MODE', 'false').lower() == 'true'
+# Preuve envoyée par Caddy dans X-Proxy-Token (porte du portail). Vide = verrouillé.
+SONGSURF_PROXY_SECRET = os.getenv('SONGSURF_PROXY_SECRET', '')
+# Espace membre du portail : redirection après /logout, lien de la page « passe par le portail »
+REVAUTH_HOME_URL      = os.getenv('REVAUTH_HOME_URL', '')
+
+# CORS : seule l'extension SongSurf Clip est autorisée (requêtes avec credentials).
+# ID fixe, dérivé de la clé "key" de chrome-extension/manifest.json — il ne change
+# pas selon le dossier de chargement. Jamais "null" ni chrome-extension://* (S1).
+SONGSURF_EXTENSION_ID = 'ojhafabhkjjlganipbadmpifkikhnadf'
+_CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
 
 # Quota par utilisateur et par jour (l'admin est illimité). 0 = illimité pour tous.
 DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))
@@ -372,28 +382,39 @@ def _admin_only_response():
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 
+def _user_from_portal_headers() -> dict | None:
+    """Identité posée par Caddy après vérification de la session par le portail.
+
+    Fiable uniquement si X-Proxy-Token prouve que la requête vient de Caddy :
+    SongSurf écoute sur le réseau local, n'importe quel appareil pourrait sinon
+    se déclarer admin. Caddy retire les X-User-* envoyés par le client.
+    """
+    if not SONGSURF_PROXY_SECRET:
+        return None
+    proof = request.headers.get('X-Proxy-Token', '')
+    if not proof:
+        return None
+    if not hmac.compare_digest(proof.encode(), SONGSURF_PROXY_SECRET.encode()):
+        # Preuve présente mais fausse : secret désynchronisé avec Caddy, ou forge
+        logger.warning("⚠️  X-Proxy-Token invalide — en-têtes d'identité ignorés")
+        return None
+    name = request.headers.get('X-User-Name', '').strip()
+    role = request.headers.get('X-User-Role', '').strip().lower()
+    if not name or not role:
+        return None
+    return {
+        'sub':   name,                                          # pseudo : affichage, logs, .owner
+        'uid':   request.headers.get('X-User-Id', '').strip(),  # UUID du portail : clé de stockage
+        'role':  role,
+        'email': '',
+    }
+
+
 def _get_current_user() -> dict | None:
-    """
-    Returns user identity from Watcher-injected headers.
-    - WATCHER_SECRET set   → require X-Watcher-Token match
-    - WATCHER_SECRET unset + DEV_MODE → dev user (standalone testing)
-    - Otherwise            → None
-    """
-    if WATCHER_SECRET:
-        if not hmac.compare_digest(
-            request.headers.get('X-Watcher-Token', ''),
-            WATCHER_SECRET,
-        ):
-            return None
-        return {
-            'sub':   request.headers.get('X-User-Id', ''),
-            'uid':   request.headers.get('X-User-Portal-Id', '').strip(),
-            'role':  request.headers.get('X-User-Role', 'member').lower(),
-            'email': request.headers.get('X-User-Email', ''),
-        }
+    """Seule source d'identité : DEV_MODE (utilisateur dev local) ou la porte du portail."""
     if DEV_MODE:
         return _DEV_USER.copy()
-    return None
+    return _user_from_portal_headers()
 
 
 def _is_identified(user: dict | None) -> bool:
@@ -403,9 +424,13 @@ def _is_identified(user: dict | None) -> bool:
 
 
 def _unauthenticated_response():
-    if request.is_json or 'application/json' in request.headers.get('Accept', ''):
+    """Requête arrivée sans passer par Caddy (accès direct au NAS, ou porte mal
+    configurée). Pas de redirection vers la connexion, c'est le rôle de Caddy :
+    API / extension → 401 JSON, navigateur → page « passe par le portail »."""
+    if (request.headers.get('Origin', '') in _CORS_ORIGINS or request.is_json
+            or 'application/json' in request.headers.get('Accept', '')):
         return jsonify({'success': False, 'error': 'Non authentifié'}), 401
-    return 'Service unavailable', 503
+    return render_template('use_portal.html', portal_url=REVAUTH_HOME_URL), 401
 
 
 def auth_required(f):
@@ -429,6 +454,47 @@ def reject_oversized_request():
 def request_too_large(_e):
     return jsonify({'success': False,
                     'error': f'Requête trop volumineuse (max {MAX_REQUEST_MB} Mo).'}), 413
+
+
+# ── CORS (extension Chrome) ───────────────────────────────────────────────────
+
+def _cors_headers(origin: str) -> dict:
+    """En-têtes CORS, uniquement pour l'origine de l'extension SongSurf Clip."""
+    if origin not in _CORS_ORIGINS:
+        return {}
+    return {
+        'Access-Control-Allow-Origin':      origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods':     'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers':     'Content-Type, Accept',
+    }
+
+
+@app.before_request
+def cors_preflight():
+    """Préflight CORS de toutes les routes (/api/preview, /api/queue-direct, /ping…) :
+    204 pour l'extension, 403 pour toute autre origine."""
+    if request.method != 'OPTIONS':
+        return None
+    hdrs = _cors_headers(request.headers.get('Origin', ''))
+    if not hdrs:
+        return Response(status=403)
+    return Response(status=204, headers=hdrs)
+
+
+@app.after_request
+def add_cors(response):
+    for k, v in _cors_headers(request.headers.get('Origin', '')).items():
+        response.headers[k] = v
+    return response
+
+
+# ── Logout ────────────────────────────────────────────────────────────────────
+
+@app.route('/logout', methods=['GET', 'POST'])
+def logout():
+    """La session est celle du portail (pas de cookie ici) : retour au portail."""
+    return redirect(REVAUTH_HOME_URL or '/')
 
 
 # ── SPA ───────────────────────────────────────────────────────────────────────
@@ -575,12 +641,6 @@ def _song_percent(phase: str, raw_pct: float, elapsed: float, expected: float) -
 @app.route('/api/status')
 def get_status():
     current_user = _get_current_user()
-    if current_user is not None and WATCHER_SECRET and not current_user.get('sub'):
-        # Sonde du Watcher (jeton valide, sans identité) : seulement « occupé ou pas »,
-        # pour ne jamais arrêter SongSurf en plein batch (_songsurf_busy).
-        with queue_lock:
-            in_progress = bool(download_status['in_progress'])
-        return jsonify({'in_progress': in_progress, 'queue_size': store.pending_count()})
     if not _is_identified(current_user):
         return _unauthenticated_response()
     my_key = _user_key(current_user)
@@ -2577,8 +2637,8 @@ def _cleanup_temp_leftovers() -> None:
 def _on_sigterm(signum, _frame):
     """docker stop : supprime les fichiers du titre en cours (incomplets) puis exit 0.
 
-    Le watcher n'arrête jamais un SongSurf occupé (_songsurf_busy) : en pratique ce
-    cas ne se présente que sur un stop manuel ou un redéploiement.
+    SongSurf tourne en continu : ce cas ne se présente que sur un stop manuel
+    ou un redéploiement. Le titre interrompu reste dans la file et sera repris.
     """
     with queue_lock:
         current = download_status.get('current_download')
@@ -2595,12 +2655,12 @@ def _on_sigterm(signum, _frame):
 
 if __name__ == '__main__':
     flask_port = int(os.getenv('FLASK_PORT', '8081'))
-    if WATCHER_SECRET:
-        mode = "Watcher"
-    elif DEV_MODE:
-        mode = "DEV (standalone, no Watcher)"
+    if DEV_MODE:
+        mode = "DEV (sans authentification)"
+    elif SONGSURF_PROXY_SECRET:
+        mode = "PRODUCTION (porte du portail)"
     else:
-        mode = "LOCKED (set DEV_MODE=true or WATCHER_SECRET)"
+        mode = "LOCKED (SONGSURF_PROXY_SECRET absent)"
 
     logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={BASE_MUSIC_DIR}")
     events_client.start_replay_thread()

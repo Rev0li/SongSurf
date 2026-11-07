@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-WATCHER_SECRET = 'test-secret-fixed'
+PROXY_SECRET = 'proxy-secret-for-tests'
 
 
 @pytest.fixture(scope='module')
@@ -21,7 +21,7 @@ def flask_setup(tmp_path_factory):
     cookies = tmp_path_factory.mktemp('cookies')
     state   = tmp_path_factory.mktemp('state')
     env_patch = {
-        'WATCHER_SECRET':     WATCHER_SECRET,
+        'SONGSURF_PROXY_SECRET': PROXY_SECRET,
         'DEV_MODE':           'false',
         'FLASK_SECRET_KEY':   'test-key',
         'YTDLP_COOKIES_DIR':  str(cookies),
@@ -37,6 +37,8 @@ def flask_setup(tmp_path_factory):
             app_mod.LOG_DIR        = logs
             app_mod.COOKIES_DIR    = cookies
             app_mod.store          = app_mod.StateStore(state / 'songsurf.db')
+            app_mod.SONGSURF_PROXY_SECRET = PROXY_SECRET
+            app_mod.DEV_MODE = False
             app_mod.app.config['TESTING'] = True
 
             with app_mod.app.test_client() as c:
@@ -52,14 +54,13 @@ USER_DIR  = uid_for('user-abc')    # dossier de auth_headers() par défaut
 ADMIN_DIR = uid_for('admin-xyz')   # dossier de admin_headers() par défaut
 
 
-def auth_headers(role='member', sub='user-abc', email='', uid=None):
-    """Headers Watcher would inject after the portal gate."""
+def auth_headers(role='member', sub='user-abc', uid=None):
+    """Headers Caddy sends after the portal gate (forward_auth + proof)."""
     return {
-        'X-Watcher-Token':  WATCHER_SECRET,
-        'X-User-Id':        sub,
-        'X-User-Role':      role,
-        'X-User-Email':     email,
-        'X-User-Portal-Id': uid if uid is not None else uid_for(sub),
+        'X-Proxy-Token': PROXY_SECRET,
+        'X-User-Name':   sub,
+        'X-User-Role':   role,
+        'X-User-Id':     uid if uid is not None else uid_for(sub),
     }
 
 
@@ -78,24 +79,20 @@ def give_cookies(app_mod, key=USER_DIR):
     return f
 
 
-# ── S-1: No X-Watcher-Token → rejected ───────────────────────────────────────
+# ── S-1: No X-Proxy-Token → rejected ─────────────────────────────────────────
 
-def test_s1_no_watcher_token_rejected(flask_setup):
+def test_s1_no_proxy_token_rejected(flask_setup):
     c, *_ = flask_setup
     r = c.get('/api/me')
-    assert r.status_code in (401, 503)
+    assert r.status_code == 401
 
 
-# ── S-2: Wrong X-Watcher-Token → rejected ────────────────────────────────────
+# ── S-2: Wrong X-Proxy-Token → rejected ──────────────────────────────────────
 
 def test_s2_wrong_token_rejected(flask_setup):
     c, *_ = flask_setup
-    r = c.get('/api/me', headers={
-        'X-Watcher-Token': 'wrong-secret',
-        'X-User-Id':       'user-abc',
-        'X-User-Role':     'member',
-    })
-    assert r.status_code in (401, 503)
+    r = c.get('/api/me', headers={**auth_headers(), 'X-Proxy-Token': 'wrong-secret'})
+    assert r.status_code == 401
 
 
 # ── S-3: Valid headers accepted, identity returned ────────────────────────────
@@ -123,7 +120,7 @@ def test_s4_role_lowercased(flask_setup):
 def test_ssf03_missing_or_invalid_portal_id_rejected(flask_setup):
     c, *_ = flask_setup
     for uid in ('', '../../etc', 'court', 'a b c d e f g h'):
-        r = c.get('/api/me', headers={**auth_headers(), 'X-User-Portal-Id': uid,
+        r = c.get('/api/me', headers={**auth_headers(), 'X-User-Id': uid,
                                       'Accept': 'application/json'})
         assert r.status_code == 401, uid
 
@@ -1146,20 +1143,11 @@ def test_ssf03_status_tells_who_uses_the_worker(flask_setup):
         _drain_queue(app_mod)
 
 
-def test_ssf03_watcher_probe_gets_busy_state_without_identity(flask_setup):
-    # _songsurf_busy (watcher) n'envoie que X-Watcher-Token : il doit voir la file,
-    # sinon il arrête SongSurf en plein batch.
-    c, _, _, app_mod = flask_setup
-    _drain_queue(app_mod)
-    app_mod._enqueue_job({'uid': uid_for('alice'), 'sub': 'alice'}, [_queued_song('alice', 'a1')])
-    try:
-        r = c.get('/api/status', headers={'X-Watcher-Token': WATCHER_SECRET})
-        assert r.status_code == 200
-        assert r.get_json() == {'in_progress': False, 'queue_size': 1}
-        r = c.get('/api/status', headers={'X-Watcher-Token': 'wrong', 'Accept': 'application/json'})
-        assert r.status_code == 401
-    finally:
-        _drain_queue(app_mod)
+def test_ssf16_proof_without_identity_gets_nothing(flask_setup):
+    # Plus de sonde du Watcher (SSF-16) : la preuve seule n'ouvre pas /api/status.
+    c, *_ = flask_setup
+    r = c.get('/api/status', headers={'X-Proxy-Token': PROXY_SECRET, 'Accept': 'application/json'})
+    assert r.status_code == 401
 
 
 def test_ssf03_owner_file_holds_pseudo(flask_setup):
@@ -1286,7 +1274,7 @@ def test_ssf13_spa_pages_served_with_auth(flask_setup, tmp_path):
     with patch.object(app_mod, '_FRONTEND_BUILD', build):
         for route in ('/library', '/metadata'):
             r = c.get(route)                       # sans identité : jamais l'appli
-            assert r.status_code == 503 and b'spa' not in r.data, route
+            assert r.status_code == 401 and b'spa' not in r.data, route
             r = c.get(route, headers=auth_headers())
             assert r.status_code == 200 and b'spa' in r.data, route
 

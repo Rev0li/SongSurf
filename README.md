@@ -3,10 +3,10 @@
 Self-hosted YouTube Music downloader with clean, Jellyfin-ready libraries.
 
 ```
-Browser ──► [Watcher :8080] ──auth──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<user>/Artist/Album/Title.mp3
+Browser ──► reverse proxy (auth gate) ──identity + proof──► [SongSurf :8081] ──► yt-dlp ──► FFmpeg ──► /data/music/<user>/Artist/Album/Title.mp3
 ```
 
-A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of the download engine (**SongSurf**), which Watcher starts and stops on demand via the Docker SDK — the heavy container only runs while you actually use it.
+A single container (~40 MB RAM idle) that trusts the identity sent by your reverse proxy only when it carries a shared proof.
 
 ## Features
 
@@ -17,7 +17,6 @@ A lightweight auth proxy (**Watcher**, ~15 MB RAM, always on) sits in front of t
 - **Fair, restart-proof queue** — songs are served round-robin between users (two members progress side by side), with a per-member daily quota; the queue, quotas and ZIP exports live in SQLite and survive restarts
 - **Web UI** (SvelteKit): URL queue with metadata preview/edit, library tree with drag-and-drop, full **ID3 metadata editor** (multi-value support with `;`), cover upload
 - **Browser extension** (Chrome/Firefox): one-click queue from music.youtube.com pages, batch an artist's full discography, YouTube cookie sync for yt-dlp
-- **On-demand lifecycle**: automatic container shutdown after inactivity (warn → grace → stop)
 - **Auth delegated to a reverse proxy**: a gate (e.g. Caddy `forward_auth` + [rev0auth](https://github.com/Rev0li)) authenticates users and passes their identity with a shared proof, or `DEV_MODE` for local use
 
 ## Requirements
@@ -34,14 +33,14 @@ make secrets      # interactive wizard → creates .env + .secrets
 make up-local     # build + start (bridge network, ports on localhost)
 ```
 
-Open `http://localhost:8080` (default `WATCHER_PORT`).
+Open `http://localhost:8081` (default `SONGSURF_PORT`).
 
 For a quick try without an auth provider, set `DEV_MODE=true` in `.env` — full bypass, local admin user. **Never in production.**
 
 Useful commands:
 
 ```bash
-make logs         # stream all logs
+make logs         # stream logs
 make down         # stop
 make restart      # down → up
 make config       # preview resolved compose config
@@ -55,16 +54,14 @@ make dev          # Flask backend only, no Docker (port 8081)
 | Variable | Default | Description |
 |---|---|---|
 | `DEPLOY_TARGET` | `local` | `local` (bridge, published ports) or `nas` (host network) |
-| `WATCHER_PORT` | `8080` | Public port — the only one that should face traffic |
+| `SONGSURF_PORT` | `8081` | Port your reverse proxy reaches — never expose it to the internet |
 | `DEV_MODE` | `false` | `true` bypasses auth — never in production |
 | `REVAUTH_HOME_URL` | _(empty)_ | Portal member space: target after logout, link on the « use the portal » page |
 | `DAILY_DOWNLOAD_LIMIT` | `0` | Downloads per member per day (admin unlimited), `0` = unlimited |
 | `MAX_DURATION_SECONDS` | `9000` | Reject videos longer than this (2h30 allows DJ mixes) |
-| `INACTIVITY_WARN_TIMEOUT` | `3600` | Idle seconds before shutdown warning |
-| `INACTIVITY_GRACE_TIMEOUT` | `900` | Extra idle seconds before container stop |
 | `ADMIN_UID` | — | Portal UUID of the admin account (NAS only): the Jellyfin music folder is mounted on `/data/music/<ADMIN_UID>` |
 
-`.secrets` (chmod 600, never committed): `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token`; empty = service locked), `WATCHER_SECRET` (internal Watcher↔SongSurf token), Flask secret keys.
+`.secrets` (chmod 600, never committed): `SONGSURF_PROXY_SECRET` (proof sent by your reverse proxy in `X-Proxy-Token`; empty = service locked), `SONGSURF_EVENTS_SECRET` (optional activity push), Flask secret key.
 
 ## Production deployment (NAS)
 
@@ -74,7 +71,7 @@ make up-nas              # on the NAS: host network, portal gate required
 make deploy-nas NAS_USER=<user> NAS_HOST=<ip> NAS_DIR=/volume1/docker/songsurf
 ```
 
-Typical topology: reverse proxy (Caddy/Nginx + TLS) on a VPS → Tailscale tunnel → NAS. Port 8081 (SongSurf itself) must never be exposed; only Watcher faces traffic.
+Typical topology: reverse proxy (Caddy/Nginx + TLS) on a VPS → Tailscale tunnel → NAS. The SongSurf port must never be exposed to the internet: only the reverse proxy reaches it (LAN / tunnel).
 
 Guide: [`docs/DEPLOY.md`](docs/DEPLOY.md) (full setup, `make deploy-nas`, Synology pitfalls).
 
@@ -96,7 +93,6 @@ SongSurf/SongSurf/            # the app (nested folder)
     downloader.py             # yt-dlp wrapper, extraction, progress
     organizer.py              # file placement, ID3 tags, covers
     state_store.py            # SQLite: queue (round-robin), quotas, ZIP exports
-  watcher/watcher.py          # auth proxy + container lifecycle
   frontend/                   # SvelteKit (adapter-static, built into the image)
   tests/                      # pytest suite
   docker/compose-switch.sh    # merges base + local|nas compose files
@@ -106,7 +102,7 @@ docs/                         # architecture, API reference, auth contract, depl
 ```
 
 ```bash
-python3 -m pytest             # run the test suite (238 tests) from SongSurf/SongSurf/
+python3 -m pytest             # run the test suite (~290 tests) from SongSurf/SongSurf/
 make frontend-dev             # SvelteKit dev server with hot reload (port 5173)
 make frontend-build           # build the static bundle locally
 ```
@@ -127,7 +123,7 @@ Docs for contributors:
 
 - `.secrets` is chmod 600 and never committed
 - All URLs are validated (HTTPS + YouTube/YouTube Music domains only)
-- SongSurf only accepts requests carrying the internal `X-Watcher-Token` (constant-time compare)
+- SongSurf only trusts an identity carrying the reverse proxy's `X-Proxy-Token` proof (constant-time compare); empty secret = locked
 - Containers run as uid 1000 (non-root)
 - Per-user path containment checks on every library endpoint
 

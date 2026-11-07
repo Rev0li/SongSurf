@@ -12,7 +12,7 @@
 
 <header class="topbar">
 	<div class="left">
-		<a class="home" href="/logout" title="Retour au portail (SongSurf se met en veille)">
+		<a class="home" href="/logout" title="Retour au portail">
 			<Icon name="back" size={16} /><span class="home-label">Mon espace</span>
 		</a>
 		<nav class="top-tabs" aria-label="Navigation">

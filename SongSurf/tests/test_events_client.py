@@ -101,7 +101,7 @@ class TestPost:
     def test_spool_path_unwritable_does_not_raise(self, monkeypatch):
         monkeypatch.setenv('AUTH_EVENTS_URL', TEST_URL)
         monkeypatch.setenv('SONGSURF_EVENTS_SECRET', TEST_SECRET)
-        events_client.init('watcher', '/nonexistent-dir/pending.jsonl')
+        events_client.init('songsurf', '/nonexistent-dir/pending.jsonl')
         with patch('events_client.urlopen', side_effect=OSError('down')):
             events_client._send_or_spool({'type': 'login_success'})  # ne doit pas lever
 
