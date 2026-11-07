@@ -87,13 +87,21 @@ make secrets
 | Fichier | Contenu | Permissions |
 |---------|---------|-------------|
 | `.env` | Config non-secrète (ports, timeouts, mode, `AUTH_EVENTS_URL`) | 644 |
-| `.secrets` | `WATCHER_SECRET`, `SONGSURF_EVENTS_SECRET`, `SONGSURF_PROXY_SECRET`, clés Flask | 600 |
+| `.secrets` | `SONGSURF_EVENTS_SECRET`, `SONGSURF_PROXY_SECRET`, `SONGSURF_FLASK_SECRET_KEY` | 600 |
 
 Les deux sont chargés par Docker Compose via `env_file`. Ne jamais committer `.secrets`.
 
 **Pour la prod avec rev0auth (porte du portail) :** `SONGSURF_PROXY_SECRET` dans `.secrets` = la même valeur que le fichier secret lu par Caddy sur le VPS (`openssl rand -hex 32`, identique octet par octet), `REVAUTH_HOME_URL` dans `.env` = espace membre du portail, `DEV_MODE=false`. Sans secret, le service est verrouillé. Contrat : [`CONNECTOR.md`](CONNECTOR.md).
 
 **Depuis SSF-12 (JWT retiré) :** sur un NAS existant, retirer `AUTH_JWT_SECRET` de `.secrets` et `AUTH_SERVICE_LOGIN_URL` de `.env` (plus lus).
+
+**Depuis SSF-16 (Watcher retiré) :** SongSurf écoute directement sur le port que visait Caddy. Sur un NAS existant, avant le premier `make deploy-nas` :
+
+1. `.env` : `SONGSURF_PORT=<ancien WATCHER_PORT>` (9000 sur le NAS de prod), puis retirer `WATCHER_PORT`, `TARGET_URL`, `TARGET_URL_NAS`, `INACTIVITY_WARN_TIMEOUT`, `INACTIVITY_GRACE_TIMEOUT` (plus lus).
+2. `.secrets` : retirer `WATCHER_SECRET` et `WATCHER_FLASK_SECRET_KEY` (plus lus).
+3. `make deploy-nas` supprime l'ancien conteneur `watcher` (`--remove-orphans`) ; s'il tient encore le port : `docker rm -f watcher` puis relancer. Image à supprimer ensuite : `docker rmi watcher:latest`.
+
+Rien ne change côté VPS (Caddy vise le même port, même `SONGSURF_PROXY_SECRET`).
 
 **Événements d'activité (optionnel) :** le NAS pousse connexions/téléchargements vers le dashboard admin rev0auth (`/japprends/songsurf-activity`). Sur un NAS existant, ne pas relancer le wizard (il écraserait `.env`/`.secrets`) — ajouter à la main :
 
@@ -116,7 +124,7 @@ cd /volume1/docker/songsurf
 ./docker/compose-switch.sh logs -f
 ```
 
-Le portail Watcher est disponible sur `http://<IP-NAS>:<WATCHER_PORT>`.
+SongSurf est disponible sur `http://<IP-NAS>:<SONGSURF_PORT>` (401 « passe par le portail » sans la preuve de Caddy, sauf `DEV_MODE`).
 
 ---
 
@@ -155,21 +163,21 @@ Depuis SSF-03, tout ce qui est stocké par utilisateur (bibliothèque, cookies, 
 
 ## 6. Accès Tailscale / VPN
 
-En mode `nas`, les services utilisent `network_mode: host`. Avec Tailscale installé sur le NAS, le portail est accessible via l'IP Tailscale : `http://<tailscale-ip>:<WATCHER_PORT>`.
+En mode `nas`, les services utilisent `network_mode: host`. Avec Tailscale installé sur le NAS, SongSurf est joignable via l'IP Tailscale : `http://<tailscale-ip>:<SONGSURF_PORT>`.
 
 ---
 
 ## 7. Reverse proxy public (VPS)
 
 ```
-Internet → DNS → VPS (Caddy/Nginx + TLS) → Tailscale → NAS (Watcher)
+Internet → DNS → VPS (Caddy/Nginx + TLS) → Tailscale → NAS (SongSurf)
 ```
 
 Exemple Caddy :
 
 ```caddyfile
 songsurf.mondomaine.tld {
-    reverse_proxy <ip-tailscale-nas>:<WATCHER_PORT>
+    reverse_proxy <ip-tailscale-nas>:<SONGSURF_PORT>
 }
 ```
 
@@ -177,14 +185,14 @@ Exemple Nginx :
 
 ```nginx
 location / {
-    proxy_pass         http://<ip-tailscale-nas>:<WATCHER_PORT>;
+    proxy_pass         http://<ip-tailscale-nas>:<SONGSURF_PORT>;
     proxy_set_header   Host $host;
     proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_read_timeout 300s;   # téléchargements longs
 }
 ```
 
-> La session est vérifiée par le reverse proxy (porte du portail) : le Watcher n'accepte une identité qu'avec la preuve `X-Proxy-Token` = `SONGSURF_PROXY_SECRET`.
+> La session est vérifiée par le reverse proxy (porte du portail) : SongSurf n'accepte une identité qu'avec la preuve `X-Proxy-Token` = `SONGSURF_PROXY_SECRET`.
 
 ---
 
@@ -202,7 +210,7 @@ cat logs/downloads.log                       # journal des téléchargements (ps
 
 | Problème | Solution |
 |---|---|
-| Port non accessible | Vérifier `WATCHER_PORT` dans `.env` + firewall NAS + `make ps` |
+| Port non accessible | Vérifier `SONGSURF_PORT` dans `.env` + firewall NAS + `make ps` (un ancien conteneur `watcher` peut encore tenir le port : `docker rm -f watcher`) |
 | `Permission denied: /app/logs/…` | `chmod 777 data/music data/temp logs` (uid container ≠ uid host) |
 | `yt-dlp` échoue (403, throttling) | Synchroniser les cookies YouTube via l'extension navigateur, ou monter yt-dlp : `make bump-ytdlp` puis `make deploy-nas` (version épinglée, plus de mise à jour au boot) |
 | Page « Passe par le portail » alors qu'on est connecté | `SONGSURF_PROXY_SECRET` différent entre `.secrets` et le secret de Caddy (log `X-Proxy-Token invalide`), ou secret absent (log au démarrage) — vérifier caractère par caractère |
@@ -214,11 +222,12 @@ Pièges spécifiques Synology (rsync, PATH ssh, socket Docker) : voir [§11](#11
 
 ## 10. Sécurité
 
-- Le port 8081 (SongSurf) ne doit **jamais** être exposé au WAN — seul Watcher reçoit du trafic
-- SongSurf rejette toute requête sans `X-Watcher-Token` valide (comparaison à temps constant)
+- Le port de SongSurf (`SONGSURF_PORT`) ne doit **jamais** être exposé au WAN : pare-feu du NAS borné au LAN + Tailscale
+- SongSurf n'accepte une identité qu'avec la preuve `X-Proxy-Token` de Caddy (comparaison à temps constant) ; secret vide = verrouillé
+- Aucun conteneur n'a accès au socket Docker (le Watcher l'avait, retiré en SSF-16)
 - URLs validées (HTTPS + domaines YouTube/YouTube Music uniquement)
 - Les containers tournent sous uid 1000 (non-root)
-- `restart: on-failure` pour ne pas redémarrer sur arrêt manuel
+- `restart: unless-stopped` : SongSurf tourne en continu, sauf arrêt manuel
 
 ---
 
@@ -278,7 +287,7 @@ PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$PATH
 
 **Symptôme**
 ```
-Missing mandatory value for "environment" option: WATCHER_FLASK_SECRET_KEY is required
+Missing mandatory value for "environment" option: SONGSURF_FLASK_SECRET_KEY is required
 ```
 
 **Cause** : Docker-compose V1 (`1.28.5`) ne charge pas `env_file` pour l'interpolation des variables dans `docker-compose.yml` — seulement pour les env vars du container. Le `${VAR:?message}` dans `environment:` nécessite que la variable soit dans le shell.

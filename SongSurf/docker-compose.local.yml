@@ -1,7 +1,6 @@
 services:
-  watcher:
+  songsurf:
+    # Publié sur localhost uniquement : sans Caddy devant, mettre DEV_MODE=true
+    # (sinon toutes les requêtes sont refusées faute de X-Proxy-Token).
     ports:
-      - "127.0.0.1:${WATCHER_PORT:-8080}:${WATCHER_PORT:-8080}"
-
-  # SongSurf is intentionally NOT published — only reachable from Watcher via Docker network.
-  # Direct access on :8081 would bypass Watcher auth.
+      - "127.0.0.1:${SONGSURF_PORT:-8081}:${SONGSURF_PORT:-8081}"
