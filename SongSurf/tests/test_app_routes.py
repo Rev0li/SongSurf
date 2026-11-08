@@ -12,6 +12,7 @@ from pathlib import Path
 with patch('shutil.which', return_value=None):
     from core import config as core_config, progress as core_progress
     from core import queue as core_queue, worker as core_worker
+    from routes.extension import _is_netscape_cookies
 
 PROXY_SECRET = 'proxy-secret-for-tests'
 
@@ -41,8 +42,8 @@ def flask_setup(tmp_path_factory):
             core_config.LOG_DIR        = logs
             core_config.COOKIES_DIR    = cookies
             core_queue.store          = core_queue.StateStore(state / 'songsurf.db')
-            app_mod.SONGSURF_PROXY_SECRET = PROXY_SECRET
-            app_mod.DEV_MODE = False
+            core_config.SONGSURF_PROXY_SECRET = PROXY_SECRET
+            core_config.DEV_MODE = False
             app_mod.app.config['TESTING'] = True
 
             with app_mod.app.test_client() as c:
@@ -851,11 +852,10 @@ def test_ssf01_cookies_update_rejects_bad_format(flask_setup):
 
 
 def test_ssf01_netscape_validation():
-    import app as app_mod
-    assert app_mod._is_netscape_cookies(_NETSCAPE)
-    assert app_mod._is_netscape_cookies('#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tA\tb')
-    assert not app_mod._is_netscape_cookies('# only comments\n')
-    assert not app_mod._is_netscape_cookies('a\tb\tc')
+    assert _is_netscape_cookies(_NETSCAPE)
+    assert _is_netscape_cookies('#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tA\tb')
+    assert not _is_netscape_cookies('# only comments\n')
+    assert not _is_netscape_cookies('a\tb\tc')
 
 
 def test_ssf01_request_too_large(flask_setup):

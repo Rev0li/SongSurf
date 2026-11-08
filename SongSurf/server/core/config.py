@@ -19,6 +19,18 @@ if _SHARED_DIR.is_dir():
     sys.path.insert(0, str(_SHARED_DIR))
 import events_client  # noqa: E402
 
+DEV_MODE              = os.getenv('DEV_MODE', 'false').lower() == 'true'
+# Preuve envoyée par Caddy dans X-Proxy-Token (porte du portail). Vide = verrouillé.
+SONGSURF_PROXY_SECRET = os.getenv('SONGSURF_PROXY_SECRET', '')
+# Espace membre du portail : redirection après /logout, lien de la page « passe par le portail »
+REVAUTH_HOME_URL      = os.getenv('REVAUTH_HOME_URL', '')
+
+# CORS : seule l'extension SongSurf Clip est autorisée (requêtes avec credentials).
+# ID fixe, dérivé de la clé "key" de chrome-extension/manifest.json — il ne change
+# pas selon le dossier de chargement. Jamais "null" ni chrome-extension://* (S1).
+SONGSURF_EXTENSION_ID = 'ojhafabhkjjlganipbadmpifkikhnadf'
+_CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
+
 # Quota par utilisateur et par jour (l'admin est illimité). 0 = illimité pour tous.
 DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))
 

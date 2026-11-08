@@ -13,10 +13,11 @@ from unittest.mock import patch
 with patch('shutil.which', return_value=None):
     import app as app_mod
     from core import config as core_config
+    from auth.provider import get_current_user
 
 _PROXY_SECRET = 'proxy-secret-for-tests'
 _UID = '4fac893e-0000-4000-8000-000000000001'
-_EXT_ORIGIN = f'chrome-extension://{app_mod.SONGSURF_EXTENSION_ID}'
+_EXT_ORIGIN = f'chrome-extension://{core_config.SONGSURF_EXTENSION_ID}'
 
 
 def _gate_headers(**overrides):
@@ -32,9 +33,9 @@ def _gate_headers(**overrides):
 
 @pytest.fixture()
 def gate(monkeypatch):
-    monkeypatch.setattr(app_mod, 'DEV_MODE', False)
-    monkeypatch.setattr(app_mod, 'SONGSURF_PROXY_SECRET', _PROXY_SECRET)
-    monkeypatch.setattr(app_mod, 'REVAUTH_HOME_URL', 'https://portal.example/home/friend')
+    monkeypatch.setattr(core_config, 'DEV_MODE', False)
+    monkeypatch.setattr(core_config, 'SONGSURF_PROXY_SECRET', _PROXY_SECRET)
+    monkeypatch.setattr(core_config, 'REVAUTH_HOME_URL', 'https://portal.example/home/friend')
     app_mod.app.config['TESTING'] = True
     return monkeypatch
 
@@ -49,7 +50,7 @@ def _user_for(headers=None, cookies=None):
     if cookies:
         environ['HTTP_COOKIE'] = '; '.join(f'{k}={v}' for k, v in cookies.items())
     with app_mod.app.test_request_context('/', headers=headers or {}, environ_base=environ):
-        return app_mod._get_current_user()
+        return get_current_user()
 
 
 # ── W-14 : preuve valide → identité du portail ────────────────────────────────
@@ -78,7 +79,7 @@ def test_w15_bad_proof_is_logged(gate, caplog):
 
 @pytest.mark.parametrize('proof', ['', 'anything'])
 def test_w16_no_secret_configured_never_trusts_headers(gate, proof):
-    gate.setattr(app_mod, 'SONGSURF_PROXY_SECRET', '')
+    gate.setattr(core_config, 'SONGSURF_PROXY_SECRET', '')
     assert _user_for(_gate_headers(**{'X-Proxy-Token': proof})) is None
 
 
@@ -148,7 +149,7 @@ def test_w22_token_handoff_is_gone(client):
 # ── W-23 : secret absent → service verrouillé ─────────────────────────────────
 
 def test_w23_no_secret_locks_the_service(client, gate):
-    gate.setattr(app_mod, 'SONGSURF_PROXY_SECRET', '')
+    gate.setattr(core_config, 'SONGSURF_PROXY_SECRET', '')
     assert client.get('/', headers=_gate_headers()).status_code == 401
 
 
@@ -164,13 +165,13 @@ def test_w24_logout_redirects_to_portal_without_cookie(client):
 # ── DEV_MODE : utilisateur dev local, sans preuve ─────────────────────────────
 
 def test_dev_mode_gives_local_admin(gate):
-    gate.setattr(app_mod, 'DEV_MODE', True)
+    gate.setattr(core_config, 'DEV_MODE', True)
     user = _user_for()
     assert user['role'] == 'admin' and user['sub'] == 'dev'
 
 
 def test_dev_mode_stores_like_production(gate, tmp_path):
-    gate.setattr(app_mod, 'DEV_MODE', True)
+    gate.setattr(core_config, 'DEV_MODE', True)
     gate.setattr(core_config, 'BASE_MUSIC_DIR', tmp_path)
     assert app_mod._user_music_dir(_user_for()) == tmp_path.resolve() / 'dev-user-local'
 
@@ -183,7 +184,7 @@ def test_cors_extension_id_matches_manifest():
     with open(manifest, encoding='utf-8') as f:
         key = base64.b64decode(json.load(f)['key'])
     ext_id = ''.join(chr(ord('a') + int(c, 16)) for c in hashlib.sha256(key).hexdigest()[:32])
-    assert ext_id == app_mod.SONGSURF_EXTENSION_ID
+    assert ext_id == core_config.SONGSURF_EXTENSION_ID
 
 
 def test_cors_preflight_allows_songsurf_extension(client):

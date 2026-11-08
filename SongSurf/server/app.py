@@ -10,23 +10,20 @@ Auth model (portal gate, see docs/CONNECTOR.md):
     SONGSURF_PROXY_SECRET (constant time); empty secret → locked
   - DEV_MODE=true → local admin dev user, no proof (never in production)
 
-Storage: /data/music/<portal UUID>/Artist/Album/ (DEV_MODE: same, uid dev-user-local)
+Storage: /data/music/<portal UUID>/Artist/Album/ (config.DEV_MODE: same, uid dev-user-local)
 Persistent state (queue, quotas, ZIP exports): SQLite in /data/state (state_store.py)
 
 Phase 3: see docs/CONNECTOR.md
 """
 
 from flask import (Flask, request, jsonify, send_file, send_from_directory, Response, abort,
-                   redirect, render_template)
+                   redirect)
 from pathlib import Path
 from datetime import datetime
-from functools import wraps
 from mutagen.mp3 import MP3
 from mutagen.id3 import APIC
-import hmac
 import signal
 import threading
-import time
 import os
 import secrets
 import shutil
@@ -36,16 +33,13 @@ import io
 
 from waitress import serve
 from organizer import MusicOrganizer
+from auth.provider import admin_only_response, auth_required, get_current_user, is_admin
 from core import config, queue
 from core.config import logger
-from core.progress import _song_clock, _song_percent
-from core.queue import (downloader, download_status, queue_lock, QUEUE_FULL_MSG,
-                        _last_completed_by_user, _last_error_by_user,
-                        _daily_limit_for, _daily_limit_response, _duration, _enqueue_job,
-                        _is_valid_youtube_url, _job_owner, _queue_full, _today)
-from core.storage import (_UID_RE, _cookies_missing_response, _user_cookies_file,
-                          _user_key, _user_music_dir, _user_pseudo)
+from core.storage import _user_key, _user_music_dir, _user_pseudo
 from core.worker import _cleanup_temp_leftovers, _on_sigterm, _resume_pending_batch, queue_worker
+from routes.download import download_bp
+from routes.extension import extension_bp
 
 import events_client
 
@@ -58,19 +52,9 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 MAX_REQUEST_MB = 20
 app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_MB * 1024 * 1024
 
-DEV_MODE              = os.getenv('DEV_MODE', 'false').lower() == 'true'
-# Preuve envoyée par Caddy dans X-Proxy-Token (porte du portail). Vide = verrouillé.
-SONGSURF_PROXY_SECRET = os.getenv('SONGSURF_PROXY_SECRET', '')
-# Espace membre du portail : redirection après /logout, lien de la page « passe par le portail »
-REVAUTH_HOME_URL      = os.getenv('REVAUTH_HOME_URL', '')
+app.register_blueprint(download_bp)
+app.register_blueprint(extension_bp)
 
-# CORS : seule l'extension SongSurf Clip est autorisée (requêtes avec credentials).
-# ID fixe, dérivé de la clé "key" de chrome-extension/manifest.json — il ne change
-# pas selon le dossier de chargement. Jamais "null" ni chrome-extension://* (S1).
-SONGSURF_EXTENSION_ID = 'ojhafabhkjjlganipbadmpifkikhnadf'
-_CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
-
-_DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin'}
 
 def _retarget_artists(artists: list[str], old_artist: str | None, new_artist: str) -> list[str]:
     """TPE1 après un déplacement : seul l'artiste principal change, les featurings restent.
@@ -125,76 +109,6 @@ def _sync_mp3_tags(file_path: Path, music_dir: Path, old_artist: str | None = No
         logger.warning(f"⚠️ sync_mp3_tags({file_path.name}): {e}")
 
 
-def _is_admin(user: dict | None) -> bool:
-    return bool(user) and user.get('role') == 'admin'
-
-
-def _admin_only_response():
-    """Outils experts (SSF-13) : réservés à l'admin, 403 pour un membre."""
-    return jsonify({'success': False, 'error': 'Réservé à l\'administrateur', 'code': 'admin_only'}), 403
-
-
-# ── Authentication ─────────────────────────────────────────────────────────────
-
-def _user_from_portal_headers() -> dict | None:
-    """Identité posée par Caddy après vérification de la session par le portail.
-
-    Fiable uniquement si X-Proxy-Token prouve que la requête vient de Caddy :
-    SongSurf écoute sur le réseau local, n'importe quel appareil pourrait sinon
-    se déclarer admin. Caddy retire les X-User-* envoyés par le client.
-    """
-    if not SONGSURF_PROXY_SECRET:
-        return None
-    proof = request.headers.get('X-Proxy-Token', '')
-    if not proof:
-        return None
-    if not hmac.compare_digest(proof.encode(), SONGSURF_PROXY_SECRET.encode()):
-        # Preuve présente mais fausse : secret désynchronisé avec Caddy, ou forge
-        logger.warning("⚠️  X-Proxy-Token invalide — en-têtes d'identité ignorés")
-        return None
-    name = request.headers.get('X-User-Name', '').strip()
-    role = request.headers.get('X-User-Role', '').strip().lower()
-    if not name or not role:
-        return None
-    return {
-        'sub':   name,                                          # pseudo : affichage, logs, .owner
-        'uid':   request.headers.get('X-User-Id', '').strip(),  # UUID du portail : clé de stockage
-        'role':  role,
-    }
-
-
-def _get_current_user() -> dict | None:
-    """Seule source d'identité : DEV_MODE (utilisateur dev local) ou la porte du portail."""
-    if DEV_MODE:
-        return _DEV_USER.copy()
-    return _user_from_portal_headers()
-
-
-def _is_identified(user: dict | None) -> bool:
-    """Pseudo présent ET UUID du portail valide : sans UUID, pas de clé de stockage,
-    donc refus — jamais de repli sur le pseudo (SSF-03)."""
-    return bool(user and user.get('sub') and _UID_RE.match(user.get('uid') or ''))
-
-
-def _unauthenticated_response():
-    """Requête arrivée sans passer par Caddy (accès direct au NAS, ou porte mal
-    configurée). Pas de redirection vers la connexion, c'est le rôle de Caddy :
-    API / extension → 401 JSON, navigateur → page « passe par le portail »."""
-    if (request.headers.get('Origin', '') in _CORS_ORIGINS or request.is_json
-            or 'application/json' in request.headers.get('Accept', '')):
-        return jsonify({'success': False, 'error': 'Non authentifié'}), 401
-    return render_template('use_portal.html', portal_url=REVAUTH_HOME_URL), 401
-
-
-def auth_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not _is_identified(_get_current_user()):
-            return _unauthenticated_response()
-        return f(*args, **kwargs)
-    return decorated
-
-
 @app.before_request
 def reject_oversized_request():
     # Refus avant la route : leurs try/except génériques transformeraient le 413
@@ -213,7 +127,7 @@ def request_too_large(_e):
 
 def _cors_headers(origin: str) -> dict:
     """En-têtes CORS, uniquement pour l'origine de l'extension SongSurf Clip."""
-    if origin not in _CORS_ORIGINS:
+    if origin not in config._CORS_ORIGINS:
         return {}
     return {
         'Access-Control-Allow-Origin':      origin,
@@ -247,7 +161,7 @@ def add_cors(response):
 @app.route('/logout', methods=['GET', 'POST'])
 def logout():
     """La session est celle du portail (pas de cookie ici) : retour au portail."""
-    return redirect(REVAUTH_HOME_URL or '/')
+    return redirect(config.REVAUTH_HOME_URL or '/')
 
 
 # ── SPA ───────────────────────────────────────────────────────────────────────
@@ -310,7 +224,7 @@ def static_assets(filename):
 @app.route('/api/me')
 @auth_required
 def api_me():
-    user = _get_current_user()
+    user = get_current_user()
     return jsonify({**user, 'pseudo': _user_pseudo(user)})
 
 
@@ -319,84 +233,6 @@ def api_me():
 @app.route('/ping')
 def ping():
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
-
-
-# ── Download status ────────────────────────────────────────────────────────────
-
-@app.route('/api/status')
-def get_status():
-    current_user = _get_current_user()
-    if not _is_identified(current_user):
-        return _unauthenticated_response()
-    my_key = _user_key(current_user)
-
-    queue_size = queue.store.pending_count()
-    my_pending = queue.store.pending_for(my_key)
-    songs_before = queue.store.songs_before(my_key) if my_pending else None
-    with queue_lock:
-        status = download_status.copy()
-        status['queue_size'] = queue_size
-        current_pct = 0.0
-        if status['in_progress']:
-            status['progress'] = downloader.get_progress()
-            started = _song_clock['started']
-            current_pct = _song_percent(
-                status['progress'].get('phase', ''),
-                float(status['progress'].get('percent', 0) or 0),
-                time.monotonic() - started if started is not None else 0.0,
-                _song_clock['expected'],
-            )
-        status['current_percent'] = current_pct
-        if status.get('batch_active'):
-            total    = max(1, int(status.get('batch_total', 0) or 0))
-            done     = max(0, min(total, int(status.get('batch_done', 0) or 0)))
-            composed = ((done + (current_pct / 100.0 if status['in_progress'] else 0.0)) / total) * 100.0
-            status['batch_percent'] = round(max(0.0, min(100.0, composed)), 1)
-        else:
-            status['batch_percent'] = float(current_pct)
-    status['daily_count'] = queue.store.daily_count(my_key, _today())
-    status['daily_limit'] = _daily_limit_for(current_user)
-    with queue_lock:
-        status['last_completed'] = _last_completed_by_user.get(my_key)
-        status['last_error']     = _last_error_by_user.get(my_key)
-    current_dl = status.get('current_download') or {}
-    status['is_mine'] = not current_dl or current_dl.get('user_key') == my_key
-    # Qui occupe le worker : l'admin voit le pseudo et le titre en cours, un membre
-    # seulement « un autre membre » + combien de titres passent avant le sien.
-    worker = {'songs_before_mine': None, 'owner': None, 'current': None}
-    if current_dl and not status['is_mine']:
-        if songs_before is not None:
-            worker['songs_before_mine'] = songs_before + 1  # + le titre en cours
-        if current_user.get('role') == 'admin':
-            meta = current_dl.get('metadata') or {}
-            worker['owner']   = current_dl.get('user_pseudo') or None
-            worker['current'] = {'artist': meta.get('artist', ''), 'title': meta.get('title', '')}
-    elif songs_before:
-        worker['songs_before_mine'] = songs_before
-    status['worker'] = worker
-    # Titre en cours d'un autre membre : jamais son détail dans current_download.
-    if not status['is_mine']:
-        status['current_download'] = None
-    # Détail "à venir" limité aux titres de l'utilisateur courant — jamais la file
-    # d'un autre membre (même logique de confidentialité que is_mine ci-dessus).
-    status['pending'] = [
-        {'artist': m.get('artist', ''), 'title': m.get('title', ''), 'album': m.get('album', '')}
-        for m in (p.get('metadata') or {} for p in my_pending)
-    ][:200]
-    # Un album = une ligne d'avancement « 3 / 12 titres » (SSF-13), pas un titre par ligne.
-    status['jobs'] = queue.store.jobs_for(my_key)[:100]
-    # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
-    try:
-        cookies_file = _user_cookies_file(current_user)
-        status['cookies_present'] = cookies_file.is_file()
-        status['cookies_age_days'] = (
-            round((time.time() - cookies_file.stat().st_mtime) / 86400, 1)
-            if status['cookies_present'] else None
-        )
-    except Exception:
-        status['cookies_present']  = False
-        status['cookies_age_days'] = None
-    return jsonify(status)
 
 
 # ── Library ────────────────────────────────────────────────────────────────────
@@ -440,7 +276,7 @@ def _build_library_tree(music_dir: Path) -> dict:
 @auth_required
 def library_tree():
     try:
-        user = _get_current_user()
+        user = get_current_user()
         tree = _build_library_tree(_user_music_dir(user))
         return jsonify({'success': True, **tree})
     except Exception as e:
@@ -452,7 +288,7 @@ def library_tree():
 @auth_required
 def library_move_song():
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         data          = request.get_json() or {}
         source        = (data.get('source') or '').strip()
@@ -491,7 +327,7 @@ def library_move_song():
 def library_move_folder():
     """Move an album folder to a different artist folder."""
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         data        = request.get_json() or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -548,7 +384,7 @@ def library_move_folder():
 def library_delete_folder():
     """Delete an artist or album folder — admin only (the admin library is permanent)."""
     try:
-        user = _get_current_user()
+        user = get_current_user()
         if user.get('role') != 'admin':
             return jsonify({'success': False, 'error': 'Admin requis'}), 403
         music_dir   = _user_music_dir(user)
@@ -595,7 +431,7 @@ def _image_response(path_or_buffer, mime):
 @auth_required
 def library_folder_cover():
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         if not folder_path:
@@ -653,7 +489,7 @@ def library_folder_cover():
 def library_artist_picture():
     """Artist picture: looks for folder.jpg first, then artist.jpg (legacy fallback)."""
     try:
-        user        = _get_current_user()
+        user        = get_current_user()
         music_dir   = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         folder      = (music_dir / folder_path).resolve()
@@ -734,7 +570,7 @@ _EDITABLE_FIELDS = {
 def save_song_meta():
     """Writes editable ID3 tags back to an MP3 file."""
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         data      = request.get_json() or {}
         path      = (data.get('path') or '').strip()
@@ -761,7 +597,7 @@ def upload_song_cover():
     from mutagen.mp3 import MP3 as _MP3
     from mutagen.id3 import ID3 as _ID3, APIC as _APIC
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         path      = (request.form.get('path') or '').strip()
         file      = request.files.get('image')
@@ -800,7 +636,7 @@ def upload_song_cover():
 def upload_artist_cover():
     """Saves uploaded image as artist.jpg in the artist folder."""
     try:
-        user        = _get_current_user()
+        user        = get_current_user()
         music_dir   = _user_music_dir(user)
         folder_path = (request.form.get('folder_path') or '').strip()
         file        = request.files.get('image')
@@ -829,7 +665,7 @@ def upload_artist_cover():
 def upload_album_cover():
     """Saves uploaded image as cover.jpg in the album folder (no MP3 embedding)."""
     try:
-        user        = _get_current_user()
+        user        = get_current_user()
         music_dir   = _user_music_dir(user)
         folder_path = (request.form.get('folder_path') or '').strip()
         file        = request.files.get('image')
@@ -850,120 +686,6 @@ def upload_album_cover():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"❌ /api/library/album-cover/upload: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ── Extract / Download ─────────────────────────────────────────────────────────
-
-@app.route('/api/extract', methods=['POST'])
-@auth_required
-def extract_metadata():
-    try:
-        user = _get_current_user()
-        data = request.get_json()
-        url  = (data.get('url') or '').strip()
-        if not url:
-            return jsonify({'success': False, 'error': 'URL manquante'}), 400
-        if not _is_valid_youtube_url(url):
-            return jsonify({'success': False, 'error': 'URL invalide. Collez un lien YouTube Music valide.'}), 400
-        if (resp := _cookies_missing_response(user)) is not None:
-            return resp
-        cookiefile = str(_user_cookies_file(user))
-
-        is_playlist = downloader._detect_type(url) == 'playlist'
-        if is_playlist:
-            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
-            if result.get('success'):
-                result['is_playlist'] = True
-        else:
-            result = downloader.extract_metadata(url, cookiefile=cookiefile)
-            if result.get('success') and 'metadata' in result:
-                meta = result.pop('metadata')
-                result.update(meta)
-                result['is_playlist'] = False
-
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/download', methods=['POST'])
-@auth_required
-def start_download():
-    try:
-        user = _get_current_user()
-        data = request.get_json()
-        url  = (data.get('url') or '').strip()
-        if not url:
-            return jsonify({'success': False, 'error': 'URL manquante'}), 400
-        if not _is_valid_youtube_url(url):
-            return jsonify({'success': False, 'error': 'URL invalide.'}), 400
-        if (resp := _cookies_missing_response(user)) is not None:
-            return resp
-        # Le serveur draine la file, indépendamment de la page : le titre est empilé
-        # comme un job d'une piste. 429 si l'utilisateur a trop de jobs en attente.
-        if _queue_full(user):
-            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
-        if (resp := _daily_limit_response(user)) is not None:
-            return resp
-
-        metadata = {
-            'artist':       data.get('artist', 'Unknown Artist'),
-            'artists':      data.get('artists') or [],
-            'album_artist': data.get('album_artist', ''),
-            'album':        data.get('album',  'Unknown Album'),
-            'title':        data.get('title',  'Unknown Title'),
-            'year':         data.get('year',   ''),
-            'track_number': data.get('track_number', ''),
-        }
-        _enqueue_job(user, [{'url': url, 'metadata': metadata, 'duration': _duration(data.get('duration')),
-                             **_job_owner(user)}])
-        logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
-        return jsonify({'success': True, 'queue_size': queue.store.pending_count()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/download-playlist', methods=['POST'])
-@auth_required
-def download_playlist():
-    try:
-        user     = _get_current_user()
-        data     = request.get_json()
-        playlist = data.get('playlist_metadata', {})
-        songs    = playlist.get('songs', [])
-        if not songs:
-            return jsonify({'success': False, 'error': 'Données manquantes'}), 400
-        if (resp := _cookies_missing_response(user)) is not None:
-            return resp
-        # L'album entier est empilé comme un seul job, ses titres dans l'ordre ; le
-        # worker alterne avec les titres des autres membres (round-robin) et continue
-        # même si on quitte la page.
-        if _queue_full(user):
-            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
-        if (resp := _daily_limit_response(user)) is not None:
-            return resp
-
-        items = [{
-            'url':         song['url'],
-            'metadata':    {
-                'artist':       playlist.get('artist') or song.get('artist') or 'Unknown Artist',
-                'artists':      song.get('artists') or [],
-                'album_artist': playlist.get('artist') or '',
-                'album':        playlist.get('title', 'Unknown Album'),
-                'title':        song['title'],
-                'year':         playlist.get('year', ''),
-                'track_number': song.get('track_number', ''),
-                'track_total':  len(songs),
-            },
-            'duration':    _duration(song.get('duration')),
-            **_job_owner(user),
-        } for song in songs]
-
-        added = _enqueue_job(user, items)
-        return jsonify({'success': True, 'added': added, 'total': len(songs),
-                        'queue_size': queue.store.pending_count()})
-    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1049,7 +771,7 @@ def _build_zip(user_key: str, music_dir: Path, files: list, zip_path: Path) -> N
 @auth_required
 def prepare_zip():
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         key       = _user_key(user)
         music_dir = _user_music_dir(user)
         if _zip_forbidden(user, music_dir):
@@ -1078,7 +800,7 @@ def prepare_zip():
 @auth_required
 def zip_status():
     """Avancement de l'export ZIP de l'appelant : idle | building | ready | error."""
-    key   = _user_key(_get_current_user())
+    key   = _user_key(get_current_user())
     state = queue.store.zip_get(key)
     if state and state['status'] == 'ready' and not Path(state['zip_path']).is_file():
         queue.store.zip_delete(key)   # fichier disparu (config.TEMP_DIR nettoyé) → plus rien à récupérer
@@ -1089,7 +811,7 @@ def zip_status():
 @app.route('/api/download-zip')
 @auth_required
 def download_zip():
-    user      = _get_current_user()
+    user      = get_current_user()
     key       = _user_key(user)
     music_dir = _user_music_dir(user)
     if _zip_forbidden(user, music_dir):
@@ -1162,7 +884,7 @@ def download_zip():
 @app.route('/api/admin/dl-logs')
 @auth_required
 def api_admin_dl_logs():
-    user = _get_current_user()
+    user = get_current_user()
     if user.get('role') != 'admin':
         return jsonify({'success': False, 'error': 'Admin requis'}), 403
 
@@ -1211,9 +933,9 @@ def library_audit_artist():
     """Rapport iTunes + cohérence ID3 pour tous les albums d'un artiste.
     Outil expert : admin uniquement (SSF-13)."""
     try:
-        user = _get_current_user()
-        if not _is_admin(user):
-            return _admin_only_response()
+        user = get_current_user()
+        if not is_admin(user):
+            return admin_only_response()
         music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
@@ -1240,9 +962,9 @@ def library_audit_apply():
     """Applique les recommandations cochées : [{path, field, value}].
     Outil expert : admin uniquement (SSF-13)."""
     try:
-        user = _get_current_user()
-        if not _is_admin(user):
-            return _admin_only_response()
+        user = get_current_user()
+        if not is_admin(user):
+            return admin_only_response()
         music_dir = _user_music_dir(user)
         changes   = (request.get_json(silent=True) or {}).get('changes') or []
 
@@ -1271,237 +993,6 @@ def library_audit_apply():
         return jsonify({'success': True, 'applied': applied, 'errors': errors})
     except Exception as e:
         logger.error(f"❌ /api/library/audit/apply: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ── Extension Chrome — cookies sync (par utilisateur) ──────────────────────────
-
-
-def _is_netscape_cookies(content: str) -> bool:
-    """Format Netscape attendu par yt-dlp : commentaires (#) ou lignes à 7 champs tabulés."""
-    entries = 0
-    for line in content.splitlines():
-        if not line.strip():
-            continue
-        if line.startswith('#') and not line.startswith('#HttpOnly_'):
-            continue
-        if len(line.split('\t')) != 7:
-            return False
-        entries += 1
-    return entries > 0
-
-
-@app.route('/api/cookies/update', methods=['POST'])
-@auth_required
-def update_cookies():
-    """Extension Chrome — reçoit les cookies YouTube de l'utilisateur courant pour yt-dlp."""
-    try:
-        user    = _get_current_user()
-        data    = request.get_json(silent=True) or {}
-        content = (data.get('cookies') or '').strip()
-        if not content:
-            return jsonify({'success': False, 'error': 'Cookies manquants'}), 400
-        if not _is_netscape_cookies(content):
-            return jsonify({'success': False, 'error': 'Format de cookies invalide (Netscape attendu)'}), 400
-        target = _user_cookies_file(user)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix('.tmp')
-        tmp.write_text(content + '\n', encoding='utf-8')
-        tmp.chmod(0o600)
-        tmp.replace(target)
-        count  = sum(1 for l in content.splitlines() if l and not l.startswith('#'))
-        pseudo = _user_pseudo(user)
-        logger.info(f"🍪 Cookies mis à jour depuis l'extension Chrome ({count} entrées) [{pseudo}]")
-        return jsonify({'success': True, 'count': count, 'pseudo': pseudo})
-    except Exception as e:
-        logger.error(f"❌ /api/cookies/update: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ── Extension Chrome — preview + queue direct ──────────────────────────────────
-
-def _detect_url_mode(url: str) -> str:
-    """Returns 'song', 'album', or 'playlist' from a YouTube Music URL."""
-    from urllib.parse import urlparse, parse_qs
-    try:
-        parsed = urlparse(url)
-        if parsed.path == '/watch' and parse_qs(parsed.query).get('v'):
-            return 'song'
-        if parsed.path == '/playlist':
-            list_id = (parse_qs(parsed.query).get('list') or [''])[0]
-            return 'album' if list_id.startswith('OLAK5uy_') else 'playlist'
-        if '/browse/' in parsed.path:
-            browse_id = parsed.path.rstrip('/').split('/')[-1]
-            if browse_id.startswith('MPREb_'):
-                return 'album'
-    except Exception:
-        pass
-    return 'song'
-
-
-@app.route('/api/preview', methods=['POST'])
-@auth_required
-def preview_metadata():
-    """
-    Extension Chrome — extrait les métadonnées sans effet de bord.
-    Utilisé pour la mini-analyse avant confirmation.
-    """
-    try:
-        user     = _get_current_user()
-        data     = request.get_json(silent=True) or {}
-        url      = (data.get('url') or '').strip()
-        if not url:
-            return jsonify({'success': False, 'error': 'URL manquante'}), 400
-        if not _is_valid_youtube_url(url):
-            return jsonify({'success': False, 'error': 'URL invalide'}), 400
-        if (resp := _cookies_missing_response(user)) is not None:
-            return resp
-
-        url_mode   = _detect_url_mode(url)
-        cookiefile = str(_user_cookies_file(user))
-
-        if url_mode == 'song':
-            result = downloader.extract_metadata(url, cookiefile=cookiefile)
-            if not result.get('success'):
-                return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
-            meta = result.get('metadata', {})
-            return jsonify({
-                'success':   True,
-                'type':      'song',
-                'title':     meta.get('title', ''),
-                'artist':    meta.get('artist', ''),
-                'album':     meta.get('album', ''),
-                'year':      meta.get('year', ''),
-                'thumbnail': meta.get('thumbnail_url', ''),
-            })
-        else:
-            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
-            if not result.get('success'):
-                return jsonify({'success': False, 'error': result.get('error', 'Extraction échouée')}), 400
-            return jsonify({
-                'success':     True,
-                'type':        url_mode,
-                'title':       result.get('title', ''),
-                'artist':      result.get('artist', ''),
-                'year':        result.get('year', ''),
-                'thumbnail':   result.get('thumbnail_url', ''),
-                'song_count':  result.get('total_songs', 0),
-            })
-    except Exception as e:
-        logger.error(f"❌ /api/preview: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-def _queue_direct_async(url: str, url_mode: str, user: dict, override: dict | None = None):
-    """Daemon thread — extrait les métadonnées (sauf si override fourni) puis enqueue."""
-    cookiefile = str(_user_cookies_file(user))
-    try:
-        if url_mode == 'song':
-            if override and override.get('title'):
-                metadata = {
-                    'artist': override.get('artist', 'Unknown Artist') or 'Unknown Artist',
-                    'album':  override.get('album',  'Unknown Album')  or 'Unknown Album',
-                    'title':  override.get('title',  'Unknown Title')  or 'Unknown Title',
-                    'year':   override.get('year',   ''),
-                }
-                duration = 0
-            else:
-                result = downloader.extract_metadata(url, cookiefile=cookiefile)
-                if not result.get('success'):
-                    logger.warning(f"⚠️ queue-direct extract failed: {result.get('error')}")
-                    return
-                meta = result.get('metadata', {})
-                duration = meta.get('duration')
-                metadata = {
-                    'artist':       (override or {}).get('artist') or meta.get('artist', 'Unknown Artist'),
-                    # override artiste → la liste extraite n'est plus fiable
-                    'artists':      [] if (override or {}).get('artist') else meta.get('artists') or [],
-                    'album_artist': meta.get('album_artist', ''),
-                    'album':        (override or {}).get('album')  or meta.get('album',  'Unknown Album'),
-                    'title':        meta.get('title', 'Unknown Title'),
-                    'year':         meta.get('year', ''),
-                    'track_number': meta.get('track_number', ''),
-                }
-            if _queue_full(user):
-                logger.warning("⚠️ queue-direct (song): file pleine")
-                return
-            _enqueue_job(user, [{'url': url, 'metadata': metadata,
-                                 'duration': _duration(duration),
-                                 **_job_owner(user)}])
-            logger.info(f"📥 queue-direct (song): {metadata['artist']} — {metadata['title']}")
-        else:
-            result = downloader.extract_playlist_metadata(url, cookiefile=cookiefile)
-            if not result.get('success'):
-                logger.warning(f"⚠️ queue-direct playlist extract failed: {result.get('error')}")
-                return
-            songs       = result.get('songs', [])
-            album_name  = (override or {}).get('album')  or result.get('title', 'Unknown Album')
-            artist_name = (override or {}).get('artist') or result.get('artist', 'Unknown Artist')
-            items = [{
-                'url':         song['url'],
-                'metadata':    {
-                    'artist':       artist_name,
-                    'artists':      song.get('artists') or [],
-                    'album_artist': artist_name,
-                    'album':        album_name,
-                    'title':        song.get('title', 'Unknown Title'),
-                    'year':         result.get('year', ''),
-                    'track_number': song.get('track_number', ''),
-                    'track_total':  len(songs),
-                },
-                'duration':    _duration(song.get('duration')),
-                **_job_owner(user),
-            } for song in songs]
-            if _queue_full(user):
-                logger.warning("⚠️ queue-direct (album): file pleine")
-                return
-            added = _enqueue_job(user, items)
-            logger.info(f"📥 queue-direct ({url_mode}): {added} titres — {album_name} / {artist_name}")
-    except Exception as e:
-        logger.error(f"❌ queue-direct async: {e}")
-
-
-@app.route('/api/queue-direct', methods=['POST'])
-@auth_required
-def queue_direct():
-    """
-    Extension Chrome — extrait les métadonnées et empile côté serveur (fire-and-forget).
-    Aucune dépendance à la page SongSurf : le NAS télécharge même si aucun onglet n'est
-    ouvert. La réponse est immédiate ; l'extraction yt-dlp tourne dans un thread.
-    """
-    try:
-        user = _get_current_user()
-        data = request.get_json(silent=True) or {}
-        url  = (data.get('url') or '').strip()
-
-        if not url:
-            return jsonify({'success': False, 'error': 'URL manquante'}), 400
-        if not _is_valid_youtube_url(url):
-            return jsonify({'success': False, 'error': 'URL invalide'}), 400
-        if (resp := _cookies_missing_response(user)) is not None:
-            return resp
-        if _queue_full(user):
-            return jsonify({'success': False, 'error': QUEUE_FULL_MSG}), 429
-        if (resp := _daily_limit_response(user)) is not None:
-            return resp
-
-        url_mode = _detect_url_mode(url)
-        override = {
-            'artist': (data.get('artist') or '').strip(),
-            'album':  (data.get('album')  or '').strip(),
-            'title':  (data.get('title')  or '').strip(),
-            'year':   (data.get('year')   or '').strip(),
-        }
-        threading.Thread(
-            target=_queue_direct_async,
-            args=(url, url_mode, user, override),
-            daemon=True,
-        ).start()
-
-        labels = {'song': 'chanson', 'album': 'album', 'playlist': 'playlist'}
-        return jsonify({'success': True, 'type': url_mode, 'label': labels.get(url_mode, url_mode)})
-    except Exception as e:
-        logger.error(f"❌ /api/queue-direct: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1626,7 +1117,7 @@ def _read_full_meta(file_path: Path, music_dir: Path) -> dict:
 def library_song_meta():
     """Full metadata dump for a single MP3 file."""
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         path      = (request.args.get('path') or '').strip()
         if not path:
@@ -1650,7 +1141,7 @@ def library_album_tracks():
     """Tracklist légère d'un album (titre, TRCK, artistes, année, genres) :
     page album, mode « Numéroter » et assistant « À remplir »."""
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         if not folder_path:
@@ -1729,7 +1220,7 @@ def library_todo():
     """Albums aux infos incomplètes (année, n° de piste ou genre) de toute la
     bibliothèque de l'utilisateur : bouton et assistant « À remplir » (SSF-13)."""
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         albums = []
         if music_dir.exists():
@@ -1768,7 +1259,7 @@ def library_album_tags_save():
     Jellyfin restent d'accord). 409 si un album du même nom existe déjà.
     """
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -1829,9 +1320,9 @@ def library_delete_song():
     """Supprime un titre — admin uniquement (SSF-13). Album devenu sans MP3 →
     dossier retiré (pochette comprise), puis l'artiste s'il est vide."""
     try:
-        user = _get_current_user()
-        if not _is_admin(user):
-            return _admin_only_response()
+        user = get_current_user()
+        if not is_admin(user):
+            return admin_only_response()
         music_dir = _user_music_dir(user)
         path      = ((request.get_json(silent=True) or {}).get('path') or '').strip()
         if not path:
@@ -1870,7 +1361,7 @@ def library_album_status():
     genre / année / numéro de piste.
     """
     try:
-        user      = _get_current_user()
+        user      = get_current_user()
         music_dir = _user_music_dir(user)
         folder_path = (request.args.get('folder_path') or '').strip()
         if not folder_path:
@@ -1904,9 +1395,9 @@ def library_renumber_album():
     Outil expert : admin uniquement (SSF-13).
     """
     try:
-        user      = _get_current_user()
-        if not _is_admin(user):
-            return _admin_only_response()
+        user      = get_current_user()
+        if not is_admin(user):
+            return admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -1957,9 +1448,9 @@ def library_set_artist_genre():
     Outil expert : admin uniquement (SSF-13).
     """
     try:
-        user      = _get_current_user()
-        if not _is_admin(user):
-            return _admin_only_response()
+        user      = get_current_user()
+        if not is_admin(user):
+            return admin_only_response()
         music_dir = _user_music_dir(user)
         data        = request.get_json(silent=True) or {}
         folder_path = (data.get('folder_path') or '').strip()
@@ -1995,9 +1486,9 @@ def library_set_artist_genre():
 
 if __name__ == '__main__':
     flask_port = int(os.getenv('FLASK_PORT', '8081'))
-    if DEV_MODE:
+    if config.DEV_MODE:
         mode = "DEV (sans authentification)"
-    elif SONGSURF_PROXY_SECRET:
+    elif config.SONGSURF_PROXY_SECRET:
         mode = "PRODUCTION (porte du portail)"
     else:
         mode = "LOCKED (SONGSURF_PROXY_SECRET absent)"
