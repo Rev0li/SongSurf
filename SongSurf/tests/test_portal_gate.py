@@ -58,7 +58,6 @@ def test_w14_valid_proof_gives_portal_identity(gate):
         'sub':   'Revo',    # pseudo exact : affichage, logs, .owner
         'uid':   _UID,      # UUID du portail : clé de stockage
         'role':  'admin',   # minuscules
-        'email': '',
     }
 
 
@@ -167,6 +166,12 @@ def test_dev_mode_gives_local_admin(gate):
     gate.setattr(app_mod, 'DEV_MODE', True)
     user = _user_for()
     assert user['role'] == 'admin' and user['sub'] == 'dev'
+
+
+def test_dev_mode_stores_like_production(gate, tmp_path):
+    gate.setattr(app_mod, 'DEV_MODE', True)
+    gate.setattr(app_mod, 'BASE_MUSIC_DIR', tmp_path)
+    assert app_mod._user_music_dir(_user_for()) == tmp_path.resolve() / 'dev-user-local'
 
 
 # ── SSF-01 : CORS limité à l'extension SongSurf Clip ──────────────────────────

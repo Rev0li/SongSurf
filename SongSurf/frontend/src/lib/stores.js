@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 
-export const user = writable(null); // { sub, role, email }
+export const user = writable(null); // { sub, uid, role, pseudo }
 
 export const downloadStatus = writable({
 	in_progress: false,

@@ -10,7 +10,7 @@ Auth model (portal gate, see docs/CONNECTOR.md):
     SONGSURF_PROXY_SECRET (constant time); empty secret → locked
   - DEV_MODE=true → local admin dev user, no proof (never in production)
 
-Storage: /data/music/<portal UUID>/Artist/Album/ (DEV_MODE: flat /data/music/Artist/Album/)
+Storage: /data/music/<portal UUID>/Artist/Album/ (DEV_MODE: same, uid dev-user-local)
 Persistent state (queue, quotas, ZIP exports): SQLite in /data/state (state_store.py)
 
 Phase 3: see docs/CONNECTOR.md
@@ -76,7 +76,7 @@ _CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
 # Quota par utilisateur et par jour (l'admin est illimité). 0 = illimité pour tous.
 DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))
 
-_DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin', 'email': 'dev@local'}
+_DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin'}
 
 # ── Directories ───────────────────────────────────────────────────────────────
 
@@ -265,7 +265,7 @@ def _enqueue_job(user: dict, songs):
 
 
 # ── Per-user storage ───────────────────────────────────────────────────────────
-# Clé de stockage = UUID du compte portail (X-User-Portal-Id), admin compris :
+# Clé de stockage = UUID du compte portail (X-User-Id), admin compris :
 # unique et stable par construction, jamais dérivée du pseudo (SSF-03). Le pseudo
 # ne sert qu'à l'affichage, aux logs et au fichier .owner des dossiers.
 
@@ -288,15 +288,8 @@ def _user_pseudo(user: dict) -> str:
 
 
 def _user_music_dir(user: dict) -> Path:
-    """Return the music directory for a user.
-
-    DEV_MODE  → BASE_MUSIC_DIR  (flat: Artist/Album/)
-    Production → BASE_MUSIC_DIR/<uid>/  (per-user: uid/Artist/Album/), with a
-                 .owner file holding the pseudo so the folder stays readable.
-    """
-    if DEV_MODE:
-        BASE_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
-        return BASE_MUSIC_DIR
+    """BASE_MUSIC_DIR/<uid>/ (uid/Artist/Album/), with a .owner file holding the
+    pseudo so the folder stays readable. DEV_MODE too (user 'dev-user-local')."""
     key = _user_key(user)
     d = (BASE_MUSIC_DIR / key).resolve()
     if not d.is_relative_to(BASE_MUSIC_DIR.resolve()) or d == BASE_MUSIC_DIR.resolve():
@@ -406,7 +399,6 @@ def _user_from_portal_headers() -> dict | None:
         'sub':   name,                                          # pseudo : affichage, logs, .owner
         'uid':   request.headers.get('X-User-Id', '').strip(),  # UUID du portail : clé de stockage
         'role':  role,
-        'email': '',
     }
 
 
@@ -887,7 +879,7 @@ def library_delete_folder():
         if parent != base and parent.exists() and not any(parent.iterdir()):
             parent.rmdir()
 
-        logger.info(f"🗑️ Dossier supprimé: {folder_path} ({deleted_songs} titre(s)) par {user.get('email')}")
+        logger.info(f"🗑️ Dossier supprimé: {folder_path} ({deleted_songs} titre(s)) par {_user_pseudo(user)}")
         return jsonify({'success': True, 'deleted_songs': deleted_songs})
     except Exception as e:
         logger.error(f"❌ /api/library/delete-folder: {e}")
@@ -2192,7 +2184,7 @@ def library_delete_song():
             if artist != base and artist.exists() and not any(artist.iterdir()):
                 artist.rmdir()
 
-        logger.info(f"🗑️ Titre supprimé : {path} par {user.get('email')}")
+        logger.info(f"🗑️ Titre supprimé : {path} par {_user_pseudo(user)}")
         return jsonify({'success': True, 'removed_album': removed_album})
     except Exception as e:
         logger.error(f"❌ /api/library/delete-song: {e}")

@@ -13,7 +13,7 @@ Reference generated from the current code (`server/app.py`, `server/state_store.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/ping` | GET | Healthcheck (no auth) — used by the Docker healthcheck |
-| `/api/me` | GET | `{sub, uid, role, email, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
+| `/api/me` | GET | `{sub, uid, role, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
 | `/api/status` | GET | Download progress, queue size, batch progress, caller's daily counter, `is_mine`, `worker` |
 
 **`GET /api/status` — response:**
