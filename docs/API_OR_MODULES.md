@@ -62,7 +62,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}], playlists: [...]}` (flat folders = legacy) |
+| `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}]}` |
 | `/api/library/move` | POST | `{source, target_folder}` — move one MP3; tags follow the new folder (SSF-13): TALB = album folder, TPE2 = artist folder, and in TPE1 only the primary artist is replaced (old artist → new one; featurings kept; unchanged when the artist folder is the same) |
 | `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists); same tag rules as `move` on every MP3 |
 | `/api/library/delete-song` | POST | **Admin only** (403 `admin_only`). `{path}` — delete one MP3; an album left without MP3 is removed (cover included), then its artist folder if empty → `{removed_album}` |
@@ -82,7 +82,6 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library/album-status` | GET | `?folder_path=<artist>` → per-album tag completeness `[{path, name, tracks, missing: {genre, year, track_number}, genres: [distinct TCON values], complete}]` (powers the artist-view badges + prefills the artist genre field) |
 | `/api/library/renumber-album` | POST | **Admin only** (SSF-13). `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
 | `/api/library/set-artist-genre` | POST | **Admin only** (SSF-13). `{folder_path: <artist>, genre}` → overwrites TCON on every MP3 under the artist folder (all albums, recursive). `genre` accepts `;`-separated multi-values → `{updated, errors[]}` |
-| `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
 | `/api/library/audit/artist` | GET | **Admin only** (expert tool, SSF-13 ; 403 `admin_only` for members). `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
@@ -203,7 +202,6 @@ api.saveAlbumTags(folderPath, fields)      // POST /api/library/album-tags/save
 api.deleteSong(path)                       // POST /api/library/delete-song (admin)
 api.renumberAlbum(folderPath, paths)       // POST /api/library/renumber-album
 api.setArtistGenre(folderPath, genre)      // POST /api/library/set-artist-genre
-api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
 api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
 api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder — ts = stable per-path version, NOT Date.now())

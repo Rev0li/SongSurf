@@ -17,7 +17,7 @@ function lsJson(key, fallback) {
 	try { return JSON.parse(lsGet(key) ?? 'null') ?? fallback; } catch { return fallback; }
 }
 
-// ── Arbre { artists: [{name, path, has_picture, albums: [{name, path, songs: [{name, path}]}]}], playlists } ──
+// ── Arbre { artists: [{name, path, has_picture, albums: [{name, path, songs: [{name, path}]}]}] } ──
 // Affiché tout de suite depuis le cache, puis rafraîchi (stale-while-revalidate).
 export const tree = writable(lsJson(LS_TREE, null));
 export const treeLoaded = writable(false);
@@ -25,7 +25,7 @@ export const treeLoaded = writable(false);
 export async function refreshTree() {
 	try {
 		const data = await api.getLibrary();
-		const t = { artists: data.artists ?? [], playlists: data.playlists ?? [] };
+		const t = { artists: data.artists ?? [] };
 		tree.set(t);
 		lsSet(LS_TREE, JSON.stringify(t));
 	} catch { /* hors ligne : on garde le cache */ }
@@ -57,15 +57,11 @@ export function findAlbum(t, path) {
 		const al = (a.albums ?? []).find((x) => x.path === path);
 		if (al) return { artist: a, album: al };
 	}
-	const pl = (t?.playlists ?? []).find((x) => x.path === path);
-	return pl ? { artist: null, album: pl } : null;
+	return null;
 }
 
 export function allAlbums(t) {
-	return [
-		...(t?.artists ?? []).flatMap((a) => (a.albums ?? []).map((al) => ({ artist: a, album: al }))),
-		...(t?.playlists ?? []).map((pl) => ({ artist: null, album: pl })),
-	];
+	return (t?.artists ?? []).flatMap((a) => (a.albums ?? []).map((al) => ({ artist: a, album: al })));
 }
 
 export function allSongs(t) {

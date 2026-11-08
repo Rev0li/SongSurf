@@ -13,6 +13,8 @@ with patch('shutil.which', return_value=None):
     from core import config as core_config, progress as core_progress
     from core import queue as core_queue, worker as core_worker
     from routes.extension import _is_netscape_cookies
+    from core import tags as core_tags
+    from routes import admin as routes_admin
 
 PROXY_SECRET = 'proxy-secret-for-tests'
 
@@ -353,7 +355,7 @@ def test_renumber_album_writes_in_order(flask_setup):
     _make_tagged_mp3(album / 'a.mp3')
     _make_tagged_mp3(album / 'b.mp3')
 
-    with patch.object(app_mod, '_write_song_tags') as mock_write:
+    with patch.object(routes_admin, '_write_song_tags') as mock_write:
         r = c.post('/api/library/renumber-album',
                    json={'folder_path': 'Artist/AlbumRN',
                          'paths': ['Artist/AlbumRN/b.mp3', 'Artist/AlbumRN/a.mp3']},
@@ -372,7 +374,7 @@ def test_renumber_album_rejects_partial_paths(flask_setup):
     _make_tagged_mp3(album / 'a.mp3')
     _make_tagged_mp3(album / 'b.mp3')
 
-    with patch.object(app_mod, '_write_song_tags') as mock_write:
+    with patch.object(routes_admin, '_write_song_tags') as mock_write:
         r = c.post('/api/library/renumber-album',
                    json={'folder_path': 'Artist/AlbumPart',
                          'paths': ['Artist/AlbumPart/a.mp3']},  # b.mp3 manquant
@@ -484,7 +486,7 @@ def test_ssf13_expert_tools_admin_only(flask_setup):
     c, music, _, app_mod = flask_setup
     _make_tagged_mp3(music / USER_DIR / 'ArtistEx' / 'Al' / 'a.mp3')
     member = auth_headers(role='member')
-    with patch.object(app_mod, '_write_song_tags') as mock_write:
+    with patch.object(routes_admin, '_write_song_tags') as mock_write:
         calls = [
             c.get('/api/library/audit/artist?path=ArtistEx', headers=member),
             c.post('/api/library/audit/apply', json={'changes': [
@@ -523,7 +525,7 @@ def _real_mp3_with(path, **frames):
 
 def test_ssf13_retarget_artists_keeps_featurings(flask_setup):
     *_, app_mod = flask_setup
-    f = app_mod._retarget_artists
+    f = core_tags._retarget_artists
     assert f(['A', 'Feat'], 'A', 'B') == ['B', 'Feat']
     assert f(['A', 'Feat'], 'A', 'A') == ['A', 'Feat']            # même artiste : inchangé
     assert f(['Feat', 'A'], 'A', 'B') == ['Feat', 'B']             # ancien artiste remplacé là où il est

@@ -123,19 +123,12 @@
 }
 .meta-layout .save-error { font-size: 12px; color: var(--red); flex: 1; }
 
-/* ── Upload d'image ───────────────────────────────────────── */
-.meta-layout .cover-upload-zone {
-	padding: var(--s4);
-	border-top: 1px solid rgba(84,84,88,.2);
-}
 .meta-layout .cover-hint { font-size: 12px; color: var(--text-3); margin: 0 0 var(--s2); }
 .meta-layout .cover-hint kbd {
 	font-size: 11px; background: var(--bg-4);
 	border: 1px solid var(--sep); border-radius: 3px;
 	padding: 1px 5px; font-family: inherit;
 }
-.meta-layout .cover-drop-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
-.meta-layout .hidden-file { display: none; }
 
 /* ── Globaux (glisser-déposer, upload en cours) ───────────── */
 .drop-target {
