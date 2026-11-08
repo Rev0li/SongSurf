@@ -1,5 +1,5 @@
 """
-Tests for library_audit — audit métadonnées par artiste + backfill genre.
+Tests for library_audit — audit métadonnées par artiste.
 
 Fichiers MP3 factices (octets + tag ID3 mutagen, pas de frames MPEG) et
 lookups iTunes injectés : zéro réseau.
@@ -7,12 +7,11 @@ lookups iTunes injectés : zéro réseau.
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 
-import threading
 import pytest
 from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCON
 
 import library_audit
-from library_audit import audit_artist, backfill_genres, _read_tags
+from library_audit import audit_artist, _read_tags
 
 
 def _make_mp3(path, title=None, artists=None, album_artist=None, album=None,
@@ -336,65 +335,3 @@ class TestTrackNumberFromItunes:
                      album_lookup=lambda a, b: dict(ITUNES_WITH_ID),
                      track_lookup=track_lookup)
         assert calls == [987654]
-
-
-# ── backfill_genres ───────────────────────────────────────────────────────────
-
-class TestBackfillGenres:
-    def _run(self, music_dir, lookup):
-        state = {'status': 'running'}
-        backfill_genres(music_dir, state, threading.Lock(), genre_lookup_fn=lookup)
-        return state
-
-    def test_writes_missing_tcon(self, tmp_music_dir):
-        f = _make_mp3(tmp_music_dir / 'Art' / 'Alb' / 'One.mp3',
-                      title='One', artists=['Art'], album='Alb')
-        state = self._run(tmp_music_dir, lambda a, t, al: ['Rap français', 'Hip-Hop/Rap'])
-        assert state == {'status': 'done', 'total': 1, 'done': 1, 'updated': 1,
-                         'failed': 0, 'last_file': 'Art/Alb/One.mp3'}
-        assert _read_tags(f)['genres'] == ['Rap français', 'Hip-Hop/Rap']
-
-    def test_existing_tcon_untouched(self, tmp_music_dir):
-        f = _make_mp3(tmp_music_dir / 'Art' / 'Alb' / 'One.mp3',
-                      title='One', artists=['Art'], album='Alb', genres=['Jazz'])
-        state = self._run(tmp_music_dir, lambda a, t, al: ['Rock'])
-        assert state['total'] == 0
-        assert _read_tags(f)['genres'] == ['Jazz']
-
-    def test_lookup_empty_counts_as_done_not_updated(self, tmp_music_dir):
-        _make_mp3(tmp_music_dir / 'Art' / 'Alb' / 'One.mp3',
-                  title='One', artists=['Art'], album='Alb')
-        state = self._run(tmp_music_dir, lambda a, t, al: [])
-        assert state['done'] == 1 and state['updated'] == 0 and state['failed'] == 0
-
-    def test_lookup_error_counted_failed(self, tmp_music_dir):
-        def boom(a, t, al):
-            raise RuntimeError('réseau')
-        _make_mp3(tmp_music_dir / 'Art' / 'Alb' / 'One.mp3',
-                  title='One', artists=['Art'], album='Alb')
-        state = self._run(tmp_music_dir, boom)
-        assert state['failed'] == 1 and state['done'] == 1
-        assert state['status'] == 'done'
-
-    def test_fallback_folder_names_when_no_tags(self, tmp_music_dir):
-        # Aucun tag → artiste/album déduits des dossiers, titre du nom de fichier
-        f = tmp_music_dir / 'FolderArt' / 'FolderAlb' / 'My Song.mp3'
-        f.parent.mkdir(parents=True)
-        f.write_bytes(b'\x00' * 64)
-        seen = []
-
-        def lookup(artist, title, album):
-            seen.append((artist, title, album))
-            return ['Pop']
-
-        state = self._run(tmp_music_dir, lookup)
-        assert seen == [('FolderArt', 'My Song', 'FolderAlb')]
-        assert state['updated'] == 1
-        assert _read_tags(f)['genres'] == ['Pop']
-
-    def test_file_without_artist_skipped(self, tmp_music_dir):
-        # MP3 à la racine, sans tag → ni artiste tag ni dossier artiste → ignoré
-        f = tmp_music_dir / 'orphan.mp3'
-        f.write_bytes(b'\x00' * 64)
-        state = self._run(tmp_music_dir, lambda a, t, al: ['Pop'])
-        assert state['total'] == 0

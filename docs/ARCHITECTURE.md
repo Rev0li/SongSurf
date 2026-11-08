@@ -49,7 +49,7 @@ Post-download file management:
 - Places files as `Artist/Album/Title.mp3` (primary artist folder), duplicate-safe with `(n)` suffixes. MP3 only.
 - Featuring detection — `feat./ft./featuring` parsed out of the title, re-appended as `(feat. X)`, and featured artists added to the TPE1 list.
 - ID3 tags (Mutagen): `TIT2`, `TPE1` **multi-value**, `TPE2` album artist (always set, single value — Jellyfin grouping key), `TALB`, `TDRC`, `TRCK` as `n/total`, `APIC` embedded cover.
-- `cover.jpg` written into each album folder (thumbnail sidecar → embedded APIC → FFmpeg frame extraction fallbacks); `extract_album_covers()` backfills the whole library.
+- `cover.jpg` written into each album folder (thumbnail sidecar → embedded APIC → FFmpeg frame extraction fallbacks).
 
 ---
 

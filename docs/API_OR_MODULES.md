@@ -93,9 +93,6 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries, newest first (403 for non-admin). `limit` 1–500 (default 100, unreadable → 100) or `all` = full history (portal taste profiles) |
-| `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
-| `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
-| `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
 
 ### Browser extension
 
@@ -158,7 +155,6 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | `organize(file_path, metadata)` | Featuring detection → `Artist/Album/Title.mp3` placement (duplicate-safe) → `_update_tags` → `cover.jpg`. `metadata`: `{artist, artists[], album_artist, album, title, year, track_number, track_total}` |
 | `detect_featuring(title, artist)` | Parses `feat./ft./featuring` patterns → `{main_artist, feat_artists[], clean_title, has_feat}` |
 | `_update_tags(path, tags, thumbnail)` | Mutagen: TIT2, **TPE1 multi-value**, **TPE2 (album_artist or primary artist, always set)**, TALB, TDRC, **TRCK `n/total`**, APIC (cropped/resized JPEG) |
-| `extract_album_covers(overwrite)` | Backfills `cover.jpg` per album (sidecar → APIC → FFmpeg frame fallbacks) |
 
 ### `server/genre_lookup.py`
 
@@ -173,7 +169,6 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | Function | Description |
 |---|---|
 | `audit_artist(artist_dir, music_dir, album_lookup=, track_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Missing TRCK → unambiguous title match against the iTunes tracklist (`_match_missing_tracks`, feat-suffixes stripped). Reads via `mutagen.id3.ID3` |
-| `backfill_genres(music_dir, state, lock, genre_lookup_fn=)` | Background worker: writes missing TCON across the library (tags first, folder names as fallback), updates the shared progress `state` under `lock` |
 
 ### Identity (`server/app.py`)
 
@@ -215,8 +210,6 @@ api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (UR
 api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder — same versioning)
 api.auditArtist(path)                      // GET  /api/library/audit/artist
 api.auditApply(changes)                    // POST /api/library/audit/apply
-api.genreBackfillStart()                   // POST /api/admin/genre-backfill
-api.genreBackfillStatus()                  // GET  /api/admin/genre-backfill/status
 ```
 
 ---

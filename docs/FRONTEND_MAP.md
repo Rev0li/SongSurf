@@ -81,4 +81,4 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 ## 4. Routes utilisées par le frontend
 
 `me`, `status`, `extract`, `download`, `download-playlist`, `prepare-zip`, `zip-status`, `download-zip`, `library`, `library/todo`, `library/move`, `move-folder`, `delete-folder`, `delete-song`, `folder-cover`, `artist-picture`, `song-meta`, `song-meta/save`, `song-cover/upload`, `album-cover/upload`, `artist-cover/upload`, `album-tracks`, `album-status` (suggestion de genre, outil genre), `album-tags/save`, `renumber-album`, `set-artist-genre`, `audit/artist`, `audit/apply`.
-Extension : `cookies/update`, `preview`, `queue-direct`. rev0auth : `admin/dl-logs`. curl : `admin/genre-backfill*`.
+Extension : `cookies/update`, `preview`, `queue-direct`. rev0auth : `admin/dl-logs`.

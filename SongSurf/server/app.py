@@ -1518,30 +1518,7 @@ def api_admin_dl_logs():
                     'total': len(entries)})
 
 
-# ── Admin-only utilities ───────────────────────────────────────────────────────
-
-@app.route('/api/admin/extract-covers', methods=['POST'])
-@auth_required
-def admin_extract_covers():
-    try:
-        user = _get_current_user()
-        if user.get('role') != 'admin':
-            return jsonify({'success': False, 'error': 'Admin requis'}), 403
-        data      = request.get_json(silent=True) or {}
-        music_dir = _user_music_dir(user)
-        org       = MusicOrganizer(music_dir)
-        result    = org.extract_album_covers(overwrite=bool(data.get('overwrite', False)))
-        return jsonify(result), 200 if result.get('success') else 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ── Audit métadonnées + backfill genre (admin) ────────────────────────────────
-
-_backfill_lock  = threading.Lock()
-_backfill_state = {'status': 'idle', 'total': 0, 'done': 0, 'updated': 0,
-                   'failed': 0, 'last_file': '', 'started_at': '', 'finished_at': ''}
-
+# ── Audit métadonnées (admin) ─────────────────────────────────────────────────
 
 @app.route('/api/library/audit/artist')
 @auth_required
@@ -1610,56 +1587,6 @@ def library_audit_apply():
     except Exception as e:
         logger.error(f"❌ /api/library/audit/apply: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/admin/genre-backfill', methods=['POST'])
-@auth_required
-def admin_genre_backfill():
-    """Lance le backfill TCON de la bibliothèque admin (thread d'arrière-plan)."""
-    try:
-        user = _get_current_user()
-        if user.get('role') != 'admin':
-            return jsonify({'success': False, 'error': 'Admin requis'}), 403
-
-        with _backfill_lock:
-            if _backfill_state['status'] == 'running':
-                return jsonify({'success': False, 'error': 'Backfill déjà en cours'}), 409
-            _backfill_state.update({
-                'status': 'running', 'total': 0, 'done': 0, 'updated': 0,
-                'failed': 0, 'last_file': '',
-                'started_at': datetime.now().isoformat(), 'finished_at': '',
-            })
-
-        music_dir = _user_music_dir(user)
-
-        def _job():
-            from library_audit import backfill_genres
-            try:
-                backfill_genres(music_dir, _backfill_state, _backfill_lock)
-            except Exception as e:
-                logger.error(f"❌ Backfill genres: {e}")
-                with _backfill_lock:
-                    _backfill_state['status'] = 'error'
-                    _backfill_state['error']  = str(e)
-            finally:
-                with _backfill_lock:
-                    _backfill_state['finished_at'] = datetime.now().isoformat()
-
-        threading.Thread(target=_job, daemon=True).start()
-        return jsonify({'success': True})
-    except Exception as e:
-        logger.error(f"❌ /api/admin/genre-backfill: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/admin/genre-backfill/status')
-@auth_required
-def admin_genre_backfill_status():
-    user = _get_current_user()
-    if user.get('role') != 'admin':
-        return jsonify({'success': False, 'error': 'Admin requis'}), 403
-    with _backfill_lock:
-        return jsonify({'success': True, **_backfill_state})
 
 
 # ── Extension Chrome — cookies sync (par utilisateur) ──────────────────────────

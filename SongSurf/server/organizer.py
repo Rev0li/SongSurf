@@ -313,12 +313,12 @@ class MusicOrganizer:
         except Exception as e:
             logger.warning(f"⚠️ Erreur tags ID3: {e}")
 
-    def _ensure_album_cover(self, album_dir, track_path, thumbnail_path=None, overwrite=False):
-        """Crée cover.jpg dans le dossier album si absent (ou overwrite=True)."""
+    def _ensure_album_cover(self, album_dir, track_path, thumbnail_path=None):
+        """Crée cover.jpg dans le dossier album si absent."""
         try:
             album_dir = Path(album_dir)
             cover_path = album_dir / 'cover.jpg'
-            if not overwrite and cover_path.exists() and cover_path.stat().st_size > 0:
+            if cover_path.exists() and cover_path.stat().st_size > 0:
                 return False
 
             img_data = None
@@ -382,85 +382,6 @@ class MusicOrganizer:
             return proc2.returncode == 0 and cover_path.exists() and cover_path.stat().st_size > 0
         except Exception:
             return False
-
-    def extract_album_covers(self, overwrite=False):
-        """
-        Génère cover.jpg dans chaque dossier album de la bibliothèque.
-
-        Structure gérée:
-                    - Artist/Album/*.mp3
-                    - Album/*.mp3  (dossiers plats legacy)
-        """
-        scanned = 0
-        created = 0
-        skipped = 0
-
-        try:
-            if not self.music_dir.exists():
-                return {
-                    'success': False,
-                    'error': f"Dossier musique introuvable: {self.music_dir}",
-                    'albums_scanned': 0,
-                    'covers_created': 0,
-                    'covers_skipped': 0,
-                }
-
-            for subdir in self.music_dir.iterdir():
-                if not subdir.is_dir():
-                    continue
-
-                direct_media = sorted(
-                    [p for p in subdir.iterdir() if p.is_file() and p.suffix.lower() == '.mp3'],
-                    key=lambda p: p.name.lower()
-                )
-                subdirs = [d for d in subdir.iterdir() if d.is_dir()]
-
-                # Dossier plat legacy: Album/*.mp3
-                if direct_media:
-                    scanned += 1
-                    if self._ensure_album_cover(subdir, direct_media[0], overwrite=overwrite):
-                        created += 1
-                    else:
-                        skipped += 1
-                    continue
-
-                # Mode normal: Artist/Album/*.mp3
-                for album_dir in subdirs:
-                    media_files = sorted(
-                        [p for p in album_dir.iterdir() if p.is_file() and p.suffix.lower() == '.mp3'],
-                        key=lambda p: p.name.lower()
-                    )
-                    if not media_files:
-                        continue
-                    scanned += 1
-                    if self._ensure_album_cover(album_dir, media_files[0], overwrite=overwrite):
-                        created += 1
-                    else:
-                        skipped += 1
-
-            logger.info(
-                f"🖼️ Covers extraites: {created} créées, {skipped} ignorées, {scanned} albums analysés"
-            )
-            return {
-                'success': True,
-                'albums_scanned': scanned,
-                'covers_created': created,
-                'covers_skipped': skipped,
-                'overwrite': bool(overwrite),
-                'timestamp': datetime.now().isoformat(),
-            }
-
-        except Exception as e:
-            logger.error(f"❌ extract_album_covers: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'albums_scanned': scanned,
-                'covers_created': created,
-                'covers_skipped': skipped,
-                'overwrite': bool(overwrite),
-                'timestamp': datetime.now().isoformat(),
-            }
 
     def _extract_apic_bytes(self, mp3_path):
         """Retourne les bytes APIC embarqués dans un MP3, sinon None."""

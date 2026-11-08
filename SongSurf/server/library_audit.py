@@ -1,14 +1,11 @@
 """
-Audit métadonnées par artiste (tous les membres) + backfill genre (admin).
+Audit métadonnées par artiste (tous les membres).
 
 Audit : compare les tags ID3 de tous les albums d'un artiste avec iTunes
 (genre, année, artiste album, numéros de piste, cohérence TPE1/TPE2) et
 produit des *recommandations* — rien n'est écrit sans validation explicite
 via /api/library/audit/apply. Accessible à tous les membres sur leur propre
 bibliothèque.
-
-Backfill : complète le TCON des MP3 déjà téléchargés qui n'en ont pas
-(la bibliothèque d'avant la Phase 1 genre n'a aucun TCON).
 
 Lecture/écriture via mutagen.id3.ID3 directement (pas besoin de frames
 MPEG valides → testable avec des fichiers factices).
@@ -18,9 +15,9 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from mutagen.id3 import ID3, ID3NoHeaderError, TCON
+from mutagen.id3 import ID3, ID3NoHeaderError
 
-from genre_lookup import lookup_album_info, lookup_album_tracks, lookup_genres
+from genre_lookup import lookup_album_info, lookup_album_tracks
 from genre_lookup import _normalize
 
 logger = logging.getLogger(__name__)
@@ -280,55 +277,3 @@ def audit_artist(artist_dir: Path, music_dir: Path, album_lookup=None,
         'artist_warnings':       artist_warnings,
         'total_recommendations': total,
     }
-
-
-def backfill_genres(music_dir: Path, state: dict, lock, genre_lookup_fn=None):
-    """Worker backfill : écrit le TCON manquant sur toute la bibliothèque.
-
-    `state` est partagé avec la route status — mis à jour sous `lock`.
-    Artiste/titre/album : tags d'abord, dossiers/nom de fichier en repli.
-    Le cache album de lookup_genres limite à ~2 appels HTTP par album.
-    """
-    genre_lookup_fn = genre_lookup_fn or lookup_genres
-
-    targets = []
-    for mp3 in sorted(music_dir.rglob('*.mp3')):
-        tags = _read_tags(mp3)
-        if tags['genres']:
-            continue
-        rel = mp3.relative_to(music_dir).parts
-        artist = tags['artists'][0] if tags['artists'] else (rel[0] if len(rel) >= 3 else '')
-        album = tags['album'] or (rel[-2] if len(rel) >= 2 else '')
-        title = tags['title'] or mp3.stem
-        if artist and title:
-            targets.append((mp3, artist, title, album))
-
-    with lock:
-        state.update({'total': len(targets), 'done': 0, 'updated': 0,
-                      'failed': 0, 'last_file': ''})
-
-    for mp3, artist, title, album in targets:
-        genres = []
-        try:
-            genres = genre_lookup_fn(artist, title, album)
-            if genres:
-                try:
-                    id3 = ID3(mp3)
-                except ID3NoHeaderError:
-                    id3 = ID3()
-                id3['TCON'] = TCON(encoding=3, text=genres)
-                id3.save(mp3)
-        except Exception as e:
-            logger.warning(f"⚠️ backfill genre ({mp3.name}): {e}")
-            with lock:
-                state['failed'] += 1
-            genres = []
-        with lock:
-            state['done'] += 1
-            if genres:
-                state['updated'] += 1
-            state['last_file'] = str(mp3.relative_to(music_dir))
-
-    with lock:
-        state['status'] = 'done'
-    logger.info(f"🎼 Backfill genres terminé : {state['updated']}/{state['total']} fichiers mis à jour")

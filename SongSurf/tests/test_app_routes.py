@@ -1,6 +1,6 @@
 """
 Flask route tests via test client — auth, library, path traversal, ZIP flow.
-Covers: S-1, S-2, S-3, S-4, ST-1, ST-2, ST-3, ST-4, Z-3, Z-5, A-1, D-2/D-3/D-5, D-9.
+Covers: S-1, S-2, S-3, S-4, ST-1, ST-2, ST-3, ST-4, Z-3, Z-5, D-2/D-3/D-5, D-9.
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
@@ -238,35 +238,6 @@ def test_z3_download_zip_without_prepare(flask_setup):
     r = c.get('/api/download-zip',
               headers=auth_headers(sub='fresh-user-no-zip-at-all'))
     assert r.status_code == 404
-
-
-# ── A-1: Admin-only route enforced ───────────────────────────────────────────
-
-def test_a1_extract_covers_requires_admin(flask_setup):
-    c, *_ = flask_setup
-    r = c.post('/api/admin/extract-covers',
-               json={},
-               headers=auth_headers(role='member'),
-               content_type='application/json')
-    assert r.status_code == 403
-    assert not r.get_json()['success']
-
-
-def test_a1_admin_can_call_extract_covers(flask_setup):
-    c, music, _, app_mod = flask_setup
-    sub = 'admin-xyz'
-    (music / sub).mkdir(exist_ok=True)
-
-    with patch.object(app_mod, 'MusicOrganizer') as MockOrg:
-        MockOrg.return_value.extract_album_covers.return_value = {
-            'success': True, 'albums_scanned': 0, 'covers_created': 0, 'covers_skipped': 0,
-        }
-        r = c.post('/api/admin/extract-covers',
-                   json={},
-                   headers=admin_headers(sub=sub),
-                   content_type='application/json')
-    assert r.status_code == 200
-    assert r.get_json()['success']
 
 
 # ── D-9: la file serveur empile même si un download est en cours ──────────────
@@ -673,13 +644,6 @@ def test_ssf13_delete_song_admin_only_and_cleans_empty_album(flask_setup):
     for bad in ('../x.mp3', 'ArtDS/Al/nope.mp3'):
         assert c.post('/api/library/delete-song', json={'path': bad},
                       headers=admin_headers()).status_code in (400, 404), bad
-
-
-def test_genre_backfill_still_admin_only(flask_setup):
-    c, *_ = flask_setup
-    assert c.post('/api/admin/genre-backfill', json={},
-                  headers=auth_headers(role='member'),
-                  content_type='application/json').status_code == 403
 
 
 # ── Suppression de dossier (admin) ────────────────────────────────────────────
