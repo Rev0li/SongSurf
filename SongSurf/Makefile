@@ -6,9 +6,7 @@
 #   make up         → use DEPLOY_TARGET from .env (defaults to local)
 #
 # Logs:
-#   make logs             → all containers
-#   make logs-watcher     → watcher only
-#   make logs-songsurf    → songsurf only
+#   make logs             → songsurf logs
 #
 # Cleanup:
 #   make clean            → remove Docker images + temp data
@@ -78,15 +76,11 @@ restart: down up                  ## Full restart (down → up)
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 
-.PHONY: logs logs-watcher logs-songsurf
-logs:                             ## Stream logs from all containers
+.PHONY: logs logs-songsurf
+logs:                             ## Stream SongSurf logs
 	DEPLOY_TARGET=$(TARGET) $(COMPOSE) logs -f
 
-logs-watcher:                     ## Stream Watcher logs only
-	DEPLOY_TARGET=$(TARGET) $(COMPOSE) logs -f watcher
-
-logs-songsurf:                    ## Stream SongSurf logs only
-	DEPLOY_TARGET=$(TARGET) $(COMPOSE) logs -f songsurf
+logs-songsurf: logs               ## Alias de logs (ancien nom)
 
 # ── Debug ─────────────────────────────────────────────────────────────────────
 
@@ -124,7 +118,7 @@ dev:                              ## Run Flask backend directly (DEV_MODE=true, 
 .PHONY: clean reset
 clean:                            ## Remove Docker images + temp data
 	@echo "Removing Docker images..."
-	-docker rmi songsurf:latest watcher:latest 2>/dev/null || true
+	-docker rmi songsurf:latest 2>/dev/null || true
 	@echo "Clearing temp data..."
 	@rm -rf data/temp/*
 	@echo "Clearing frontend local build artifacts (may need sudo for root-owned files)..."
@@ -146,7 +140,7 @@ NAS_DIR  ?= /volume1/docker/songsurf
 NAS_SSH := ssh -p $(NAS_PORT) -i $(NAS_KEY)
 
 .PHONY: deploy-nas
-deploy-nas:                       ## rsync + restart watcher/songsurf sur le NAS
+deploy-nas:                       ## rsync + rebuild + restart songsurf sur le NAS
 	rsync -avz --delete \
 	  -e "ssh -p $(NAS_PORT) -i $(NAS_KEY)" \
 	  --exclude='__pycache__/' \
@@ -157,7 +151,7 @@ deploy-nas:                       ## rsync + restart watcher/songsurf sur le NAS
 	  --exclude='.secrets' \
 	  ./ $(NAS_USER)@$(NAS_HOST):$(NAS_DIR)/
 	$(NAS_SSH) $(NAS_USER)@$(NAS_HOST) \
-	  "cd $(NAS_DIR) && mkdir -p data/cookies data/state && chmod 700 data/cookies data/state && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate watcher songsurf"
+	  "cd $(NAS_DIR) && mkdir -p data/cookies data/state && chmod 700 data/cookies data/state && set -a && . ./.env && . ./.secrets && set +a && PATH=/usr/local/bin:/var/packages/Docker/target/usr/bin:$$PATH DEPLOY_TARGET=nas sudo -n -E ./docker/compose-switch.sh up -d --no-deps --build --force-recreate --remove-orphans songsurf"
 
 .PHONY: deploy-nas-dry
 deploy-nas-dry:                   ## dry-run rsync (aperçu sans envoyer)

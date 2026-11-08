@@ -2,16 +2,13 @@
 
 ## System overview
 
-SongSurf is a two-tier application: a lightweight authentication proxy (**Watcher**) sits permanently in front of the download engine (**SongSurf**), which is started and stopped on demand. All public traffic enters through Watcher (`WATCHER_PORT`, default 8080; production NAS uses 9000).
+SongSurf is a single, always-running Flask service behind the portal gate: Caddy (VPS) checks the portal session, then sends the identity with the proof `X-Proxy-Token`, which SongSurf verifies itself. It listens on `SONGSURF_PORT` (default 8081; production NAS uses 9000). The former Watcher proxy (on-demand start/stop) was removed in SSF-16.
 
 ```mermaid
 graph TD
     User((Browser)) -->|portal session| C[Caddy forward_auth]
     Ext[Browser extension] -->|portal session| C
-    C -->|X-User-* + X-Proxy-Token| W[Watcher :8080]
-    W -->|X-Watcher-Token + X-User-* headers| SS[SongSurf :8081]
-    W -->|Docker SDK| D[Docker Engine]
-    D -->|start / stop| SS
+    C -->|X-User-* + X-Proxy-Token| SS[SongSurf :SONGSURF_PORT]
     SS --> YD[yt-dlp]
     YD --> FF[FFmpeg]
     FF --> ORG[Organizer]
@@ -22,21 +19,12 @@ graph TD
 
 ## Component breakdown
 
-### Watcher (`watcher/watcher.py`)
-
-Always running (~15 MB RAM). Responsibilities:
-
-- **Portal gate (AUTH-09)** — when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET`, trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role`, `X-User-Id`); otherwise those headers are ignored → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). Empty secret → locked. `DEV_MODE=true` bypasses with a local admin user. Client-sent `X-User-*` / `X-Proxy-Token` are never forwarded to SongSurf.
-- **Header injection** — every proxied request carries `X-Watcher-Token: <WATCHER_SECRET>` plus `X-User-Id` / `X-User-Role` (lowercased) / `X-User-Email` from the claims.
-- **Container lifecycle** — starts the `songsurf` container on first authenticated request (Docker SDK via mounted `docker.sock`), serves a loading page while polling `/ping`.
-- **Inactivity monitor** — warns after `INACTIVITY_WARN_TIMEOUT` idle seconds, stops the container after `+ INACTIVITY_GRACE_TIMEOUT`. `/watcher/keepalive` resets the timer; `/api/status` polling is passive (does not reset it). A download in progress or a non-empty queue (`_songsurf_busy()`, checked once the warn threshold is crossed) counts as activity — the container is never stopped mid-batch. `_start_songsurf()` also resets the timer so a stale idle counter can't kill the container during its boot window.
-- **CORS** — allows only the SongSurf Clip extension origin (fixed ID from the manifest `key`); `null` and other extensions are refused.
-
 ### SongSurf (`server/app.py`)
 
-Started on demand. Responsibilities:
+Always running (~40 MB RAM idle). Responsibilities:
 
-- **Auth guard** — `WATCHER_SECRET` set → require matching `X-Watcher-Token` header (constant-time compare), then trust the `X-User-*` headers; a request without a valid portal UUID (`X-User-Portal-Id`) is refused. `DEV_MODE` → injected dev user; otherwise locked. A token-only request (Watcher busy probe) gets a minimal `/api/status`.
+- **Portal gate (AUTH-09)** — `_user_from_portal_headers()`: when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time compare), trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role` lowercased, `X-User-Id` → `uid`, the storage key); otherwise → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). A request without a valid portal UUID is refused. Empty secret → locked. `DEV_MODE=true` → local admin dev user.
+- **CORS** — allows only the SongSurf Clip extension origin (fixed ID from the manifest `key`); `null` and other extensions are refused. `/logout` redirects to the portal.
 - **Per-user storage** — keyed by the **portal UUID** (SSF-03), admin included: `/data/music/<uid>/` holds a `.owner` file with the pseudo for readability; cookies `/data/cookies/<uid>.txt`. On the NAS the admin library is the Jellyfin music folder mounted on `/data/music/<ADMIN_UID>`. `DEV_MODE` uses a flat `/data/music/`.
 - **Persistent state** (`server/state_store.py`, SQLite `/data/state/songsurf.db`) — download queue, round-robin pointer, daily counters, ZIP export state. Survives restarts: a song interrupted mid-download goes back to pending, a ZIP being built is reported as interrupted.
 - **Download orchestration** — one worker thread takes songs one at a time, **round-robin between users** (each user's songs keep their order); max `MAX_PENDING_JOBS` (100) jobs per user; daily quota `DAILY_DOWNLOAD_LIMIT` per member, admin unlimited; batch progress for albums.
@@ -70,7 +58,6 @@ Post-download file management:
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant W as Watcher
     participant S as SongSurf
     participant Q as Queue worker
     participant C as Caddy + portal
@@ -80,16 +67,16 @@ sequenceDiagram
     Note over B: login on the portal → session cookie
 
     B->>C: GET / (session)
-    C->>W: + X-User-Name / Role / Id + X-Proxy-Token
-    W->>W: check X-Proxy-Token
-    W->>S: start container if needed, proxy + X-User-* headers
+    C->>S: + X-User-Name / Role / Id + X-Proxy-Token
+    S->>S: check X-Proxy-Token
     S-->>B: SvelteKit dashboard
 
-    B->>W: POST /api/extract {url}
-    W->>S: + headers
+    B->>C: POST /api/extract {url}
+    C->>S: + identity headers
     S-->>B: metadata (songs incl. artists, track_number)
 
-    B->>W: POST /api/download or /api/download-playlist
+    B->>C: POST /api/download or /api/download-playlist
+    C->>S: + identity headers
     S->>Q: enqueue {url, metadata, owner} (SQLite)
     loop poll every 2s
         B->>S: GET /api/status
@@ -108,9 +95,8 @@ sequenceDiagram
 | Download worker | SongSurf | Claims the next song round-robin from SQLite (`store.claim_next`), processes it, removes it from the queue only once done; updates `download_status` under `queue_lock` |
 | ZIP builder | SongSurf | One per export: writes `<zip>.part`, publishes progress, renames when done |
 | queue-direct daemon | SongSurf | Per extension request: extracts metadata then enqueues server-side (fire-and-forget) |
-| Inactivity watcher | Watcher | Idle tracking → warn → stop container |
 
-In-memory state (`download_status`, `_last_*_by_user`) is guarded by `queue_lock`; persistent state (queue, quotas, ZIP) lives in `StateStore`, one SQLite connection behind its own lock (lock order: `queue_lock` → store, never the reverse). Both services are served by waitress (one process, several threads) and exit cleanly on SIGTERM (tini as PID 1 via `init: true`).
+In-memory state (`download_status`, `_last_*_by_user`) is guarded by `queue_lock`; persistent state (queue, quotas, ZIP) lives in `StateStore`, one SQLite connection behind its own lock (lock order: `queue_lock` → store, never the reverse). SongSurf is served by waitress (one process, several threads) and exit cleanly on SIGTERM (tini as PID 1 via `init: true`).
 
 ---
 
@@ -120,8 +106,7 @@ In-memory state (`download_status`, `_last_*_by_user`) is guarded by `queue_lock
 graph LR
     Internet --> RP[VPS reverse proxy\nCaddy/Nginx + TLS]
     RP -->|Tailscale tunnel| NAS[Synology NAS]
-    NAS -->|Docker| W[Watcher]
-    W --> SS[SongSurf :8081\ninternal only]
+    NAS -->|Docker| SS[SongSurf :SONGSURF_PORT\nLAN + Tailscale only]
     SS --> DISK[(/data/music)]
 ```
 
@@ -165,7 +150,7 @@ frontend/src/
       ui/                  Icon, Cover, Sheet, GenrePicker
       metadata/            expert tools kept from SSF-05: ArtistAudit, AlbumReorder,
                            ArtistGenre, SongDetails (styled by styles/metadata.css)
-      Toast, ConfirmModal, WatcherInactivity
+      Toast, ConfirmModal
     styles/                design-system.css (tokens), components.css, layouts.css, app.css, metadata.css
 ```
 
@@ -191,5 +176,5 @@ Key flows:
 | Tags | Mutagen (ID3v2.4, multi-value frames) |
 | Images | Pillow (cover crop/resize → JPEG) |
 | Frontend | Svelte 5 + SvelteKit 2, adapter-static |
-| Containers | Docker Compose overlays + Docker SDK (lifecycle) |
-| Auth | Portal gate (Caddy `forward_auth` + rev0auth), proof checked by Watcher |
+| Containers | Docker Compose overlays (one service) |
+| Auth | Portal gate (Caddy `forward_auth` + rev0auth), proof checked by SongSurf |

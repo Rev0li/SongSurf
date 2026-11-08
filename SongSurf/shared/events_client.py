@@ -1,7 +1,7 @@
 """
 events_client — émission d'événements d'activité vers rev0auth (push NAS → VPS).
 
-Utilisé par le watcher ET le serveur SongSurf (copié dans les deux images Docker).
+Utilisé par le serveur SongSurf (copié à côté de app.py dans l'image Docker).
 Stdlib uniquement (urllib) pour ne pas toucher aux requirements du serveur.
 
 Contrat : POST AUTH_EVENTS_URL avec header X-Events-Secret, body = événement seul
@@ -43,7 +43,7 @@ def _enabled() -> bool:
 
 
 def init(source: str, pending_file: str) -> None:
-    """Configure l'émetteur : source ('watcher'|'songsurf') + chemin du spool."""
+    """Configure l'émetteur : source ('songsurf') + chemin du spool."""
     global _source, _pending_file
     _source = source
     _pending_file = pending_file

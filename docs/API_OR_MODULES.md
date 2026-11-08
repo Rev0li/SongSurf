@@ -1,8 +1,8 @@
 # API & Modules — SongSurf
 
-Reference generated from the current code (`server/app.py`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`, `watcher/watcher.py`). All endpoints return JSON unless noted.
+Reference generated from the current code (`server/app.py`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`). All endpoints return JSON unless noted.
 
-**Auth:** every `/api/*` route requires the Watcher-injected `X-Watcher-Token` header (`@auth_required`). The user identity comes from `X-User-Id` / `X-User-Role` / `X-User-Email`. In `DEV_MODE` (no `WATCHER_SECRET`) a local admin dev user is injected.
+**Auth (portal gate):** every `/api/*` route requires the identity sent by Caddy with a valid proof (`@auth_required`): `X-Proxy-Token` = `SONGSURF_PROXY_SECRET` (constant-time), then `X-User-Name` (pseudo → `sub`) / `X-User-Role` / `X-User-Id` (portal UUID → `uid`, storage key, required). Without it → 401 JSON (API / extension) or the 401 « passe par le portail » page. In `DEV_MODE` a local admin dev user is injected.
 
 ---
 
@@ -12,9 +12,9 @@ Reference generated from the current code (`server/app.py`, `server/state_store.
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/ping` | GET | Healthcheck (no auth) — used by Watcher and Docker healthcheck |
+| `/ping` | GET | Healthcheck (no auth) — used by the Docker healthcheck |
 | `/api/me` | GET | `{sub, uid, role, email, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
-| `/api/status` | GET | Download progress, queue size, batch progress, caller's daily counter, `is_mine`, `worker`. Watcher probe (valid `X-Watcher-Token`, no identity) → only `{in_progress, queue_size}` |
+| `/api/status` | GET | Download progress, queue size, batch progress, caller's daily counter, `is_mine`, `worker` |
 
 **`GET /api/status` — response:**
 ```json
@@ -107,18 +107,14 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 ---
 
-## Watcher HTTP surface
+## Gate, CORS and logout (`server/app.py`)
 
 | Route | Method | Description |
 |---|---|---|
-| `/ping` | GET | Watcher healthcheck |
-| `/watcher/loading` | GET | Loading page while SongSurf boots |
-| `/watcher/ready` | GET | 200 when SongSurf answers `/ping`, 503 while starting |
-| `/watcher/inactivity-status` | GET | `{idle_seconds, warned}` for the frontend banner |
-| `/watcher/keepalive` | POST | Resets the inactivity timer (requires auth) |
-| `/logout` | GET/POST | Puts SongSurf to sleep (unless busy), redirects to `REVAUTH_HOME_URL` (portal session, no cookie here) |
-| `/<any>` | ANY | Catch-all: portal gate (no valid proof → 401 JSON for API/extension, 401 « passe par le portail » page otherwise) → start container if needed → proxy with injected headers. API callers get JSON 503 `{retry: true}` while SongSurf boots |
-| `OPTIONS *` | OPTIONS | CORS preflight — only the SongSurf Clip extension origin (`chrome-extension://<SONGSURF_EXTENSION_ID>`), 403 otherwise |
+| `/logout` | GET/POST | Redirects to `REVAUTH_HOME_URL` (portal session, no cookie here); downloads keep running |
+| `OPTIONS *` | OPTIONS | CORS preflight (`before_request`) — 204 only for the SongSurf Clip extension origin (`chrome-extension://<SONGSURF_EXTENSION_ID>`), 403 otherwise; `after_request` adds the CORS headers to the extension's responses |
+
+The Watcher routes (`/watcher/loading`, `/watcher/ready`, `/watcher/inactivity-status`, `/watcher/keepalive`) disappeared with it (SSF-16).
 
 ---
 
@@ -179,14 +175,13 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | `audit_artist(artist_dir, music_dir, album_lookup=, track_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Missing TRCK → unambiguous title match against the iTunes tracklist (`_match_missing_tracks`, feat-suffixes stripped). Reads via `mutagen.id3.ID3` |
 | `backfill_genres(music_dir, state, lock, genre_lookup_fn=)` | Background worker: writes missing TCON across the library (tags first, folder names as fallback), updates the shared progress `state` under `lock` |
 
-### `watcher/watcher.py`
+### Identity (`server/app.py`)
 
 | Function | Description |
 |---|---|
-| `_user_from_proxy_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, role, email: '', uid: X-User-Id}`, else `None` |
-| `_get_user_from_request()` | `DEV_MODE` → dev user; else `_user_from_proxy_headers()` |
-| `_proxy(user)` | Drops client `X-User-*` / `X-Proxy-Token`, forwards with `X-Watcher-Token` + `X-User-Id/Role/Email` (+ `X-User-Portal-Id`); starts container when down |
-| `_inactivity_watcher()` | Background thread: warn → grace → `container.stop()` |
+| `_user_from_portal_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, uid: X-User-Id, role, email: ''}`, else `None` (wrong proof logged) |
+| `_get_current_user()` | `DEV_MODE` → dev user; else `_user_from_portal_headers()` |
+| `_is_identified(user)` | Pseudo present **and** valid portal UUID, otherwise refused (no storage key) |
 
 ---
 
@@ -236,8 +231,8 @@ api.genreBackfillStatus()                  // GET  /api/admin/genre-backfill/sta
 | `./data/temp` | `/data/temp` | Download staging + ZIP staging |
 | `./logs` | `/app/logs` | `activity.log`, `downloads.log` |
 
-Watcher mounts `/var/run/docker.sock` for container lifecycle.
+No container mounts the Docker socket (the Watcher did, removed in SSF-16).
 
 ### Healthchecks
 
-Both services expose `/ping`; Compose healthchecks poll them (Watcher gates SongSurf readiness on it too).
+SongSurf exposes `/ping`; the Compose healthcheck polls it.

@@ -6,17 +6,15 @@ import os
 import time
 import pytest
 
-# Ensure server/, watcher/ and shared/ are importable without installing as packages
+# Ensure server/ and shared/ are importable without installing as packages
 SERVER_DIR = os.path.join(os.path.dirname(__file__), '..', 'server')
-WATCHER_DIR = os.path.join(os.path.dirname(__file__), '..', 'watcher')
 SHARED_DIR = os.path.join(os.path.dirname(__file__), '..', 'shared')
 sys.path.insert(0, os.path.abspath(SERVER_DIR))
-sys.path.insert(0, os.path.abspath(WATCHER_DIR))
 sys.path.insert(0, os.path.abspath(SHARED_DIR))
 
 # Set env vars before any module import so Flask reads them
 os.environ.setdefault('DEV_MODE', 'false')
-os.environ.setdefault('WATCHER_SECRET', 'test-secret-fixed')
+os.environ.setdefault('SONGSURF_PROXY_SECRET', 'proxy-secret-for-tests')
 os.environ.setdefault('FLASK_SECRET_KEY', 'test-flask-key')
 os.environ.setdefault('FLASK_PORT', '8082')
 

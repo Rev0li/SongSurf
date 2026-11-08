@@ -1,9 +1,7 @@
 # SongSurf — Docker Compose
 #
-# Architecture:
-#   [Watcher :WATCHER_PORT]  ← always running, auth proxy, container lifecycle
-#        │
-#        └── starts/stops on demand → [SongSurf :SONGSURF_PORT internal]
+# Architecture (SSF-16) : un seul service, toujours actif.
+#   Caddy (portail, forward_auth + X-Proxy-Token) ──► [SongSurf :SONGSURF_PORT]
 #
 # Usage:
 #   make secrets    ← generate .env + .secrets
@@ -12,62 +10,19 @@
 #   make down       ← stop
 #
 # Config split:
-#   .env     → non-secret config (DEPLOY_TARGET, ports, timeouts…)
+#   .env     → non-secret config (DEPLOY_TARGET, ports, limits…)
 #   .secrets → all key material (chmod 600, never commit)
 
 services:
 
-  # ── Watcher — always-on auth proxy (~15 MB RAM) ───────────────────────────
-  watcher:
-    container_name: watcher
-    build:
-      context: .
-      dockerfile: watcher/Dockerfile
-    image: watcher:latest
-    restart: unless-stopped
-    # tini en PID 1 : relaie SIGTERM et ramasse les processus zombies
-    init: true
-    # Root needed for Docker socket access (starts/stops songsurf container)
-    user: root
-
-    env_file:
-      - .env
-      - .secrets
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Spool des événements d'activité (events-pending-watcher.jsonl)
-      - ./logs:/app/logs
-
-    environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=Europe/Paris
-      - FLASK_SECRET_KEY=${WATCHER_FLASK_SECRET_KEY:?WATCHER_FLASK_SECRET_KEY is required}
-      - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
-      - DEV_MODE=${DEV_MODE:-false}
-      - SONGSURF_PROXY_SECRET=${SONGSURF_PROXY_SECRET:-}
-      - REVAUTH_HOME_URL=${REVAUTH_HOME_URL:-}
-      - TARGET_CONTAINER=songsurf
-      - TARGET_URL=${TARGET_URL:-http://songsurf:8081}
-      - WATCHER_PORT=${WATCHER_PORT:-8080}
-      - INACTIVITY_WARN_TIMEOUT=${INACTIVITY_WARN_TIMEOUT:-3600}
-      - INACTIVITY_GRACE_TIMEOUT=${INACTIVITY_GRACE_TIMEOUT:-900}
-
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request, os; urllib.request.urlopen('http://localhost:' + os.getenv('WATCHER_PORT','8080') + '/ping')\""]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # ── SongSurf — main app, started on demand ────────────────────────────────
+  # ── SongSurf — vérifie lui-même la porte du portail ───────────────────────
   songsurf:
     container_name: songsurf
     build:
       context: .
       dockerfile: Dockerfile
     image: songsurf:latest
-    restart: on-failure
+    restart: unless-stopped
     # tini en PID 1 : relaie SIGTERM (arrêt propre) et ramasse les ffmpeg zombies
     init: true
 
@@ -80,8 +35,9 @@ services:
       - TZ=Europe/Paris
       - FLASK_PORT=${SONGSURF_PORT:-8081}
       - FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY:?SONGSURF_FLASK_SECRET_KEY is required}
-      - WATCHER_SECRET=${WATCHER_SECRET:?WATCHER_SECRET is required}
       - DEV_MODE=${DEV_MODE:-false}
+      - SONGSURF_PROXY_SECRET=${SONGSURF_PROXY_SECRET:-}
+      - REVAUTH_HOME_URL=${REVAUTH_HOME_URL:-}
 
     volumes:
       - ./data/music:/data/music

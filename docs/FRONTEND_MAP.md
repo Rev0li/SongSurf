@@ -21,7 +21,7 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 
 | Zone | Fichiers |
 |---|---|
-| Coque | `routes/+layout.svelte` (polling `/api/status` 1,5 s, rafraîchit Ma musique quand un titre se termine), `components/shell/{TopBar,TabBar,MiniBar}.svelte`, `Toast`, `ConfirmModal`, `WatcherInactivity`, `components/sheets/SheetHost.svelte` |
+| Coque | `routes/+layout.svelte` (polling `/api/status` 1,5 s, rafraîchit Ma musique quand un titre se termine), `components/shell/{TopBar,TabBar,MiniBar}.svelte`, `Toast`, `ConfirmModal`, `components/sheets/SheetHost.svelte` |
 | Ajouter `/` | `routes/+page.svelte`, `components/add/{AddForm,DownloadList}.svelte`, `lib/downloads.js` |
 | Ma musique `/library` | `routes/library/+page.svelte`, `components/library/{LibraryHome,ArtistView,CoverFlow,AlbumView,TrackRow}.svelte`, `lib/library/{data,actions,genres}.js` |
 | Panneaux | `components/sheets/` : `Account`, `Menu` (« ⋯ »), `TrackEdit`, `AlbumEdit`, `Move`, `FillWizard` (« À remplir »), `Recover` (ZIP), `Tool` (outils experts) |
@@ -34,10 +34,10 @@ Stack : Svelte 5.57 (runes), SvelteKit 2.70, Vite 5.4, adapter-static, Node 22 (
 
 | Élément | Rôle |
 |---|---|
-| Barre du haut | « ‹ Mon espace » (`/logout` : met SongSurf en veille et revient au portail), logo, rond du compte (thème, mise en veille) ; porte les onglets sur ordinateur |
+| Barre du haut | « ‹ Mon espace » (`/logout` : retour au portail, les téléchargements continuent), logo, rond du compte (thème, retour au portail) ; porte les onglets sur ordinateur |
 | Onglets du bas | Ajouter / Ma musique ; « Ma musique » touché depuis une sous-page ramène à l'accueil |
 | Mini-barre | L'ajout en cours : un album = « Titre 4 sur 12 » + sa barre (ne recule jamais), « +N ajouts » s'il y en a d'autres ; ou « en attente, ton tour dans N titres » ; visible partout sauf sur Ajouter ; un appui ouvre Ajouter |
-| Toasts, fenêtre de confirmation, avertissement d'inactivité | Inchangés |
+| Toasts, fenêtre de confirmation | Inchangés (l'avertissement d'inactivité a disparu avec le Watcher, SSF-16) |
 | Webapp (écran d'accueil) | `static/manifest.json` (plein écran, `start_url` `/`) chargé avec `crossorigin="use-credentials"` (sinon Caddy refuse sans cookie du portail), icônes `icon-192/512.png`, `icon-maskable-512.png`, `apple-touch-icon.png`, `favicon.svg` ; balises `apple-mobile-web-app-*` dans `src/app.html`. Icônes PNG redessinées depuis le favicon (fond rose plein, note noire) |
 
 ## 2. Ajouter `/`

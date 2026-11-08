@@ -7,18 +7,18 @@ Run: `cd SongSurf && python3 -m pytest`
 New coverage since 2026-05: track number (TRCK) pass-through, multi-artist TPE1 list, album artist TPE2, artist string splitting (`_split_artists` / `_artist_list`).
 
 Automated coverage:
-- W-14 → W-19, W-22 → W-24 (portal gate: proof, ignored headers, forwarded headers, anonymous page/401, locked without secret, logout)
-- S-1 → S-4 (Watcher-token auth, header injection, role normalization)
+- W-14 → W-18, W-22 → W-24 (portal gate checked by SongSurf since SSF-16: proof, ignored headers, anonymous page/401, locked without secret, logout) + CORS (`tests/test_portal_gate.py`)
+- S-1 → S-4 (proof required on every route, identity mapping, role normalization)
 - D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
 - ST-3, ST-4 (user isolation, path traversal)
 - Z-3 (ZIP without prepare), Z-5 + ST-1/ST-2 (SSF-10: admin ZIP disabled, member library purged)
 - A-1 (admin-only route)
 
-Remaining manual tests: W-10/11, W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6, I-1→5, P-1→5 (require Docker + yt-dlp network).
+Remaining manual tests: W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6 (require Docker + yt-dlp network).
 
 ---
 
-## 1. Auth / Security — Watcher
+## 1. Auth / Security — portal gate (checked by SongSurf since SSF-16)
 
 _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) were removed with the JWT in SSF-12._
 
@@ -29,7 +29,7 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 | W-10 | DEV_MODE=true bypasses auth | No headers, `DEV_MODE=true` | 200 — user is `dev-user-local`, role `admin` |
 | W-11 | DEV_MODE=false requires the gate | No proof, `DEV_MODE=false` | 401 |
 
-### 1.2 Portal gate — AUTH-09 (SSF-11/12, `tests/test_watcher_proxy_gate.py`)
+### 1.2 Portal gate — AUTH-09 (SSF-11/12/16, `tests/test_portal_gate.py`)
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
@@ -37,24 +37,24 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 | W-15 | Missing / wrong proof | Same headers, proof absent, empty, wrong or non-ASCII | Identity headers ignored; wrong proof logged |
 | W-16 | Secret not configured | `SONGSURF_PROXY_SECRET` empty | Headers never trusted, whatever the proof |
 | W-17 | Incomplete identity | Valid proof without `X-User-Name` or `X-User-Role` (or blank name) | Rejected |
-| W-18 | No proof → anonymous | Old `access_token` cookie; forged headers without proof on `/watcher/*` | Ignored; 401 |
-| W-19 | Forwarded headers | Proxied request with forged `X-User-Email` / `X-Watcher-Token` | SongSurf gets the Watcher's own values + `X-User-Portal-Id`, never `X-Proxy-Token` / `X-User-Name` |
+| W-18 | No proof → anonymous | Old `access_token` cookie; old Watcher headers (`X-Watcher-Token`, `X-User-Portal-Id`) | Ignored; 401 |
+| W-19 | _Removed in SSF-16 (no proxy hop anymore)_ | — | — |
 | W-20 | **Manual (NAS, after step 3)** — through the gate | Open `https://songsurf.rev0li.duckdns.org` logged in / logged out of the portal | Logged in: library of the right account; logged out: portal login |
 | W-21 | **Manual (extension)** — portal session | Queue a song logged in, then logged out of the portal | Logged in: queued (the portal cookie is sent); logged out: clickable « Non connecté » toast that opens SongSurf |
-| W-22 | Anonymous request | No proof: browser page; JSON / extension call; old `?token=` link | 401 « Passe par le portail » page (link to `REVAUTH_HOME_URL`); 401 `{ok: false, error: 'unauthenticated'}`; no cookie set |
+| W-22 | Anonymous request | No proof: browser page; JSON / extension call; old `?token=` link | 401 « Passe par le portail » page (link to `REVAUTH_HOME_URL`); 401 JSON `{success: false}`; no cookie set |
 | W-23 | Service locked | `SONGSURF_PROXY_SECRET` empty, valid-looking headers | 401 |
 | W-24 | Logout | GET `/logout` | 302 → `REVAUTH_HOME_URL`, no `Set-Cookie` |
 
 ---
 
-## 2. Auth — Watcher → SongSurf header injection
+## 2. Auth — identity on every route (`tests/test_app_routes.py`)
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| S-1 | `X-Watcher-Token` required | Send request directly to SongSurf `:8081` without header | 401 or 503 |
-| S-2 | Wrong `X-Watcher-Token` | Send request to SongSurf with wrong token value | 401 |
-| S-3 | Headers injected correctly | Authenticate via Watcher, check SongSurf receives `X-User-Id`, `X-User-Role`, `X-User-Email` | Headers match the gate identity |
-| S-4 | Role lowercase | Gate sends `X-User-Role: Admin` (capitalized) | SongSurf receives `x-user-role: admin` |
+| S-1 | Proof required | Request without `X-Proxy-Token` | 401 |
+| S-2 | Wrong proof | `X-Proxy-Token` with a wrong value | 401 |
+| S-3 | Identity mapping | Valid proof + `X-User-Name` / `X-User-Role` / `X-User-Id` | `/api/me` returns `sub` = pseudo, `uid` = portal UUID |
+| S-4 | Role lowercase | `X-User-Role: Admin` | `role: admin` |
 
 ---
 
@@ -121,29 +121,9 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 
 ---
 
-## 6. Inactivity / container lifecycle
+## 6–7. Inactivity / Watcher proxy
 
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| I-1 | Inactivity warning emitted | No requests for `INACTIVITY_WARN_TIMEOUT` seconds | Log warning, `/watcher/inactivity-status` returns `warned: true` |
-| I-2 | SongSurf stopped after grace | No requests for `INACTIVITY_WARN_TIMEOUT + INACTIVITY_GRACE_TIMEOUT` | SongSurf container stopped |
-| I-3 | Keepalive resets timer | POST `/watcher/keepalive` | `idle_seconds` resets, `warned: false` |
-| I-4 | Keepalive requires auth | POST `/watcher/keepalive` without cookie | 401 |
-| I-5 | `/api/status` is passive | Poll `/api/status` only | Timer not reset (passive path) |
-| I-6 | Busy download defers stop | Queue a long batch, close everything, wait past the timeouts | Container keeps running until the batch drains (busy = activity) |
-| I-7 | No stop during boot window | Return after a long idle (container stopped) | `_start_songsurf` resets the timer; the container is not re-stopped while booting |
-
----
-
-## 7. Watcher proxy robustness
-
-| # | Test | How | Expected |
-|---|------|-----|----------|
-| P-1 | SongSurf down → loading page | Stop SongSurf, browser request | 302 to `/watcher/loading` |
-| P-2 | SongSurf auto-started | Make request when container is stopped | Watcher starts it, eventually proxies |
-| P-3 | Loading page retries | `/watcher/loading` | JS polls `/watcher/ready`, redirects when ready |
-| P-4 | API callers get 503 JSON | Fetch to `/api/*` when SongSurf down | `{"success": false, "retry": true}`, status 503 |
-| P-5 | Retry loop limit | `_r` counter in URL | Capped at 10 to avoid infinite redirect loop |
+_I-1 → I-7 and P-1 → P-5 were removed with the Watcher in SSF-16: SongSurf runs continuously, no loading page, no automatic stop._
 
 ---
 
@@ -183,7 +163,7 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 | Q-4 | Queue limit per user | `test_d9_rejects_when_queue_full` | 429 at `MAX_PENDING_JOBS` jobs for that user; another member can still queue |
 | Q-5 | Daily quota per member, admin unlimited | `test_ssf03_daily_quota_per_member_admin_unlimited`, `test_daily_count_is_per_user_and_per_day` | 429 `daily_limit` (also `/api/queue-direct`); other member and admin OK; counter survives a restart |
 | Q-6 | Who uses the worker | `test_ssf03_status_tells_who_uses_the_worker` | Member: no pseudo, `songs_before_mine`; admin: `owner` + `current` |
-| Q-7 | Watcher busy probe | `test_ssf03_watcher_probe_gets_busy_state_without_identity` | Token only → 200 `{in_progress, queue_size}` (before SSF-03: 503, SongSurf could be stopped mid-batch) |
+| Q-7 | Proof without identity | `test_ssf16_proof_without_identity_gets_nothing` | 401 (the Watcher busy probe is gone, SSF-16) |
 | Q-8 | **Manual (NAS)** — restart mid-batch | Queue an album, `docker restart songsurf` during a song | Logs « File reprise après redémarrage », the album finishes |
 | Q-9 | **Manual (NAS)** — two members in parallel | Two accounts each queue an album | Songs alternate; each member sees « ton tour dans N morceaux » while the other's song runs |
 
@@ -197,5 +177,5 @@ _W-1 → W-9 (JWT validation) and W-12/13 (`AUTH_SERVICE_LOGIN_URL` redirect) we
 - [ ] `REVAUTH_HOME_URL` points to the portal member space
 - [ ] `ADMIN_UID` (NAS `.env`) = the admin's portal UUID — `docker compose config` refuses to start without it
 - [ ] Pseudo → UUID migration run once (`docs/DEPLOY.md`), 0 conflict
-- [ ] NAS firewall blocks port 8081 from WAN
+- [ ] NAS firewall blocks the SongSurf port from the WAN (LAN + Tailscale only)
 - [ ] SongSurf port NOT published in `docker-compose.local.yml` (already done)

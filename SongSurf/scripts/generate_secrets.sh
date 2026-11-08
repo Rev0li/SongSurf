@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SongSurf — interactive wizard to generate .env (config) and .secrets (key material).
 #
-# Auto-generates : Flask session keys, WATCHER_SECRET (64-char hex via openssl)
+# Auto-generates : Flask session key, events + portal-gate secrets (64-char hex via openssl)
 # Prompts user   : passwords, deployment config, limits, optional URLs and addresses
 #
 # Safe to re-run : existing files are never silently overwritten.
@@ -112,7 +112,7 @@ fi
 # SECTION 1 — Déploiement
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "1/6 · Déploiement & Ports"
+title "1/5 · Déploiement & Ports"
 dim "local = bridge Docker, ports sur localhost  (développement)"
 dim "nas   = network_mode host, accès direct NAS  (production)"
 echo ""
@@ -125,24 +125,15 @@ esac
 ok "DEPLOY_TARGET=$DEPLOY_TARGET"
 
 echo ""
-dim "  Watcher = proxy d'auth, port exposé à l'extérieur (VPS / browser)"
-dim "  SongSurf = moteur de téléchargement, port interne uniquement"
-WATCHER_PORT=$(prompt_optional "Port Watcher (externe)" "8080")
-SONGSURF_PORT=$(prompt_optional "Port SongSurf (interne)" "8081")
-
-# Calcul automatique des TARGET_URL selon le mode et SONGSURF_PORT
-TARGET_URL="http://songsurf:${SONGSURF_PORT}"
-TARGET_URL_NAS="http://localhost:${SONGSURF_PORT}"
-
-ok "Watcher    : :${WATCHER_PORT}"
-ok "SongSurf   : :${SONGSURF_PORT} (interne)"
-ok "TARGET_URL : ${TARGET_URL}  (local) / ${TARGET_URL_NAS}  (nas)"
+dim "  Port sur lequel Caddy (VPS) joint SongSurf. Jamais ouvert au WAN."
+SONGSURF_PORT=$(prompt_optional "Port SongSurf" "8081")
+ok "SongSurf   : :${SONGSURF_PORT}"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — Mots de passe (obligatoires)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "2/6 · Auth (porte du portail)"
+title "2/5 · Auth (porte du portail)"
 dim "L'authentification est faite par le portail rev0auth, devant SongSurf (Caddy)."
 dim "Aucun mot de passe local. Renseigne REVAUTH_HOME_URL + SONGSURF_PROXY_SECRET en section 5."
 ok "Pas de mot de passe local — auth déléguée au portail"
@@ -151,7 +142,7 @@ ok "Pas de mot de passe local — auth déléguée au portail"
 # SECTION 3 — Limites téléchargement
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "3/6 · Limites"
+title "3/5 · Limites"
 dim "Laisse vide pour utiliser les valeurs par défaut."
 echo ""
 
@@ -162,24 +153,11 @@ MAX_DURATION_SECONDS=$(prompt_optional "Durée max d'une vidéo en secondes (0 =
 ok "MAX_DURATION_SECONDS=${MAX_DURATION_SECONDS}s ($(( MAX_DURATION_SECONDS / 60 )) min)"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — Inactivité
+# SECTION 4 — Auth (porte du portail rev0auth)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "4/6 · Arrêt automatique (inactivité)"
-dim "Watcher coupe SongSurf après WARN + GRACE secondes sans activité."
-dim "Défauts : avertissement 3600s (1h), délai de grâce 900s (15min)."
-echo ""
-
-INACTIVITY_WARN=$(prompt_optional "Avertissement après (s)" "3600")
-INACTIVITY_GRACE=$(prompt_optional "Arrêt forcé après + (s)" "900")
-ok "Inactivité : avertissement ${INACTIVITY_WARN}s, grâce ${INACTIVITY_GRACE}s"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — Auth (porte du portail rev0auth)
-# ═════════════════════════════════════════════════════════════════════════════
-
-title "5/6 · Auth — porte du portail rev0auth"
-dim "Caddy vérifie la session auprès du portail et prouve l'identité au Watcher"
+title "4/5 · Auth — porte du portail rev0auth"
+dim "Caddy vérifie la session auprès du portail et prouve l'identité à SongSurf"
 dim "avec SONGSURF_PROXY_SECRET (même valeur côté VPS)."
 echo ""
 
@@ -193,7 +171,7 @@ REVAUTH_HOME_URL=$(prompt_optional "REVAUTH_HOME_URL (espace membre du portail, 
 ADMIN_UID=$(prompt_optional "ADMIN_UID (UUID du compte admin du portail, requis sur le NAS)" "")
 
 echo ""
-dim "Événements d'activité (optionnel) : le NAS pousse téléchargements/conteneur"
+dim "Événements d'activité (optionnel) : le NAS pousse téléchargements et exports"
 dim "vers le dashboard admin rev0auth. Laisse l'URL vide pour désactiver."
 if [[ -n "$REVAUTH_HOME_URL" ]]; then
   _EVENTS_DEFAULT="$(echo "$REVAUTH_HOME_URL" | sed -E 's#^(https?://[^/]+).*#\1#')/japprends/api/songsurf-events"
@@ -225,10 +203,10 @@ fi
 ok "SONGSURF_PROXY_SECRET défini"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — Adresses donation (optionnel)
+# SECTION 5 — Adresses donation (optionnel)
 # ═════════════════════════════════════════════════════════════════════════════
 
-title "6/6 · Adresses donation (optionnel)"
+title "5/5 · Adresses donation (optionnel)"
 dim "Laisse vide pour désactiver la page donation."
 echo ""
 
@@ -243,10 +221,8 @@ DONATION_XMR=$(prompt_optional "Adresse XMR" "")
 
 echo ""
 info "Génération des clés cryptographiques (openssl rand -hex 32)..."
-WATCHER_FLASK_SECRET_KEY=$(gen_hex)
 SONGSURF_FLASK_SECRET_KEY=$(gen_hex)
-WATCHER_SECRET=$(gen_hex)
-ok "3 clés générées (64 caractères hex chacune)"
+ok "Clé Flask générée (64 caractères hex)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Écriture .env
@@ -262,21 +238,12 @@ if $WRITE_ENV; then
 # local = bridge Docker, ports publiés en localhost (développement)
 # nas   = network_mode host, réseau direct NAS (production)
 DEPLOY_TARGET=${DEPLOY_TARGET}
-WATCHER_PORT=${WATCHER_PORT}
 SONGSURF_PORT=${SONGSURF_PORT}
-
-# ── Routage interne (calculé automatiquement depuis SONGSURF_PORT) ─────────
-TARGET_URL=${TARGET_URL}
-TARGET_URL_NAS=${TARGET_URL_NAS}
 
 # ── Limites téléchargement ────────────────────────────────────────────────
 # Titres par membre et par jour (admin illimité). 0 = illimité
 DAILY_DOWNLOAD_LIMIT=${DAILY_DOWNLOAD_LIMIT}
 MAX_DURATION_SECONDS=${MAX_DURATION_SECONDS}
-
-# ── Arrêt automatique (inactivité) ────────────────────────────────────────
-INACTIVITY_WARN_TIMEOUT=${INACTIVITY_WARN}
-INACTIVITY_GRACE_TIMEOUT=${INACTIVITY_GRACE}
 
 # ── Mode dev ─────────────────────────────────────────────────────────────
 # true = aucune authentification — JAMAIS en production
@@ -313,12 +280,8 @@ if $WRITE_SECRETS; then
 # NE PAS committer. NE PAS partager. NE PAS logger.
 # Chargé automatiquement par Docker Compose via env_file.
 
-# ── Clés de session Flask (auto-générées) ─────────────────────────────────
-WATCHER_FLASK_SECRET_KEY=${WATCHER_FLASK_SECRET_KEY}
+# ── Clé de session Flask (auto-générée) ───────────────────────────────────
 SONGSURF_FLASK_SECRET_KEY=${SONGSURF_FLASK_SECRET_KEY}
-
-# ── Secret partagé Watcher ↔ SongSurf (auto-généré) ──────────────────────
-WATCHER_SECRET=${WATCHER_SECRET}
 
 # ── Secret événements — doit correspondre à SONGSURF_EVENTS_SECRET ────────
 # dans auth/.secrets (VPS). Rotation = mise à jour des deux + restart des deux stacks.
@@ -348,11 +311,10 @@ echo "  Fichiers créés :"
 echo ""
 echo -e "  Récapitulatif :"
 echo "    Déploiement    : $DEPLOY_TARGET"
-echo "    Ports          : Watcher :${WATCHER_PORT}  →  SongSurf :${SONGSURF_PORT} (interne)"
+echo "    Port           : SongSurf :${SONGSURF_PORT}"
 echo "    DEV_MODE       : $DEV_MODE"
 echo "    Limite /jour   : ${DAILY_DOWNLOAD_LIMIT} téléchargements (0=illimité)"
 echo "    Durée max      : ${MAX_DURATION_SECONDS}s ($(( MAX_DURATION_SECONDS / 60 )) min)"
-echo "    Inactivité     : avertissement ${INACTIVITY_WARN}s + arrêt ${INACTIVITY_GRACE}s"
 [[ -n "$REVAUTH_HOME_URL" ]] && echo "    Portail        : $REVAUTH_HOME_URL"
 echo ""
 echo -e "  Prochaine étape : ${BOLD}make up${NC}"

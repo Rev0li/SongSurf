@@ -1,5 +1,5 @@
 <script>
-	// Compte : pseudo, rôle, thème, mise en veille (retour au portail).
+	// Compte : pseudo, rôle, thème, retour au portail.
 	import { user, theme } from '$lib/stores.js';
 	import Sheet from '../ui/Sheet.svelte';
 	import Icon from '../ui/Icon.svelte';
@@ -18,8 +18,8 @@
 				aria-pressed={$theme === 'dark'} onclick={() => theme.set('dark')}><Icon name="moon" size={16} />Sombre</button>
 		</div>
 	</div>
-	<a class="btn btn-soft btn-block" href="/logout"><Icon name="power" size={18} />Mettre SongSurf en veille</a>
-	<p class="why">SongSurf s'endort et tu reviens au portail. Les téléchargements en cours se terminent quand même.</p>
+	<a class="btn btn-soft btn-block" href="/logout"><Icon name="back" size={18} />Retour au portail</a>
+	<p class="why">Tes téléchargements en cours continuent même si tu quittes SongSurf.</p>
 </Sheet>
 
 <style>

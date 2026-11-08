@@ -1,17 +1,11 @@
 services:
-  watcher:
-    network_mode: host
-    ports: []
-    environment:
-      - TARGET_URL=${TARGET_URL_NAS:-http://localhost:8081}
-
   songsurf:
     network_mode: host
     ports: []
     user: root
-    # WARNING: host network exposes :8081 on all interfaces.
-    # Block it at the NAS firewall — only :8080 (Watcher) should be reachable externally.
-    # Synology: Control Panel → Security → Firewall → deny port 8081 from WAN.
+    # host network : SongSurf écoute sur SONGSURF_PORT de toutes les interfaces.
+    # Le pare-feu du NAS doit le borner au LAN / Tailscale (jamais le WAN) ;
+    # sans X-Proxy-Token valide, toute requête est refusée (401).
     volumes:
       # Bibliothèque admin = musique Jellyfin, montée sur le dossier de l'UUID admin
       # (clé de stockage SSF-03). ADMIN_UID est dans .env.
