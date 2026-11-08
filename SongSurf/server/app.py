@@ -31,25 +31,22 @@ import os
 import secrets
 import shutil
 import zipfile
-import logging
 import re
-import json
 import io
-import math
-import sys
-import glob
 
 from waitress import serve
-from downloader import YouTubeDownloader
 from organizer import MusicOrganizer
-from genre_lookup import lookup_genres
-from state_store import StateStore
+from core import config, queue
+from core.config import logger
+from core.progress import _song_clock, _song_percent
+from core.queue import (downloader, download_status, queue_lock, QUEUE_FULL_MSG,
+                        _last_completed_by_user, _last_error_by_user,
+                        _daily_limit_for, _daily_limit_response, _duration, _enqueue_job,
+                        _is_valid_youtube_url, _job_owner, _queue_full, _today)
+from core.storage import (_UID_RE, _cookies_missing_response, _user_cookies_file,
+                          _user_key, _user_music_dir, _user_pseudo)
+from core.worker import _cleanup_temp_leftovers, _on_sigterm, _resume_pending_batch, queue_worker
 
-# En Docker, events_client.py est copié à côté de app.py ;
-# en dev local (make dev) il vit dans ../shared.
-_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared')
-if os.path.isdir(_SHARED_DIR):
-    sys.path.insert(0, _SHARED_DIR)
 import events_client
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -73,243 +70,7 @@ REVAUTH_HOME_URL      = os.getenv('REVAUTH_HOME_URL', '')
 SONGSURF_EXTENSION_ID = 'ojhafabhkjjlganipbadmpifkikhnadf'
 _CORS_ORIGINS = {f'chrome-extension://{SONGSURF_EXTENSION_ID}'}
 
-# Quota par utilisateur et par jour (l'admin est illimité). 0 = illimité pour tous.
-DAILY_DOWNLOAD_LIMIT = int(os.getenv('DAILY_DOWNLOAD_LIMIT', '50'))
-
 _DEV_USER = {'sub': 'dev', 'uid': 'dev-user-local', 'role': 'admin'}
-
-# ── Directories ───────────────────────────────────────────────────────────────
-
-if Path(__file__).parent == Path('/app'):
-    BASE_MUSIC_DIR = Path('/data/music')
-    TEMP_DIR       = Path('/data/temp')
-    LOG_DIR        = Path('/app/logs')
-    _cookies_dflt  = Path('/data/cookies')
-    _state_dflt    = Path('/data/state')
-else:
-    _base          = Path(__file__).parent.parent
-    BASE_MUSIC_DIR = _base / 'music'
-    TEMP_DIR       = _base / 'temp'
-    LOG_DIR        = _base / 'logs'
-    _cookies_dflt  = _base / 'data' / 'cookies'
-    _state_dflt    = _base / 'data' / 'state'
-
-# Cookies YouTube par utilisateur (<uid>.txt), hors bibliothèque : l'export ZIP
-# membre (qui supprime la bibliothèque) ne les emporte pas.
-COOKIES_DIR = Path(os.environ.get('YTDLP_COOKIES_DIR') or _cookies_dflt)
-
-# État persistant (file, quotas, exports ZIP) — SQLite, survit aux redémarrages (SSF-03).
-STATE_DIR = Path(os.environ.get('SONGSURF_STATE_DIR') or _state_dflt)
-
-for _d in [BASE_MUSIC_DIR, TEMP_DIR, LOG_DIR, COOKIES_DIR, STATE_DIR]:
-    _d.mkdir(parents=True, exist_ok=True)
-
-# Push d'événements d'activité vers rev0auth (no-op si AUTH_EVENTS_URL absent)
-events_client.init('songsurf', str(LOG_DIR / 'events-pending-songsurf.jsonl'))
-
-# ── Logging ───────────────────────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logging.getLogger('werkzeug').setLevel(logging.ERROR)
-logger = logging.getLogger('songsurf')
-
-_ah = logging.FileHandler(LOG_DIR / 'activity.log', encoding='utf-8')
-_ah.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-activity_logger = logging.getLogger('songsurf.activity')
-activity_logger.addHandler(_ah)
-activity_logger.propagate = False
-activity_logger.setLevel(logging.INFO)
-
-_dlh = logging.FileHandler(LOG_DIR / 'downloads.log', encoding='utf-8')
-_dlh.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-dl_logger = logging.getLogger('songsurf.downloads')
-dl_logger.addHandler(_dlh)
-dl_logger.propagate = False
-dl_logger.setLevel(logging.INFO)
-
-# ── URL validation ─────────────────────────────────────────────────────────────
-
-_ALLOWED_YT_DOMAINS = ('youtube.com', 'music.youtube.com', 'www.youtube.com', 'youtu.be')
-
-
-def _is_valid_youtube_url(url: str) -> bool:
-    if not url or not isinstance(url, str):
-        return False
-    url = url.strip()
-    if not url.startswith('https://'):
-        return False
-    try:
-        from urllib.parse import urlparse
-        netloc = urlparse(url).netloc.lower()
-        host = netloc[4:] if netloc.startswith('www.') else netloc
-    except Exception:
-        return False
-    if host not in _ALLOWED_YT_DOMAINS and netloc not in _ALLOWED_YT_DOMAINS:
-        return False
-    if re.search(r'[<>\'";{}\\`]', url):
-        return False
-    return True
-
-
-# ── Downloader (global, uses TEMP_DIR for staging) ────────────────────────────
-
-downloader = YouTubeDownloader(TEMP_DIR, BASE_MUSIC_DIR)
-
-# ── Download queue (persistante, round-robin entre utilisateurs) ─────────────────
-# La file vit dans SQLite (state_store) : un redémarrage en plein batch reprend là
-# où il s'était arrêté. Un album = un job, un titre seul = un job d'une piste ; le
-# worker prend les titres un par un, chaque utilisateur à tour de rôle, pour que
-# deux membres en parallèle avancent tous les deux. Le serveur est propriétaire de
-# la file : elle continue à se vider même si le navigateur quitte la page.
-MAX_PENDING_JOBS = 100          # nombre max d'albums/titres en attente, par utilisateur
-queue_lock  = threading.Lock()  # download_status + _last_*_by_user
-_queue_wakeup = threading.Event()
-
-store = StateStore(STATE_DIR / 'songsurf.db')
-
-download_status = {
-    'in_progress': False,
-    'current_download': None,
-    'progress': None,
-    'queue_size': 0,
-    'batch_active': False,
-    'batch_total': 0,
-    'batch_done': 0,
-    'batch_percent': 0,
-}
-
-# Dernier succès / dernière erreur, rangés par clé utilisateur : /api/status ne renvoie
-# que ceux de l'appelant (jamais le titre ou le chemin d'un autre membre). Sous queue_lock.
-_last_completed_by_user = {}
-_last_error_by_user     = {}
-
-QUEUE_FULL_MSG = 'File pleine, réessaie dans un instant.'
-
-
-# ── Daily download quota (par utilisateur, admin illimité) ─────────────────────
-
-def _today() -> str:
-    return datetime.now().date().isoformat()
-
-
-def _daily_limit_for(user: dict) -> int:
-    """Quota du jour de l'utilisateur ; 0 = illimité (admin, ou limite désactivée)."""
-    if user.get('role') == 'admin':
-        return 0
-    return max(0, DAILY_DOWNLOAD_LIMIT)
-
-
-def _daily_limit_reached(user: dict) -> bool:
-    limit = _daily_limit_for(user)
-    return limit > 0 and store.daily_count(_user_key(user), _today()) >= limit
-
-
-def _daily_limit_response(user: dict):
-    """429 si le quota du jour est atteint, sinon None."""
-    if not _daily_limit_reached(user):
-        return None
-    limit = _daily_limit_for(user)
-    return jsonify({'success': False, 'error': f'Limite journalière atteinte ({limit} titres/jour).',
-                    'code': 'daily_limit'}), 429
-
-
-def _queue_full(user: dict) -> bool:
-    return store.pending_jobs(_user_key(user)) >= MAX_PENDING_JOBS
-
-
-def _start_or_extend_batch(added_count: int):
-    if added_count <= 0:
-        return
-    with queue_lock:
-        if not download_status.get('batch_active'):
-            download_status['batch_active'] = True
-            download_status['batch_total'] = 0
-            download_status['batch_done'] = 0
-            download_status['batch_percent'] = 0
-        download_status['batch_total'] += added_count
-
-
-def _job_owner(user: dict) -> dict:
-    """Champs propriétaire recopiés dans chaque titre de la file."""
-    return {
-        'user_key':    _user_key(user),
-        'user_pseudo': _user_pseudo(user),
-        'user_role':   user.get('role', 'member'),
-        'added_at':    datetime.now().isoformat(),
-    }
-
-
-def _duration(value) -> int:
-    """Durée d'un titre en secondes (0 si inconnue) : sert à estimer son avancement."""
-    try:
-        return max(0, int(float(value or 0)))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _enqueue_job(user: dict, songs):
-    """Empile un job (liste de titres) de `user` dans la file persistante.
-
-    L'appelant vérifie _queue_full() avant (→ 429).
-    """
-    if not songs:
-        return 0
-    added = store.enqueue_job(_user_key(user), list(songs))
-    _start_or_extend_batch(added)
-    _queue_wakeup.set()
-    return added
-
-
-# ── Per-user storage ───────────────────────────────────────────────────────────
-# Clé de stockage = UUID du compte portail (X-User-Id), admin compris :
-# unique et stable par construction, jamais dérivée du pseudo (SSF-03). Le pseudo
-# ne sert qu'à l'affichage, aux logs et au fichier .owner des dossiers.
-
-_UID_RE = re.compile(r'^[A-Za-z0-9-]{8,64}$')
-
-OWNER_FILE = '.owner'
-
-
-def _user_key(user: dict) -> str:
-    """Clé de stockage de l'utilisateur (bibliothèque, cookies, file, quota, ZIP)."""
-    uid = (user or {}).get('uid') or ''
-    if not _UID_RE.match(uid):
-        raise ValueError(f"Identifiant de compte invalide: {uid!r}")
-    return uid
-
-
-def _user_pseudo(user: dict) -> str:
-    """Pseudo d'affichage (exact, transmis par le portail)."""
-    return (user or {}).get('sub') or ''
-
-
-def _user_music_dir(user: dict) -> Path:
-    """BASE_MUSIC_DIR/<uid>/ (uid/Artist/Album/), with a .owner file holding the
-    pseudo so the folder stays readable. DEV_MODE too (user 'dev-user-local')."""
-    key = _user_key(user)
-    d = (BASE_MUSIC_DIR / key).resolve()
-    if not d.is_relative_to(BASE_MUSIC_DIR.resolve()) or d == BASE_MUSIC_DIR.resolve():
-        raise ValueError(f"Invalid user key — path escapes music dir: {key!r}")
-    d.mkdir(parents=True, exist_ok=True)
-    _write_owner_file(d, _user_pseudo(user))
-    return d
-
-
-def _write_owner_file(d: Path, pseudo: str) -> None:
-    """Écrit le pseudo dans <dossier>/.owner s'il manque ou a changé (jamais bloquant)."""
-    if not pseudo:
-        return
-    owner = d / OWNER_FILE
-    try:
-        if not owner.is_file() or owner.read_text(encoding='utf-8').strip() != pseudo:
-            owner.write_text(pseudo + '\n', encoding='utf-8')
-    except OSError as e:
-        logger.warning(f"⚠️ .owner non écrit dans {d.name}: {e}")
-
 
 def _retarget_artists(artists: list[str], old_artist: str | None, new_artist: str) -> list[str]:
     """TPE1 après un déplacement : seul l'artiste principal change, les featurings restent.
@@ -560,74 +321,6 @@ def ping():
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
 
 
-# ── Avancement estimé du titre en cours (SSF-13) ───────────────────────────────
-# yt-dlp ne donne l'avancement que du téléchargement, qui va vite ; la conversion
-# FFmpeg, la plus longue, n'en donne aucun : la barre restait figée sur un palier
-# puis sautait. On estime donc au temps écoulé, par rapport à la durée réelle des
-# titres précédents (moyennes glissantes gardées en base, donc conservées quand
-# SongSurf est mis en veille). Les phases réelles servent de plancher et de plafond.
-SONG_SECS_DEFAULT = 20.0   # durée de traitement d'un titre sans durée connue (s)
-SONG_RATE_DEFAULT = 0.08   # s de traitement par s d'audio (3 min ≈ 15 s)
-_SMOOTHING        = 0.3    # poids du dernier titre dans la moyenne glissante
-_PHASE_BOUNDS = {          # phase → (plancher, plafond) en %
-    'downloading': (0.0, 45.0),
-    'converting':  (30.0, 92.0),
-    'organizing':  (90.0, 99.0),
-}
-_song_clock = {'started': None, 'expected': SONG_SECS_DEFAULT}
-
-
-def _timing_value(key: str, default: float) -> float:
-    try:
-        value = float(store.meta_get(key) or default)
-        return value if value > 0 else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _expected_song_seconds(duration) -> float:
-    """Temps de traitement attendu pour un titre de `duration` secondes d'audio."""
-    try:
-        duration = float(duration or 0)
-    except (TypeError, ValueError):
-        duration = 0.0
-    if duration > 0:
-        return max(3.0, duration * _timing_value('song_rate', SONG_RATE_DEFAULT))
-    return _timing_value('song_secs', SONG_SECS_DEFAULT)
-
-
-def _learn_song_timing(elapsed: float, duration) -> None:
-    """Met à jour les moyennes après un titre réellement téléchargé."""
-    if elapsed <= 0:
-        return
-    def blend(key, default, sample):
-        old = _timing_value(key, default)
-        store.meta_set(key, f'{old + _SMOOTHING * (sample - old):.4f}')
-    blend('song_secs', SONG_SECS_DEFAULT, elapsed)
-    try:
-        duration = float(duration or 0)
-    except (TypeError, ValueError):
-        duration = 0.0
-    if duration > 0:
-        blend('song_rate', SONG_RATE_DEFAULT, elapsed / duration)
-
-
-def _song_percent(phase: str, raw_pct: float, elapsed: float, expected: float) -> float:
-    """Avancement d'un titre (0-100) qui ne recule pas quand la phase change.
-
-    Estimation au temps : 90 % à la durée attendue, puis approche lente de 99 %
-    si le titre est plus long que prévu. Bornée par la phase réelle.
-    """
-    if phase == 'completed':
-        return 100.0
-    ratio = elapsed / expected if expected > 0 else 0.0
-    estimate = 90.0 * ratio if ratio <= 1 else 90.0 + 9.0 * (1 - math.exp(-1.5 * (ratio - 1)))
-    floor, ceiling = _PHASE_BOUNDS.get(phase, (0.0, 45.0))
-    if phase == 'downloading':
-        floor = max(0.0, min(100.0, raw_pct)) * 0.3   # vrai avancement du téléchargement
-    return round(max(floor, min(ceiling, estimate)), 1)
-
-
 # ── Download status ────────────────────────────────────────────────────────────
 
 @app.route('/api/status')
@@ -637,9 +330,9 @@ def get_status():
         return _unauthenticated_response()
     my_key = _user_key(current_user)
 
-    queue_size = store.pending_count()
-    my_pending = store.pending_for(my_key)
-    songs_before = store.songs_before(my_key) if my_pending else None
+    queue_size = queue.store.pending_count()
+    my_pending = queue.store.pending_for(my_key)
+    songs_before = queue.store.songs_before(my_key) if my_pending else None
     with queue_lock:
         status = download_status.copy()
         status['queue_size'] = queue_size
@@ -661,7 +354,7 @@ def get_status():
             status['batch_percent'] = round(max(0.0, min(100.0, composed)), 1)
         else:
             status['batch_percent'] = float(current_pct)
-    status['daily_count'] = store.daily_count(my_key, _today())
+    status['daily_count'] = queue.store.daily_count(my_key, _today())
     status['daily_limit'] = _daily_limit_for(current_user)
     with queue_lock:
         status['last_completed'] = _last_completed_by_user.get(my_key)
@@ -691,7 +384,7 @@ def get_status():
         for m in (p.get('metadata') or {} for p in my_pending)
     ][:200]
     # Un album = une ligne d'avancement « 3 / 12 titres » (SSF-13), pas un titre par ligne.
-    status['jobs'] = store.jobs_for(my_key)[:100]
+    status['jobs'] = queue.store.jobs_for(my_key)[:100]
     # Diagnostic cookies de l'appelant — exposé pour l'UI/debug.
     try:
         cookies_file = _user_cookies_file(current_user)
@@ -1226,7 +919,7 @@ def start_download():
         _enqueue_job(user, [{'url': url, 'metadata': metadata, 'duration': _duration(data.get('duration')),
                              **_job_owner(user)}])
         logger.info(f"➕ Queue: {metadata['artist']} - {metadata['title']} [{_user_pseudo(user)}]")
-        return jsonify({'success': True, 'queue_size': store.pending_count()})
+        return jsonify({'success': True, 'queue_size': queue.store.pending_count()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1269,7 +962,7 @@ def download_playlist():
 
         added = _enqueue_job(user, items)
         return jsonify({'success': True, 'added': added, 'total': len(songs),
-                        'queue_size': store.pending_count()})
+                        'queue_size': queue.store.pending_count()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1294,7 +987,7 @@ def _zip_forbidden(user: dict, music_dir: Path) -> bool:
     if user.get('role') == 'admin':
         return True
     target = music_dir.resolve()
-    return target == BASE_MUSIC_DIR.resolve() or _is_mount_point(target)
+    return target == config.BASE_MUSIC_DIR.resolve() or _is_mount_point(target)
 
 
 def _is_mount_point(path: Path) -> bool:
@@ -1311,7 +1004,7 @@ def _is_mount_point(path: Path) -> bool:
 
 
 def _zip_path(user_key: str) -> Path:
-    return TEMP_DIR / f"songsurf_{user_key}.zip"
+    return config.TEMP_DIR / f"songsurf_{user_key}.zip"
 
 
 def _zip_public(state: dict | None) -> dict:
@@ -1341,14 +1034,14 @@ def _build_zip(user_key: str, music_dir: Path, files: list, zip_path: Path) -> N
                 if f.is_file():  # déplacé/supprimé pendant la construction → ignoré
                     zf.write(f, f.relative_to(music_dir))
                 if i % 5 == 0 or i == len(files):
-                    store.zip_set(user_key, status='building', done=i)
+                    queue.store.zip_set(user_key, status='building', done=i)
         part.replace(zip_path)
         size_mb = round(zip_path.stat().st_size / (1024 * 1024), 1)
-        store.zip_set(user_key, status='ready', done=len(files), size_mb=size_mb)
+        queue.store.zip_set(user_key, status='ready', done=len(files), size_mb=size_mb)
         logger.info(f"📦 ZIP prêt: {len(files)} fichiers, {size_mb:.1f} MB [{user_key[:8]}]")
     except Exception as e:
         part.unlink(missing_ok=True)
-        store.zip_set(user_key, status='error', error=str(e))
+        queue.store.zip_set(user_key, status='error', error=str(e))
         logger.error(f"❌ Construction ZIP [{user_key[:8]}]: {e}")
 
 
@@ -1362,7 +1055,7 @@ def prepare_zip():
         if _zip_forbidden(user, music_dir):
             return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
         with _zip_start_lock:
-            current = store.zip_get(key)
+            current = queue.store.zip_get(key)
             if current and current['status'] == 'building':
                 return jsonify({'success': True, **_zip_public(current)}), 202
             files = sorted([p for p in music_dir.rglob('*.mp3') if p.is_file()],
@@ -1371,11 +1064,11 @@ def prepare_zip():
                 return jsonify({'success': False, 'error': 'Aucune musique disponible'}), 404
             zip_path = _zip_path(key)
             zip_path.unlink(missing_ok=True)
-            store.zip_set(key, status='building', zip_path=str(zip_path),
+            queue.store.zip_set(key, status='building', zip_path=str(zip_path),
                           done=0, total=len(files), size_mb=0, error='')
         threading.Thread(target=_build_zip, args=(key, music_dir, files, zip_path),
                          daemon=True).start()
-        return jsonify({'success': True, **_zip_public(store.zip_get(key))}), 202
+        return jsonify({'success': True, **_zip_public(queue.store.zip_get(key))}), 202
     except Exception as e:
         logger.error(f"❌ /api/prepare-zip: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1386,9 +1079,9 @@ def prepare_zip():
 def zip_status():
     """Avancement de l'export ZIP de l'appelant : idle | building | ready | error."""
     key   = _user_key(_get_current_user())
-    state = store.zip_get(key)
+    state = queue.store.zip_get(key)
     if state and state['status'] == 'ready' and not Path(state['zip_path']).is_file():
-        store.zip_delete(key)   # fichier disparu (TEMP_DIR nettoyé) → plus rien à récupérer
+        queue.store.zip_delete(key)   # fichier disparu (config.TEMP_DIR nettoyé) → plus rien à récupérer
         state = None
     return jsonify({'success': True, **_zip_public(state)})
 
@@ -1401,7 +1094,7 @@ def download_zip():
     music_dir = _user_music_dir(user)
     if _zip_forbidden(user, music_dir):
         return jsonify({'success': False, 'error': ZIP_DISABLED_MSG, 'code': 'zip_disabled'}), 403
-    state = store.zip_get(key)
+    state = queue.store.zip_get(key)
     if not state or state['status'] != 'ready':
         return jsonify({'success': False, 'error': 'ZIP non prêt, utilisez /api/prepare-zip'}), 404
 
@@ -1417,7 +1110,7 @@ def download_zip():
     def _after_full_export():
         try:
             zip_path.unlink(missing_ok=True)
-            store.zip_delete(key)
+            queue.store.zip_delete(key)
             # Bibliothèque membre = temporaire, supprimée après export. Jamais le
             # dossier admin ni la racine : refusés en amont, revérifiés ici (SSF-10).
             purged = not _zip_forbidden(user, music_dir) and music_dir.exists()
@@ -1485,7 +1178,7 @@ def api_admin_dl_logs():
         except ValueError:
             limit = 100
 
-    log_path = LOG_DIR / 'downloads.log'
+    log_path = config.LOG_DIR / 'downloads.log'
     entries  = []
     try:
         if log_path.exists():
@@ -1582,29 +1275,6 @@ def library_audit_apply():
 
 
 # ── Extension Chrome — cookies sync (par utilisateur) ──────────────────────────
-
-COOKIES_MISSING_MSG = ("Cookies YouTube manquants pour ton compte : connecte-toi à YouTube, "
-                       "puis clique « Sync cookies YouTube » dans l'extension SongSurf Clip.")
-
-
-def _user_cookies_file(user: dict | None) -> Path:
-    """Fichier cookies Netscape de l'utilisateur : COOKIES_DIR/<uid>.txt."""
-    key = _user_key(user or {})
-    f = (COOKIES_DIR / f'{key}.txt').resolve()
-    if not f.is_relative_to(COOKIES_DIR.resolve()):
-        raise ValueError(f"Invalid user key — path escapes cookies dir: {key!r}")
-    return f
-
-
-def _cookies_missing_response(user: dict | None):
-    """403 + message clair si l'utilisateur n'a pas synchronisé ses cookies, sinon None.
-
-    Pas de repli sur les cookies d'un autre compte (décision SSF-01).
-    """
-    if _user_cookies_file(user).is_file():
-        return None
-    return jsonify({'success': False, 'error': COOKIES_MISSING_MSG,
-                    'code': 'cookies_missing'}), 403
 
 
 def _is_netscape_cookies(content: str) -> bool:
@@ -2321,255 +1991,6 @@ def library_set_artist_genre():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# ── Cookies / vidéos restreintes (âge, connexion requise) ──────────────────────
-
-_AGE_COOKIE_MARKERS = (
-    'confirm your age',
-    'sign in to confirm',
-    'inappropriate for some users',
-    'cookies-from-browser',
-    'use --cookies',
-    "confirm you're not a bot",
-    'confirm you’re not a bot',
-)
-
-
-def _is_cookie_error(msg: str) -> bool:
-    """Vrai si l'erreur yt-dlp réclame des cookies (âge / connexion / anti-bot)."""
-    m = (msg or '').lower()
-    return any(marker in m for marker in _AGE_COOKIE_MARKERS)
-
-
-def _cookies_diagnostic(cookies_file: Path) -> str:
-    """État du fichier cookies pour les logs : présence + nb d'entrées + âge."""
-    try:
-        if not cookies_file.is_file():
-            return f"cookies ABSENTS ({cookies_file.name})"
-        age_days = (time.time() - cookies_file.stat().st_mtime) / 86400
-        n = sum(1 for l in cookies_file.read_text(encoding='utf-8', errors='ignore').splitlines()
-                if l and not l.startswith('#'))
-        return f"cookies présents ({n} entrées, {age_days:.1f} j)"
-    except Exception as e:
-        return f"cookies état inconnu ({e})"
-
-
-def _friendly_download_error(msg: str) -> str:
-    """Traduit les erreurs yt-dlp obscures en message actionnable pour l'utilisateur."""
-    if _is_cookie_error(msg):
-        return ("Vidéo restreinte (âge ou connexion requise). Resynchronise tes "
-                "cookies YouTube via l'extension Chrome, puis relance le téléchargement.")
-    return msg
-
-
-# ── Queue worker ───────────────────────────────────────────────────────────────
-
-def _batch_progress_after_song():
-    """Sous queue_lock : incrémente batch_done et clôture le batch si tout est fini."""
-    download_status['batch_done'] = int(download_status.get('batch_done', 0)) + 1
-    if (download_status['batch_done'] >= download_status.get('batch_total', 0)
-            and store.pending_count() == 0):
-        download_status['batch_active'] = False
-
-
-def _process_song(item):
-    """Traite un titre : download → organize → tags, met à jour download_status.
-
-    Toujours non bloquant pour la suite de la file : toute erreur est capturée et
-    batch_done est incrémenté dans tous les cas, pour que le batch puisse se clôturer.
-    """
-    url         = item['url']
-    metadata    = item['metadata']
-    user_key    = item['user_key']
-    user_pseudo = item.get('user_pseudo', '')
-    owner       = {'uid': user_key, 'sub': user_pseudo, 'role': item.get('user_role', 'member')}
-    cookies_file = _user_cookies_file(owner)
-
-    with queue_lock:
-        # Progression remise à zéro AVANT de passer en cours : sinon /api/status voit
-        # encore le « completed / 100 % » du titre précédent et la barre fait un bond
-        # d'un titre entier en avant, puis recule quand le téléchargement démarre.
-        downloader.progress.reset()
-        _song_clock['started']  = time.monotonic()
-        _song_clock['expected'] = _expected_song_seconds(item.get('duration'))
-        download_status.update({
-            'in_progress':      True,
-            'current_download': {
-                'url': url, 'metadata': metadata,
-                'user_key': user_key, 'user_pseudo': user_pseudo,
-                'started_at': datetime.now().isoformat()
-            },
-        })
-        _last_error_by_user.pop(user_key, None)
-
-    logger.info(f"🎵 {metadata['artist']} - {metadata['title']} [{user_pseudo or user_key[:8]}]")
-
-    try:
-        music_dir = _user_music_dir(owner)
-        org       = MusicOrganizer(music_dir)
-
-        # Court-circuit doublon : si le titre est déjà en bibliothèque,
-        # on ne télécharge même pas (économie de bande passante / quota).
-        if org.target_exists(metadata):
-            logger.info(f"⏭️ Doublon ignoré (pas de download): {metadata.get('artist')} - {metadata.get('title')}")
-            org_result = {'success': True, 'skipped': True, 'final_path': ''}
-        else:
-            # Cookies supprimés entre la mise en file et le téléchargement.
-            if not cookies_file.is_file():
-                raise Exception(COOKIES_MISSING_MSG)
-            result = downloader.download(url, metadata, cookiefile=str(cookies_file))
-
-            if not result['success']:
-                raise Exception(result.get('error', 'Erreur inconnue'))
-
-            # Genre iTunes (admin uniquement) — échec silencieux, jamais bloquant.
-            if item.get('user_role') == 'admin' and not metadata.get('genres'):
-                metadata['genres'] = lookup_genres(
-                    metadata.get('artist', ''),
-                    metadata.get('title', ''),
-                    metadata.get('album', ''),
-                )
-
-            org_result = org.organize(result['file_path'], metadata)
-            if not org_result['success']:
-                raise Exception(org_result.get('error', 'Erreur organisation'))
-            try:
-                _learn_song_timing(time.monotonic() - _song_clock['started'], item.get('duration'))
-            except Exception as e:  # jamais bloquant
-                logger.warning(f"⚠️ Estimation de durée non mise à jour : {e}")
-
-        downloader.progress.phase   = 'completed'
-        downloader.progress.percent = 100
-        _skipped = bool(org_result.get('skipped'))
-
-        with queue_lock:
-            download_status['in_progress']    = False
-            download_status['current_download'] = None
-            _last_completed_by_user[user_key] = {
-                'success':   True,
-                'skipped':   _skipped,
-                'file_path': org_result.get('final_path', ''),
-                'metadata':  metadata,
-                'timestamp': datetime.now().isoformat(),
-            }
-            _batch_progress_after_song()
-
-        # Un doublon ignoré ne compte pas comme téléchargement (quota, logs, events).
-        if _skipped:
-            logger.info(f"✅ Doublon ignoré : {metadata.get('artist')} - {metadata.get('title')}")
-        else:
-            logger.info(f"✅ {org_result['final_path']}")
-            _label = user_pseudo or user_key[:8]
-            activity_logger.info(f"🎵 DOWNLOAD | {_label} | {metadata['artist']} - {metadata['title']}")
-            dl_logger.info(f"{_label} | {metadata['artist']} | {metadata.get('album', '')} | {metadata['title']}")
-            events_client.emit(
-                'download_success',
-                pseudo=_label,
-                artist=metadata.get('artist', ''),
-                album=metadata.get('album', ''),
-                title=metadata.get('title', ''),
-            )
-            store.daily_increment(user_key, _today())
-
-    except Exception as e:
-        err_msg  = str(e)
-        friendly = _friendly_download_error(err_msg)
-        if _is_cookie_error(err_msg):
-            logger.warning(f"🍪 Échec lié aux cookies/âge — {_cookies_diagnostic(cookies_file)}")
-        logger.error(f"❌ {err_msg}")
-        with queue_lock:
-            download_status['in_progress']    = False
-            download_status['current_download'] = None
-            _last_error_by_user[user_key] = {
-                'error': friendly, 'metadata': metadata, 'url': url,  # url : « Réessayer » (SSF-13)
-                'timestamp': datetime.now().isoformat(),
-            }
-            _batch_progress_after_song()
-        events_client.emit(
-            'download_failed',
-            pseudo=user_pseudo or user_key[:8],
-            artist=(metadata or {}).get('artist', ''),
-            album=(metadata or {}).get('album', ''),
-            title=(metadata or {}).get('title', ''),
-            detail={'error': err_msg[:300]},
-        )
-
-
-def _worker_step() -> bool:
-    """Traite le prochain titre de la file (round-robin). False si la file est vide.
-
-    Le titre ne quitte la file qu'une fois traité : un arrêt pendant son
-    téléchargement le laisse « en cours », il repasse en attente au redémarrage.
-    """
-    claimed = store.claim_next()
-    if claimed is None:
-        return False
-    item_id, item = claimed
-    try:
-        _process_song(item)
-    except Exception as e:
-        logger.error(f"❌ Worker error (titre): {e}")
-    finally:
-        store.finish(item_id)
-    return True
-
-
-def _resume_pending_batch() -> None:
-    """Au boot : une file reprise depuis SQLite rouvre un batch pour la barre de progression."""
-    pending = store.pending_count()
-    if pending:
-        _start_or_extend_batch(pending)
-        logger.info(f"♻️ File reprise après redémarrage : {pending} titre(s) en attente")
-
-
-def queue_worker():
-    logger.info("🔄 Queue worker démarré")
-    while True:
-        try:
-            if not _worker_step():
-                _queue_wakeup.wait(timeout=1.0)
-                _queue_wakeup.clear()
-        except Exception as e:
-            logger.error(f"❌ Worker error: {e}")
-            time.sleep(1)
-
-
-# ── Arrêt propre ───────────────────────────────────────────────────────────────
-
-# Fichiers intermédiaires yt-dlp/ffmpeg laissés par un arrêt brutal (jamais un MP3 fini).
-_TEMP_LEFTOVER_PATTERNS = ('*.part', '*.ytdl', '*.temp.*', '*.part-Frag*')
-
-
-def _cleanup_temp_leftovers() -> None:
-    """Au boot : supprime les restes d'un téléchargement interrompu dans TEMP_DIR."""
-    removed = 0
-    for pattern in _TEMP_LEFTOVER_PATTERNS:
-        for f in downloader.temp_dir.glob(pattern):
-            try:
-                f.unlink()
-                removed += 1
-            except OSError:
-                pass
-    if removed:
-        logger.info(f"🧹 {removed} fichier(s) temporaire(s) incomplet(s) supprimé(s)")
-
-
-def _on_sigterm(signum, _frame):
-    """docker stop : supprime les fichiers du titre en cours (incomplets) puis exit 0.
-
-    SongSurf tourne en continu : ce cas ne se présente que sur un stop manuel
-    ou un redéploiement. Le titre interrompu reste dans la file et sera repris.
-    """
-    with queue_lock:
-        current = download_status.get('current_download')
-    if current:
-        prefix = downloader._temp_filename_from_metadata(current.get('metadata') or {})
-        for f in downloader.temp_dir.glob(f'{glob.escape(prefix)}*'):
-            f.unlink(missing_ok=True)
-        logger.warning(f"🛑 Arrêt pendant un téléchargement — fichiers temporaires de « {prefix} » supprimés")
-    logger.info(f"🛑 Signal {signum} reçu — arrêt propre")
-    sys.exit(0)
-
-
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -2581,7 +2002,7 @@ if __name__ == '__main__':
     else:
         mode = "LOCKED (SONGSURF_PROXY_SECRET absent)"
 
-    logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={BASE_MUSIC_DIR}")
+    logger.info(f"🎵 SongSurf démarré — port={flask_port}, mode={mode}, music={config.BASE_MUSIC_DIR}")
     events_client.start_replay_thread()
     # Nettoyage AVANT le worker : un titre repris de la file ne doit pas voir ses
     # fichiers temporaires supprimés en plein téléchargement.

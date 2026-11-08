@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 with patch('shutil.which', return_value=None):
     import app as app_mod
+    from core import config as core_config
 
 _PROXY_SECRET = 'proxy-secret-for-tests'
 _UID = '4fac893e-0000-4000-8000-000000000001'
@@ -170,7 +171,7 @@ def test_dev_mode_gives_local_admin(gate):
 
 def test_dev_mode_stores_like_production(gate, tmp_path):
     gate.setattr(app_mod, 'DEV_MODE', True)
-    gate.setattr(app_mod, 'BASE_MUSIC_DIR', tmp_path)
+    gate.setattr(core_config, 'BASE_MUSIC_DIR', tmp_path)
     assert app_mod._user_music_dir(_user_for()) == tmp_path.resolve() / 'dev-user-local'
 
 

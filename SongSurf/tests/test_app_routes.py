@@ -9,6 +9,10 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
+with patch('shutil.which', return_value=None):
+    from core import config as core_config, progress as core_progress
+    from core import queue as core_queue, worker as core_worker
+
 PROXY_SECRET = 'proxy-secret-for-tests'
 
 
@@ -32,11 +36,11 @@ def flask_setup(tmp_path_factory):
         with patch('shutil.which', return_value=None):
             import app as app_mod
             # Override runtime directories after import
-            app_mod.BASE_MUSIC_DIR = music
-            app_mod.TEMP_DIR       = temp
-            app_mod.LOG_DIR        = logs
-            app_mod.COOKIES_DIR    = cookies
-            app_mod.store          = app_mod.StateStore(state / 'songsurf.db')
+            core_config.BASE_MUSIC_DIR = music
+            core_config.TEMP_DIR       = temp
+            core_config.LOG_DIR        = logs
+            core_config.COOKIES_DIR    = cookies
+            core_queue.store          = core_queue.StateStore(state / 'songsurf.db')
             app_mod.SONGSURF_PROXY_SECRET = PROXY_SECRET
             app_mod.DEV_MODE = False
             app_mod.app.config['TESTING'] = True
@@ -74,7 +78,7 @@ _NETSCAPE = ('# Netscape HTTP Cookie File\n'
 
 def give_cookies(app_mod, key=USER_DIR):
     """Écrit un fichier cookies pour la clé <key> (par défaut celle de auth_headers())."""
-    f = app_mod.COOKIES_DIR / f'{key}.txt'
+    f = core_config.COOKIES_DIR / f'{key}.txt'
     f.write_text(_NETSCAPE)
     return f
 
@@ -247,9 +251,9 @@ def test_z3_download_zip_without_prepare(flask_setup):
 def test_d9_accepts_download_while_in_progress(flask_setup):
     c, _, _, app_mod = flask_setup
     give_cookies(app_mod)
-    original = app_mod.download_status['in_progress']
+    original = core_queue.download_status['in_progress']
     try:
-        app_mod.download_status['in_progress'] = True
+        core_queue.download_status['in_progress'] = True
         r = c.post('/api/download',
                    json={'url': 'https://www.youtube.com/watch?v=abc',
                          'title': 'T', 'artist': 'A', 'album': 'B'},
@@ -258,7 +262,7 @@ def test_d9_accepts_download_while_in_progress(flask_setup):
         assert r.status_code == 200
         assert r.get_json()['success'] is True
     finally:
-        app_mod.download_status['in_progress'] = original
+        core_queue.download_status['in_progress'] = original
         _drain_queue(app_mod)   # ne pas polluer les autres tests
 
 
@@ -267,8 +271,8 @@ def test_d9_rejects_when_queue_full(flask_setup):
     give_cookies(app_mod)
     try:
         # Sature les jobs de l'utilisateur jusqu'à MAX_PENDING_JOBS
-        for _ in range(app_mod.MAX_PENDING_JOBS):
-            app_mod.store.enqueue_job(USER_DIR, [{'url': 'u'}])
+        for _ in range(core_queue.MAX_PENDING_JOBS):
+            core_queue.store.enqueue_job(USER_DIR, [{'url': 'u'}])
         body = {'url': 'https://www.youtube.com/watch?v=abc', 'title': 'T', 'artist': 'A', 'album': 'B'}
         r = c.post('/api/download', json=body, headers=auth_headers(),
                    content_type='application/json')
@@ -288,8 +292,8 @@ def test_cookie_error_detection_and_friendly_message(flask_setup):
     _, _, _, app_mod = flask_setup
     yt_err = ("ERROR: [youtube] HocWhDnvyhA: Sign in to confirm your age. "
               "This video may be inappropriate for some users. Use --cookies-from-browser")
-    assert app_mod._is_cookie_error(yt_err) is True
-    friendly = app_mod._friendly_download_error(yt_err)
+    assert core_worker._is_cookie_error(yt_err) is True
+    friendly = core_worker._friendly_download_error(yt_err)
     assert 'cookies' in friendly.lower()
     assert friendly != yt_err  # message reformulé, pas l'erreur brute
 
@@ -297,8 +301,8 @@ def test_cookie_error_detection_and_friendly_message(flask_setup):
 def test_non_cookie_error_passes_through(flask_setup):
     _, _, _, app_mod = flask_setup
     other = 'HTTP Error 404: Not Found'
-    assert app_mod._is_cookie_error(other) is False
-    assert app_mod._friendly_download_error(other) == other
+    assert core_worker._is_cookie_error(other) is False
+    assert core_worker._friendly_download_error(other) == other
 
 
 # ── _user_music_dir path traversal guard ─────────────────────────────────────
@@ -791,10 +795,10 @@ def test_artist_picture_served_with_cache_header(flask_setup):
 # ── SSF-01 : cookies par utilisateur, taille max, cloisonnement /api/status ───
 
 def _drain_queue(app_mod):
-    while (claimed := app_mod.store.claim_next()) is not None:
-        app_mod.store.finish(claimed[0])
-    with app_mod.queue_lock:
-        app_mod.download_status.update(batch_active=False, batch_total=0, batch_done=0)
+    while (claimed := core_queue.store.claim_next()) is not None:
+        core_queue.store.finish(claimed[0])
+    with core_queue.queue_lock:
+        core_queue.download_status.update(batch_active=False, batch_total=0, batch_done=0)
 
 
 def test_ssf01_download_blocked_without_cookies(flask_setup):
@@ -828,11 +832,11 @@ def test_ssf01_cookies_update_is_per_user(flask_setup):
     assert r.status_code == 200
     data = r.get_json()
     assert data['pseudo'] == 'alice' and data['count'] == 1
-    f = app_mod.COOKIES_DIR / f"{uid_for('alice')}.txt"
+    f = core_config.COOKIES_DIR / f"{uid_for('alice')}.txt"
     assert f.is_file()
     assert (f.stat().st_mode & 0o777) == 0o600
     # Un autre membre n'en profite pas
-    assert not (app_mod.COOKIES_DIR / f"{uid_for('bob')}.txt").exists()
+    assert not (core_config.COOKIES_DIR / f"{uid_for('bob')}.txt").exists()
     r = c.get('/api/status', headers=auth_headers(sub='bob'))
     assert r.get_json()['cookies_present'] is False
     r = c.get('/api/status', headers=auth_headers(sub='alice'))
@@ -865,10 +869,10 @@ def test_ssf01_request_too_large(flask_setup):
 def test_ssf01_status_isolated_between_members(flask_setup):
     c, _, _, app_mod = flask_setup
     alice_key = uid_for('alice')
-    with app_mod.queue_lock:
-        app_mod._last_completed_by_user[alice_key] = {'file_path': '/secret/alice.mp3', 'timestamp': 't1'}
-        app_mod._last_error_by_user[alice_key] = {'error': 'boom', 'timestamp': 't2'}
-        app_mod.download_status['current_download'] = {
+    with core_queue.queue_lock:
+        core_queue._last_completed_by_user[alice_key] = {'file_path': '/secret/alice.mp3', 'timestamp': 't1'}
+        core_queue._last_error_by_user[alice_key] = {'error': 'boom', 'timestamp': 't2'}
+        core_queue.download_status['current_download'] = {
             'url': 'u', 'metadata': {'title': 'Secret'}, 'user_key': alice_key, 'user_pseudo': 'alice'}
     try:
         bob = c.get('/api/status', headers=auth_headers(sub='bob')).get_json()
@@ -884,10 +888,10 @@ def test_ssf01_status_isolated_between_members(flask_setup):
         assert alice['current_download']['metadata']['title'] == 'Secret'
         assert alice['is_mine'] is True
     finally:
-        with app_mod.queue_lock:
-            app_mod._last_completed_by_user.clear()
-            app_mod._last_error_by_user.clear()
-            app_mod.download_status['current_download'] = None
+        with core_queue.queue_lock:
+            core_queue._last_completed_by_user.clear()
+            core_queue._last_error_by_user.clear()
+            core_queue.download_status['current_download'] = None
 
 
 def test_ssf01_worker_uses_owner_cookies(flask_setup):
@@ -896,12 +900,12 @@ def test_ssf01_worker_uses_owner_cookies(flask_setup):
     item = {'url': 'https://www.youtube.com/watch?v=abc',
             'metadata': {'artist': 'A', 'album': 'B', 'title': 'T'},
             'user_key': uid_for('dave'), 'user_pseudo': 'dave', 'user_role': 'member'}
-    with patch.object(app_mod.downloader, 'download',
+    with patch.object(core_queue.downloader, 'download',
                       return_value={'success': False, 'error': 'x'}) as dl:
-        app_mod._process_song(item)
+        core_worker._process_song(item)
     assert dl.call_args.kwargs['cookiefile'] == str(f.resolve())
-    assert app_mod._last_error_by_user[uid_for('dave')]['error'] == 'x'
-    app_mod._last_error_by_user.clear()
+    assert core_queue._last_error_by_user[uid_for('dave')]['error'] == 'x'
+    core_queue._last_error_by_user.clear()
 
 
 def test_ssf01_worker_fails_cleanly_when_cookies_removed(flask_setup):
@@ -909,11 +913,11 @@ def test_ssf01_worker_fails_cleanly_when_cookies_removed(flask_setup):
     item = {'url': 'https://www.youtube.com/watch?v=abc',
             'metadata': {'artist': 'A', 'album': 'B', 'title': 'T'},
             'user_key': uid_for('erin'), 'user_pseudo': 'erin', 'user_role': 'member'}
-    with patch.object(app_mod.downloader, 'download') as dl:
-        app_mod._process_song(item)
+    with patch.object(core_queue.downloader, 'download') as dl:
+        core_worker._process_song(item)
     dl.assert_not_called()
-    assert 'Cookies YouTube manquants' in app_mod._last_error_by_user[uid_for('erin')]['error']
-    app_mod._last_error_by_user.clear()
+    assert 'Cookies YouTube manquants' in core_queue._last_error_by_user[uid_for('erin')]['error']
+    core_queue._last_error_by_user.clear()
 
 
 # ── SSF-02 : arrêt propre ─────────────────────────────────────────────────────
@@ -922,35 +926,35 @@ def test_ssf02_cleanup_temp_leftovers(flask_setup, tmp_path):
     _, _, _, app_mod = flask_setup
     for name in ('a.part', 'b.ytdl', 'c.temp.mp3', 'd.webm.part-Frag3', 'done.mp3'):
         (tmp_path / name).touch()
-    with patch.object(app_mod.downloader, 'temp_dir', tmp_path):
-        app_mod._cleanup_temp_leftovers()
+    with patch.object(core_queue.downloader, 'temp_dir', tmp_path):
+        core_worker._cleanup_temp_leftovers()
     assert sorted(f.name for f in tmp_path.iterdir()) == ['done.mp3']
 
 
 def test_ssf02_sigterm_removes_current_song_files_and_exits_0(flask_setup, tmp_path):
     _, _, _, app_mod = flask_setup
     meta = {'artist': 'Art', 'title': 'Song'}
-    prefix = app_mod.downloader._temp_filename_from_metadata(meta)
+    prefix = core_queue.downloader._temp_filename_from_metadata(meta)
     (tmp_path / f'{prefix}.webm.part').touch()
     (tmp_path / f'{prefix}.temp.mp3').touch()
     (tmp_path / 'Other - Track.mp3').touch()
-    with app_mod.queue_lock:
-        app_mod.download_status['current_download'] = {'metadata': meta, 'user_key': 'x'}
+    with core_queue.queue_lock:
+        core_queue.download_status['current_download'] = {'metadata': meta, 'user_key': 'x'}
     try:
-        with patch.object(app_mod.downloader, 'temp_dir', tmp_path):
+        with patch.object(core_queue.downloader, 'temp_dir', tmp_path):
             with pytest.raises(SystemExit) as exc:
-                app_mod._on_sigterm(15, None)
+                core_worker._on_sigterm(15, None)
         assert exc.value.code == 0
         assert [f.name for f in tmp_path.iterdir()] == ['Other - Track.mp3']
     finally:
-        with app_mod.queue_lock:
-            app_mod.download_status['current_download'] = None
+        with core_queue.queue_lock:
+            core_queue.download_status['current_download'] = None
 
 
 def test_ssf02_sigterm_idle_exits_0(flask_setup):
     _, _, _, app_mod = flask_setup
     with pytest.raises(SystemExit) as exc:
-        app_mod._on_sigterm(15, None)
+        core_worker._on_sigterm(15, None)
     assert exc.value.code == 0
 
 
@@ -998,11 +1002,11 @@ def test_ssf10_zip_refused_on_admin_dir_whatever_the_role(flask_setup, tmp_path)
         with patch.object(app_mod, '_user_music_dir', return_value=keep.parent), \
              patch.object(app_mod, '_is_mount_point', side_effect=lambda p: p == keep.parent.resolve()):
             assert c.post('/api/prepare-zip', headers=h).status_code == 403
-            app_mod.store.zip_set(uid_for(sub), status='ready', zip_path=str(stale_zip), total=1)
+            core_queue.store.zip_set(uid_for(sub), status='ready', zip_path=str(stale_zip), total=1)
             assert c.get('/api/download-zip', headers=h).status_code == 403
         assert keep.exists()
     finally:
-        app_mod.store.zip_delete(uid_for(sub))
+        core_queue.store.zip_delete(uid_for(sub))
         keep.unlink(missing_ok=True)
 
 
@@ -1037,31 +1041,31 @@ def test_ssf03_worker_alternates_between_members(flask_setup):
     _drain_queue(app_mod)
     alice = {'uid': uid_for('alice'), 'sub': 'alice', 'role': 'member'}
     bob   = {'uid': uid_for('bob'),   'sub': 'bob',   'role': 'member'}
-    app_mod._enqueue_job(alice, [_queued_song('alice', t) for t in ('a1', 'a2', 'a3')])
-    app_mod._enqueue_job(bob,   [_queued_song('bob', 'b1')])
+    core_queue._enqueue_job(alice, [_queued_song('alice', t) for t in ('a1', 'a2', 'a3')])
+    core_queue._enqueue_job(bob,   [_queued_song('bob', 'b1')])
     seen = []
-    with patch.object(app_mod, '_process_song', side_effect=lambda it: seen.append(it['metadata']['title'])):
-        while app_mod._worker_step():
+    with patch.object(core_worker, '_process_song', side_effect=lambda it: seen.append(it['metadata']['title'])):
+        while core_worker._worker_step():
             pass
     assert seen == ['a1', 'b1', 'a2', 'a3']
-    assert app_mod.store.pending_count() == 0
+    assert core_queue.store.pending_count() == 0
     _drain_queue(app_mod)
 
 
 def test_ssf03_daily_quota_per_member_admin_unlimited(flask_setup):
     c, _, _, app_mod = flask_setup
     _drain_queue(app_mod)
-    today = app_mod._today()
+    today = core_queue._today()
     for sub in ('quota-a', 'quota-b'):
         give_cookies(app_mod, uid_for(sub))
     give_cookies(app_mod, ADMIN_DIR)
     body = {'url': 'https://www.youtube.com/watch?v=abc', 'title': 'T', 'artist': 'A', 'album': 'B'}
     try:
-        with patch.object(app_mod, 'DAILY_DOWNLOAD_LIMIT', 2):
-            app_mod.store.daily_increment(uid_for('quota-a'), today)
-            app_mod.store.daily_increment(uid_for('quota-a'), today)
-            app_mod.store.daily_increment(ADMIN_DIR, today)
-            app_mod.store.daily_increment(ADMIN_DIR, today)
+        with patch.object(core_config, 'DAILY_DOWNLOAD_LIMIT', 2):
+            core_queue.store.daily_increment(uid_for('quota-a'), today)
+            core_queue.store.daily_increment(uid_for('quota-a'), today)
+            core_queue.store.daily_increment(ADMIN_DIR, today)
+            core_queue.store.daily_increment(ADMIN_DIR, today)
             r = c.post('/api/download', json=body, headers=auth_headers(sub='quota-a'))
             assert r.status_code == 429 and r.get_json()['code'] == 'daily_limit'
             r = c.post('/api/queue-direct', json={'url': body['url']}, headers=auth_headers(sub='quota-a'))
@@ -1079,14 +1083,14 @@ def test_ssf03_status_tells_who_uses_the_worker(flask_setup):
     c, _, _, app_mod = flask_setup
     _drain_queue(app_mod)
     bob = {'uid': uid_for('bob'), 'sub': 'bob', 'role': 'member'}
-    app_mod._enqueue_job(bob, [_queued_song('bob', 'b1')])
-    with app_mod.queue_lock:
-        app_mod.download_status['in_progress'] = True
-        app_mod.download_status['current_download'] = {
+    core_queue._enqueue_job(bob, [_queued_song('bob', 'b1')])
+    with core_queue.queue_lock:
+        core_queue.download_status['in_progress'] = True
+        core_queue.download_status['current_download'] = {
             'url': 'u', 'metadata': {'artist': 'Art', 'title': 'Secret'},
             'user_key': uid_for('alice'), 'user_pseudo': 'alice'}
     try:
-        with patch.object(app_mod.downloader, 'get_progress', return_value={'phase': 'downloading', 'percent': 10}):
+        with patch.object(core_queue.downloader, 'get_progress', return_value={'phase': 'downloading', 'percent': 10}):
             member = c.get('/api/status', headers=auth_headers(sub='bob')).get_json()
             admin  = c.get('/api/status', headers=admin_headers()).get_json()
             idle   = c.get('/api/status', headers=auth_headers(sub='carol')).get_json()
@@ -1101,9 +1105,9 @@ def test_ssf03_status_tells_who_uses_the_worker(flask_setup):
         # Membre sans titre en file : rien à attendre
         assert idle['worker']['songs_before_mine'] is None and idle['pending'] == []
     finally:
-        with app_mod.queue_lock:
-            app_mod.download_status['in_progress'] = False
-            app_mod.download_status['current_download'] = None
+        with core_queue.queue_lock:
+            core_queue.download_status['in_progress'] = False
+            core_queue.download_status['current_download'] = None
         _drain_queue(app_mod)
 
 
@@ -1126,10 +1130,10 @@ def test_ssf03_owner_file_holds_pseudo(flask_setup):
 def test_ssf03_zip_status_idle_when_ready_file_vanished(flask_setup, tmp_path):
     c, _, _, app_mod = flask_setup
     key = uid_for('ghost')
-    app_mod.store.zip_set(key, status='ready', zip_path=str(tmp_path / 'gone.zip'), total=1)
+    core_queue.store.zip_set(key, status='ready', zip_path=str(tmp_path / 'gone.zip'), total=1)
     r = c.get('/api/zip-status', headers=auth_headers(sub='ghost')).get_json()
     assert r['status'] == 'idle'
-    assert app_mod.store.zip_get(key) is None
+    assert core_queue.store.zip_get(key) is None
 
 
 def test_ssf03_zip_build_survives_as_ready(flask_setup):
@@ -1149,7 +1153,7 @@ def test_ssf03_zip_build_survives_as_ready(flask_setup):
         assert _wait_zip(c, h)['status'] == 'ready'
     finally:
         app_mod._zip_path(uid_for('keeper')).unlink(missing_ok=True)
-        app_mod.store.zip_delete(uid_for('keeper'))
+        core_queue.store.zip_delete(uid_for('keeper'))
 
 
 def test_ssf03_progress_reset_when_a_song_starts(flask_setup):
@@ -1157,18 +1161,18 @@ def test_ssf03_progress_reset_when_a_song_starts(flask_setup):
     # remettre à zéro, /api/status annonce le nouveau titre fini (bond de la barre).
     _, _, _, app_mod = flask_setup
     give_cookies(app_mod, uid_for('prog'))
-    app_mod.downloader.progress.phase = 'completed'
-    app_mod.downloader.progress.percent = 100
+    core_queue.downloader.progress.phase = 'completed'
+    core_queue.downloader.progress.percent = 100
     seen = {}
 
     def fake_download(*_a, **_k):
-        seen.update(app_mod.downloader.get_progress())
+        seen.update(core_queue.downloader.get_progress())
         return {'success': False, 'error': 'stop'}
 
-    with patch.object(app_mod.downloader, 'download', side_effect=fake_download):
-        app_mod._process_song(_queued_song('prog', 'p1'))
+    with patch.object(core_queue.downloader, 'download', side_effect=fake_download):
+        core_worker._process_song(_queued_song('prog', 'p1'))
     assert seen['phase'] == 'idle' and seen['percent'] == 0
-    app_mod._last_error_by_user.clear()
+    core_queue._last_error_by_user.clear()
 
 
 # ── SSF-14 : export ZIP interrompu → bibliothèque conservée ───────────────────
@@ -1196,7 +1200,7 @@ def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
         assert not lib.exists()
     finally:
         app_mod._zip_path(uid_for('mobile')).unlink(missing_ok=True)
-        app_mod.store.zip_delete(uid_for('mobile'))
+        core_queue.store.zip_delete(uid_for('mobile'))
 
 
 # ── Journal des téléchargements (admin) : limite, historique complet ─────────
@@ -1204,7 +1208,7 @@ def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
 def _write_dl_log(app_mod, n):
     lines = [f'2026-10-{(i % 28) + 1:02d} 12:00:00 | alice | Artiste {i % 3} | Album {i % 5} | Titre {i}'
              for i in range(n)]
-    (app_mod.LOG_DIR / 'downloads.log').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    (core_config.LOG_DIR / 'downloads.log').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
 def test_dl_logs_limit_all_returns_full_history(flask_setup):
@@ -1245,7 +1249,7 @@ def test_ssf13_spa_pages_served_with_auth(flask_setup, tmp_path):
 
 def test_ssf13_song_percent_moves_smoothly_and_never_goes_back(flask_setup):
     _, _, _, app_mod = flask_setup
-    sp = app_mod._song_percent
+    sp = core_progress._song_percent
     # Conversion longue : l'avancement suit le temps au lieu de rester figé
     assert sp('converting', 50, 2, 20) == 30.0          # plancher de la conversion
     assert 40 < sp('converting', 50, 10, 20) < 50
@@ -1267,15 +1271,15 @@ def test_ssf13_song_percent_moves_smoothly_and_never_goes_back(flask_setup):
 def test_ssf13_song_timing_is_learned_per_audio_second(flask_setup):
     _, _, _, app_mod = flask_setup
     for key in ('song_rate', 'song_secs'):
-        app_mod.store.meta_set(key, '0')                 # 0 = valeur par défaut
-    assert app_mod._expected_song_seconds(0) == app_mod.SONG_SECS_DEFAULT
-    assert app_mod._expected_song_seconds(200) == pytest.approx(200 * app_mod.SONG_RATE_DEFAULT)
-    app_mod._learn_song_timing(40, 200)                  # 0,2 s par s d'audio
+        core_queue.store.meta_set(key, '0')                 # 0 = valeur par défaut
+    assert core_progress._expected_song_seconds(0) == core_progress.SONG_SECS_DEFAULT
+    assert core_progress._expected_song_seconds(200) == pytest.approx(200 * core_progress.SONG_RATE_DEFAULT)
+    core_progress._learn_song_timing(40, 200)                  # 0,2 s par s d'audio
     rate = 0.08 + 0.3 * (0.2 - 0.08)
-    assert app_mod._expected_song_seconds(200) == pytest.approx(200 * rate, rel=1e-3)
-    assert app_mod._expected_song_seconds('?') == pytest.approx(20 + 0.3 * (40 - 20), rel=1e-3)
+    assert core_progress._expected_song_seconds(200) == pytest.approx(200 * rate, rel=1e-3)
+    assert core_progress._expected_song_seconds('?') == pytest.approx(20 + 0.3 * (40 - 20), rel=1e-3)
     for key in ('song_rate', 'song_secs'):
-        app_mod.store.meta_set(key, '0')
+        core_queue.store.meta_set(key, '0')
 
 
 def test_ssf13_status_has_one_progress_line_per_album(flask_setup):
@@ -1285,16 +1289,16 @@ def test_ssf13_status_has_one_progress_line_per_album(flask_setup):
     album = [_queued_song('bob', f'b{i}') for i in range(3)]
     for song in album:
         song['metadata']['album'] = 'Disque'
-    app_mod._enqueue_job(bob, album)
-    app_mod._enqueue_job(bob, [_queued_song('bob', 'solo')])
-    claimed = app_mod.store.claim_next()                 # b0 en cours
-    with app_mod.queue_lock:
-        app_mod.download_status['in_progress'] = True
-        app_mod.download_status['current_download'] = {
+    core_queue._enqueue_job(bob, album)
+    core_queue._enqueue_job(bob, [_queued_song('bob', 'solo')])
+    claimed = core_queue.store.claim_next()                 # b0 en cours
+    with core_queue.queue_lock:
+        core_queue.download_status['in_progress'] = True
+        core_queue.download_status['current_download'] = {
             'url': 'u', 'metadata': claimed[1]['metadata'], 'user_key': uid_for('bob'), 'user_pseudo': 'bob'}
-    app_mod._song_clock.update(started=app_mod.time.monotonic() - 10, expected=20.0)
+    core_progress._song_clock.update(started=core_worker.time.monotonic() - 10, expected=20.0)
     try:
-        with patch.object(app_mod.downloader, 'get_progress', return_value={'phase': 'converting', 'percent': 50}):
+        with patch.object(core_queue.downloader, 'get_progress', return_value={'phase': 'converting', 'percent': 50}):
             st = c.get('/api/status', headers=auth_headers(sub='bob')).get_json()
             other = c.get('/api/status', headers=auth_headers(sub='carol')).get_json()
         assert 40 < st['current_percent'] < 50              # plus de palier figé à 55 %
@@ -1302,10 +1306,10 @@ def test_ssf13_status_has_one_progress_line_per_album(flask_setup):
             ('Disque', 3, 3, True), (st['jobs'][1]['album'], 1, 1, False)]
         assert other['jobs'] == []                          # jamais la file d'un autre membre
     finally:
-        with app_mod.queue_lock:
-            app_mod.download_status['in_progress'] = False
-            app_mod.download_status['current_download'] = None
-        app_mod.store.finish(claimed[0])
+        with core_queue.queue_lock:
+            core_queue.download_status['in_progress'] = False
+            core_queue.download_status['current_download'] = None
+        core_queue.store.finish(claimed[0])
         _drain_queue(app_mod)
 
 
@@ -1320,10 +1324,10 @@ def test_ssf13_queued_items_keep_song_duration(flask_setup):
                 {'url': 'https://www.youtube.com/watch?v=bbbbbbbbbbb', 'title': 't2'}]}})
         assert r.status_code == 200
         items = []
-        while (claimed := app_mod.store.claim_next()) is not None:
+        while (claimed := core_queue.store.claim_next()) is not None:
             items.append(claimed[1])
-            app_mod.store.finish(claimed[0])
+            core_queue.store.finish(claimed[0])
         assert [i['duration'] for i in items] == [181, 0]
-        assert app_mod._duration('12.7') == 12 and app_mod._duration('abc') == 0
+        assert core_queue._duration('12.7') == 12 and core_queue._duration('abc') == 0
     finally:
         _drain_queue(app_mod)
