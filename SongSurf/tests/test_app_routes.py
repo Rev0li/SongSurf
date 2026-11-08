@@ -6,15 +6,14 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 
 import pytest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
+from unittest.mock import patch
 
 with patch('shutil.which', return_value=None):
     from core import config as core_config, progress as core_progress
     from core import queue as core_queue, worker as core_worker
     from routes.extension import _is_netscape_cookies
-    from core import tags as core_tags
-    from routes import admin as routes_admin
+    from core import storage as core_storage, tags as core_tags
+    from routes import admin as routes_admin, pages as routes_pages, zip as routes_zip
 
 PROXY_SECRET = 'proxy-secret-for-tests'
 
@@ -147,7 +146,7 @@ def test_static_root_assets_served_no_auth(flask_setup, tmp_path):
     build = tmp_path / 'build'
     (build / 'help').mkdir(parents=True)
     (build / 'help' / 'download-1.png').write_bytes(b'\x89PNG\r\n\x1a\n fake')
-    with patch.object(app_mod, '_FRONTEND_BUILD', build.resolve()):
+    with patch.object(routes_pages, '_FRONTEND_BUILD', build.resolve()):
         # Real file → served, no auth needed
         r = c.get('/help/download-1.png')
         assert r.status_code == 200
@@ -161,7 +160,7 @@ def test_static_root_assets_no_traversal(flask_setup, tmp_path):
     build = tmp_path / 'build2'
     build.mkdir()
     (tmp_path / 'secret.txt').write_text('nope')
-    with patch.object(app_mod, '_FRONTEND_BUILD', build.resolve()):
+    with patch.object(routes_pages, '_FRONTEND_BUILD', build.resolve()):
         r = c.get('/%2e%2e/secret.txt')
         assert r.status_code in (400, 404)
 
@@ -314,7 +313,7 @@ def test_user_music_dir_rejects_invalid_uid(flask_setup):
     _, _, _, app_mod = flask_setup
     for bad in ('../../etc/passwd', '..', '', 'short', 'a/b-cdefghij', 'x' * 65):
         with pytest.raises(ValueError, match='invalide'):
-            app_mod._user_music_dir({'sub': 'x', 'uid': bad})
+            core_storage._user_music_dir({'sub': 'x', 'uid': bad})
 
 
 # ── Album tracks + renumber (mode « Numéroter les pistes ») ───────────────────
@@ -1001,8 +1000,8 @@ def test_ssf10_zip_refused_on_admin_dir_whatever_the_role(flask_setup, tmp_path)
     sub = 'member-ssf10'
     h = auth_headers(sub=sub)
     try:
-        with patch.object(app_mod, '_user_music_dir', return_value=keep.parent), \
-             patch.object(app_mod, '_is_mount_point', side_effect=lambda p: p == keep.parent.resolve()):
+        with patch.object(routes_zip, '_user_music_dir', return_value=keep.parent), \
+             patch.object(routes_zip, '_is_mount_point', side_effect=lambda p: p == keep.parent.resolve()):
             assert c.post('/api/prepare-zip', headers=h).status_code == 403
             core_queue.store.zip_set(uid_for(sub), status='ready', zip_path=str(stale_zip), total=1)
             assert c.get('/api/download-zip', headers=h).status_code == 403
@@ -1154,7 +1153,7 @@ def test_ssf03_zip_build_survives_as_ready(flask_setup):
         assert c.post('/api/prepare-zip', headers=h).status_code == 202
         assert _wait_zip(c, h)['status'] == 'ready'
     finally:
-        app_mod._zip_path(uid_for('keeper')).unlink(missing_ok=True)
+        routes_zip._zip_path(uid_for('keeper')).unlink(missing_ok=True)
         core_queue.store.zip_delete(uid_for('keeper'))
 
 
@@ -1201,7 +1200,7 @@ def test_ssf14_interrupted_zip_keeps_library_and_ready_zip(flask_setup):
         r.get_data()
         assert not lib.exists()
     finally:
-        app_mod._zip_path(uid_for('mobile')).unlink(missing_ok=True)
+        routes_zip._zip_path(uid_for('mobile')).unlink(missing_ok=True)
         core_queue.store.zip_delete(uid_for('mobile'))
 
 
@@ -1241,7 +1240,7 @@ def test_ssf13_spa_pages_served_with_auth(flask_setup, tmp_path):
     build = tmp_path / 'build'
     build.mkdir()
     (build / 'index.html').write_text('<html>spa</html>')
-    with patch.object(app_mod, '_FRONTEND_BUILD', build):
+    with patch.object(routes_pages, '_FRONTEND_BUILD', build):
         for route in ('/library', '/metadata'):
             r = c.get(route)                       # sans identité : jamais l'appli
             assert r.status_code == 401 and b'spa' not in r.data, route

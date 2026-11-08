@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 with patch('shutil.which', return_value=None):
     import app as app_mod
-    from core import config as core_config
+    from core import config as core_config, storage as core_storage
     from auth.provider import get_current_user
 
 _PROXY_SECRET = 'proxy-secret-for-tests'
@@ -173,7 +173,7 @@ def test_dev_mode_gives_local_admin(gate):
 def test_dev_mode_stores_like_production(gate, tmp_path):
     gate.setattr(core_config, 'DEV_MODE', True)
     gate.setattr(core_config, 'BASE_MUSIC_DIR', tmp_path)
-    assert app_mod._user_music_dir(_user_for()) == tmp_path.resolve() / 'dev-user-local'
+    assert core_storage._user_music_dir(_user_for()) == tmp_path.resolve() / 'dev-user-local'
 
 
 # ── SSF-01 : CORS limité à l'extension SongSurf Clip ──────────────────────────

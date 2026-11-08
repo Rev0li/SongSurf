@@ -19,11 +19,13 @@ graph TD
 
 ## Component breakdown
 
-### SongSurf (`server/app.py`)
+### SongSurf (`server/`)
+
+Layout: `app.py` (creation, CORS, size limit, blueprints, startup) · `auth/` (identity) · `core/` (config, storage, queue, worker, progress, tags) · `routes/` (blueprints, one per domain).
 
 Always running (~40 MB RAM idle). Responsibilities:
 
-- **Portal gate (AUTH-09)** — `_user_from_portal_headers()`: when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time compare), trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role` lowercased, `X-User-Id` → `uid`, the storage key); otherwise → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). A request without a valid portal UUID is refused. Empty secret → locked. `DEV_MODE=true` → local admin dev user.
+- **Portal gate (AUTH-09)** — `auth/portal.py`, `user_from_portal_headers()`: when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time compare), trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role` lowercased, `X-User-Id` → `uid`, the storage key); otherwise → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). A request without a valid portal UUID is refused. Empty secret → locked. `DEV_MODE=true` → local admin dev user.
 - **CORS** — allows only the SongSurf Clip extension origin (fixed ID from the manifest `key`); `null` and other extensions are refused. `/logout` redirects to the portal.
 - **Per-user storage** — keyed by the **portal UUID** (SSF-03), admin included: `/data/music/<uid>/` holds a `.owner` file with the pseudo for readability; cookies `/data/cookies/<uid>.txt`. On the NAS the admin library is the Jellyfin music folder mounted on `/data/music/<ADMIN_UID>`. `DEV_MODE` uses the same layout under `/data/music/dev-user-local/`.
 - **Persistent state** (`server/state_store.py`, SQLite `/data/state/songsurf.db`) — download queue, round-robin pointer, daily counters, ZIP export state. Survives restarts: a song interrupted mid-download goes back to pending, a ZIP being built is reported as interrupted.

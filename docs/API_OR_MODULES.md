@@ -1,6 +1,6 @@
 # API & Modules — SongSurf
 
-Reference generated from the current code (`server/app.py`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`). All endpoints return JSON unless noted.
+Reference generated from the current code (`server/app.py`, `server/auth/`, `server/core/`, `server/routes/`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`). All endpoints return JSON unless noted.
 
 **Auth (portal gate):** every `/api/*` route requires the identity sent by Caddy with a valid proof (`@auth_required`): `X-Proxy-Token` = `SONGSURF_PROXY_SECRET` (constant-time), then `X-User-Name` (pseudo → `sub`) / `X-User-Role` / `X-User-Id` (portal UUID → `uid`, storage key, required). Without it → 401 JSON (API / extension) or the 401 « passe par le portail » page. In `DEV_MODE` a local admin dev user is injected.
 
@@ -103,7 +103,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 ---
 
-## Gate, CORS and logout (`server/app.py`)
+## Gate, CORS and logout (`server/app.py`, `server/auth/`, `routes/pages.py`)
 
 | Route | Method | Description |
 |---|---|---|
@@ -169,12 +169,12 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 |---|---|
 | `audit_artist(artist_dir, music_dir, album_lookup=, track_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Missing TRCK → unambiguous title match against the iTunes tracklist (`_match_missing_tracks`, feat-suffixes stripped). Reads via `mutagen.id3.ID3` |
 
-### Identity (`server/app.py`)
+### Identity (`server/auth/`)
 
 | Function | Description |
 |---|---|
-| `_user_from_portal_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, uid: X-User-Id, role, email: ''}`, else `None` (wrong proof logged) |
-| `_get_current_user()` | `DEV_MODE` → dev user; else `_user_from_portal_headers()` |
+| `user_from_portal_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, uid: X-User-Id, role, email: ''}`, else `None` (wrong proof logged) |
+| `get_current_user()` | `DEV_MODE` → dev user; else `user_from_portal_headers()` |
 | `_is_identified(user)` | Pseudo present **and** valid portal UUID, otherwise refused (no storage key) |
 
 ---

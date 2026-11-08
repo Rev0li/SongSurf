@@ -47,7 +47,7 @@ Portal gate (AUTH-09, **implemented**: SSF-11 then SSF-12 removed the JWT):
 
 1. Caddy on the VPS asks the portal before each request to `songsurf.` (`forward_auth`). No session → Caddy itself redirects to the portal login (navigation) or answers 401 (API); no SongSurf access → 403. SongSurf never redirects to a login page.
 2. Access granted → Caddy sends `X-User-Name` (exact pseudo) / `X-User-Role` / `X-User-Id` (portal UUID) plus the proof `X-Proxy-Token`, after stripping client-sent `X-User-*` and the portal cookie.
-3. SongSurf (`_user_from_portal_headers()` in `server/app.py`, the only identity source with `DEV_MODE`) trusts those headers **only** if `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time). Otherwise → 401 JSON (API / extension) or a « passe par le portail » page (`server/templates/use_portal.html`). Empty secret → locked.
+3. SongSurf (`user_from_portal_headers()` in `server/auth/portal.py`, the only identity source with `DEV_MODE`) trusts those headers **only** if `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time). Otherwise → 401 JSON (API / extension) or a « passe par le portail » page (`server/templates/use_portal.html`). Empty secret → locked.
 4. Identity: `sub` = `X-User-Name` (pseudo: display, logs, events, `.owner`), `uid` = `X-User-Id` (portal UUID, **storage key**, required: 401 without a valid one), `role` = `X-User-Role` lowercased. The old Watcher headers (`X-Watcher-Token`, `X-User-Portal-Id`) open nothing anymore.
 5. `/logout` redirects to `REVAUTH_HOME_URL` (the session is the portal's, no cookie here). Downloads keep running.
 6. `DEV_MODE=true` bypasses everything with a local admin dev user — never in production.
@@ -66,7 +66,10 @@ There are no login forms, password auth, guest sessions or JWT anymore (`?token=
 
 | File | Responsibility |
 |---|---|
-| `server/app.py` | Flask routes, auth guard, download queue + worker thread, per-user dirs, ZIP export, metadata editor API, extension endpoints |
+| `server/app.py` | Flask app creation, CORS, request size limit, blueprint registration, startup (~125 lines) |
+| `server/auth/` | `provider.py`: the only interface (`get_current_user()`, `auth_required`, `is_admin`, 401 response) · `portal.py`: `X-Proxy-Token` proof + `X-User-*` · `dev.py`: local dev user |
+| `server/core/` | `config.py`: env settings, data dirs, loggers · `storage.py`: per-user dirs and cookies · `queue.py`: queue state, `store`, daily quota, enqueue, `downloader` · `worker.py`: download worker, cookie errors, clean stop · `progress.py`: estimated % · `tags.py`: read/write ID3 |
+| `server/routes/` | Blueprints, same URLs: `download.py` (status, extract, download) · `extension.py` · `library.py` · `metadata.py` · `admin.py` (numbering, artist genre, iTunes audit, dl-logs) · `zip.py` · `pages.py` (SPA, static files, logout, `/api/me`, `/ping`) |
 | `server/downloader.py` | yt-dlp wrapper: metadata extraction (single + playlist/album), MP3 download to temp, progress tracking, artist list normalization |
 | `server/state_store.py` | `StateStore` (SQLite): persistent queue with round-robin `claim_next`/`finish`, daily counters, ZIP export state; `round_robin_order()` pure helper |
 | `server/organizer.py` | File placement `Artist/Album/Title.mp3`, ID3 tags via Mutagen, featuring detection, album covers (`cover.jpg` + embedded APIC) |
@@ -119,13 +122,14 @@ Maintenance tools (`server/library_audit.py`, UI on `/metadata`):
 
 - `SONGSURF_PROXY_SECRET` must match the secret Caddy reads on the VPS — rotating it requires restarting both sides. Same constraint for `SONGSURF_EVENTS_SECRET` (activity-event push, `auth/.secrets`).
 - The SongSurf port must never be exposed to the WAN (NAS firewall: LAN + Tailscale only). Without a valid `X-Proxy-Token`, every request gets 401 anyway.
-- CORS (`server/app.py`) allows **only** `chrome-extension://<SONGSURF_EXTENSION_ID>`; the ID is pinned by the `key` field of `chrome-extension/manifest.json` (test `test_cors_extension_id_matches_manifest` keeps both in sync). Never re-add `null` or `chrome-extension://*`.
+- CORS (`server/app.py`, ID in `core/config.py`) allows **only** `chrome-extension://<SONGSURF_EXTENSION_ID>`; the ID is pinned by the `key` field of `chrome-extension/manifest.json` (test `test_cors_extension_id_matches_manifest` keeps both in sync). Never re-add `null` or `chrome-extension://*`.
 - Request bodies are capped at 20 MB (`MAX_REQUEST_MB`, rejected in `before_request` — route-level `try/except` would turn Flask's 413 into a 500).
 - `/api/status` only returns the caller's `last_completed` / `last_error` (`_last_*_by_user`); `current_download` is `null` when it belongs to someone else.
 - Frontend changes require a rebuild: Docker multi-stage builds it (`make up --build` / `make deploy-nas`); for local no-Docker dev use `make frontend-dev`.
 - Download cancellation does not exist (dead `cancel_flag` removed in SSF-02); it will come back with feature F2.
 - yt-dlp is **pinned** in `server/requirements.txt` (no update at boot): when YouTube breaks extraction, `make bump-ytdlp` (or `VERSION=…`) then rebuild/`make deploy-nas`.
 - Both services run under **waitress** (single process, multi-thread — never gunicorn multi-process: queue/status state is process-global) with `init: true` (tini). SIGTERM → clean exit 0 (SongSurf deletes the current song's temp files; incomplete `*.part`/`*.temp.*` are also purged at boot).
+- Values that can be rebound (`config.BASE_MUSIC_DIR`, `config.DEV_MODE`, `queue.store`…) are always read as `config.X` / `queue.store`, never imported by name. `core/` never imports `auth/` or `routes/`.
 - Healthcheck uses `$${FLASK_PORT}` (resolved inside the container) — `${…}` would be resolved from the host `.env` and hit the wrong port.
 - Path containment checks use `Path.is_relative_to()` everywhere (migrated 2026-06); never reintroduce `str.startswith()` (prefix-match flaw: `/music/user` matches `/music/user2`).
 - Extension DOM scraping of music.youtube.com is fragile (virtual scrolling, selector drift) — see memory/project notes.
