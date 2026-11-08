@@ -33,7 +33,7 @@ Requests that don't reach SongSurf through Caddy never get an identity: no login
 | `X-User-Id` | portal UUID, stable → `uid`, the **storage key** (required) |
 | `X-Proxy-Token` | proof that the request comes from Caddy |
 
-Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-Proxy-Token` itself. CORS preflights (`OPTIONS`) are exempted from the gate.
+Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-Proxy-Token` itself. Exempted from the gate, and sent **without** proof nor identity (SongSurf sees an anonymous request): CORS preflights (`OPTIONS`), and `GET`/`HEAD` on the home-screen files `/manifest.json`, `/favicon.svg`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png` — the phone fetches them without the session (AUTH-31). Renaming or adding an icon means updating that list in the Caddyfile.
 
 ### Proof
 
