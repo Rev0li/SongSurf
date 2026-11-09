@@ -27,7 +27,7 @@ COUNTRIES = ('FR', 'US')
 # Cache mémoire (artiste, album) → genres : un album de N pistes ne coûte
 # qu'un seul lookup (2 appels HTTP), et on reste loin du rate-limit iTunes.
 _cache = {}
-_album_cache = {}   # (artiste, album) → info album (audit / backfill)
+_album_cache = {}   # (artiste, album) → info album (audit)
 _tracks_cache = {}  # collection_id → tracklist iTunes (audit TRCK)
 _cache_lock = threading.Lock()
 

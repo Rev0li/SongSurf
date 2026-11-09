@@ -19,13 +19,15 @@ graph TD
 
 ## Component breakdown
 
-### SongSurf (`server/app.py`)
+### SongSurf (`server/`)
+
+Layout: `app.py` (creation, CORS, size limit, blueprints, startup) · `auth/` (identity) · `core/` (config, storage, queue, worker, progress, tags) · `routes/` (blueprints, one per domain).
 
 Always running (~40 MB RAM idle). Responsibilities:
 
-- **Portal gate (AUTH-09)** — `_user_from_portal_headers()`: when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time compare), trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role` lowercased, `X-User-Id` → `uid`, the storage key); otherwise → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). A request without a valid portal UUID is refused. Empty secret → locked. `DEV_MODE=true` → local admin dev user.
+- **Portal gate (AUTH-09)** — `auth/portal.py`, `user_from_portal_headers()`: when `X-Proxy-Token` matches `SONGSURF_PROXY_SECRET` (constant-time compare), trusts the identity set by Caddy (`X-User-Name` → `sub`, `X-User-Role` lowercased, `X-User-Id` → `uid`, the storage key); otherwise → 401 JSON (API / extension) or a « passe par le portail » page (no login redirect: Caddy does it). A request without a valid portal UUID is refused. Empty secret → locked. `DEV_MODE=true` → local admin dev user.
 - **CORS** — allows only the SongSurf Clip extension origin (fixed ID from the manifest `key`); `null` and other extensions are refused. `/logout` redirects to the portal.
-- **Per-user storage** — keyed by the **portal UUID** (SSF-03), admin included: `/data/music/<uid>/` holds a `.owner` file with the pseudo for readability; cookies `/data/cookies/<uid>.txt`. On the NAS the admin library is the Jellyfin music folder mounted on `/data/music/<ADMIN_UID>`. `DEV_MODE` uses a flat `/data/music/`.
+- **Per-user storage** — keyed by the **portal UUID** (SSF-03), admin included: `/data/music/<uid>/` holds a `.owner` file with the pseudo for readability; cookies `/data/cookies/<uid>.txt`. On the NAS the admin library is the Jellyfin music folder mounted on `/data/music/<ADMIN_UID>`. `DEV_MODE` uses the same layout under `/data/music/dev-user-local/`.
 - **Persistent state** (`server/state_store.py`, SQLite `/data/state/songsurf.db`) — download queue, round-robin pointer, daily counters, ZIP export state. Survives restarts: a song interrupted mid-download goes back to pending, a ZIP being built is reported as interrupted.
 - **Download orchestration** — one worker thread takes songs one at a time, **round-robin between users** (each user's songs keep their order); max `MAX_PENDING_JOBS` (100) jobs per user; daily quota `DAILY_DOWNLOAD_LIMIT` per member, admin unlimited; batch progress for albums.
 - **ZIP export** — built in a background thread (`/api/prepare-zip` → poll `/api/zip-status` → `/api/download-zip`); the member library is deleted after the download completes (temporary-library model). The admin library is permanent: never exported nor deleted (SSF-10 — no ZIP button for the admin, the API answers 403 `zip_disabled`; also refused on the music root and on any mount point).
@@ -49,7 +51,7 @@ Post-download file management:
 - Places files as `Artist/Album/Title.mp3` (primary artist folder), duplicate-safe with `(n)` suffixes. MP3 only.
 - Featuring detection — `feat./ft./featuring` parsed out of the title, re-appended as `(feat. X)`, and featured artists added to the TPE1 list.
 - ID3 tags (Mutagen): `TIT2`, `TPE1` **multi-value**, `TPE2` album artist (always set, single value — Jellyfin grouping key), `TALB`, `TDRC`, `TRCK` as `n/total`, `APIC` embedded cover.
-- `cover.jpg` written into each album folder (thumbnail sidecar → embedded APIC → FFmpeg frame extraction fallbacks); `extract_album_covers()` backfills the whole library.
+- `cover.jpg` written into each album folder (thumbnail sidecar → embedded APIC → FFmpeg frame extraction fallbacks).
 
 ---
 

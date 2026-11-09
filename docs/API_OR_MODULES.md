@@ -1,6 +1,6 @@
 # API & Modules — SongSurf
 
-Reference generated from the current code (`server/app.py`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`). All endpoints return JSON unless noted.
+Reference generated from the current code (`server/app.py`, `server/auth/`, `server/core/`, `server/routes/`, `server/state_store.py`, `server/downloader.py`, `server/organizer.py`). All endpoints return JSON unless noted.
 
 **Auth (portal gate):** every `/api/*` route requires the identity sent by Caddy with a valid proof (`@auth_required`): `X-Proxy-Token` = `SONGSURF_PROXY_SECRET` (constant-time), then `X-User-Name` (pseudo → `sub`) / `X-User-Role` / `X-User-Id` (portal UUID → `uid`, storage key, required). Without it → 401 JSON (API / extension) or the 401 « passe par le portail » page. In `DEV_MODE` a local admin dev user is injected.
 
@@ -13,7 +13,7 @@ Reference generated from the current code (`server/app.py`, `server/state_store.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/ping` | GET | Healthcheck (no auth) — used by the Docker healthcheck |
-| `/api/me` | GET | `{sub, uid, role, email, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
+| `/api/me` | GET | `{sub, uid, role, pseudo}` of the current user (`pseudo` = exact portal pseudo, shown in the header; `uid` = portal UUID, the storage key) |
 | `/api/status` | GET | Download progress, queue size, batch progress, caller's daily counter, `is_mine`, `worker` |
 
 **`GET /api/status` — response:**
@@ -62,7 +62,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}], playlists: [...]}` (flat folders = legacy) |
+| `/api/library` | GET | Tree: `{artists: [{name, path, albums: [{name, path, songs[]}], has_picture}]}` |
 | `/api/library/move` | POST | `{source, target_folder}` — move one MP3; tags follow the new folder (SSF-13): TALB = album folder, TPE2 = artist folder, and in TPE1 only the primary artist is replaced (old artist → new one; featurings kept; unchanged when the artist folder is the same) |
 | `/api/library/move-folder` | POST | `{folder_path, new_parent}` — move an album to another artist (merges if it exists); same tag rules as `move` on every MP3 |
 | `/api/library/delete-song` | POST | **Admin only** (403 `admin_only`). `{path}` — delete one MP3; an album left without MP3 is removed (cover included), then its artist folder if empty → `{removed_album}` |
@@ -82,7 +82,6 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | `/api/library/album-status` | GET | `?folder_path=<artist>` → per-album tag completeness `[{path, name, tracks, missing: {genre, year, track_number}, genres: [distinct TCON values], complete}]` (powers the artist-view badges + prefills the artist genre field) |
 | `/api/library/renumber-album` | POST | **Admin only** (SSF-13). `{folder_path, paths: [ordered]}` → writes TRCK `i/total` on the whole album. `paths` must cover every MP3 of the folder exactly once |
 | `/api/library/set-artist-genre` | POST | **Admin only** (SSF-13). `{folder_path: <artist>, genre}` → overwrites TCON on every MP3 under the artist folder (all albums, recursive). `genre` accepts `;`-separated multi-values → `{updated, errors[]}` |
-| `/api/library/song-cover/upload` | POST | form `path` + `image` → embeds APIC + writes `cover.jpg` |
 | `/api/library/album-cover/upload` | POST | form `folder_path` + `image` → `cover.jpg` only |
 | `/api/library/artist-cover/upload` | POST | form `folder_path` + `image` → `folder.jpg` |
 | `/api/library/audit/artist` | GET | **Admin only** (expert tool, SSF-13 ; 403 `admin_only` for members). `?path=<artist folder>` → metadata audit report: per-album iTunes comparison (genre, year, album artist, track numbers, TPE1/TPE2 coherence) with actionable `recommendations` (`{id, field, proposed, current, reason, changes: [{path, value}]}`) and informational `warnings`. Missing TRCK values are matched against the official iTunes tracklist (unambiguous title matches only). Nothing is written |
@@ -93,9 +92,6 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/admin/dl-logs` | GET | `?pseudo=&limit=` → parsed download log entries, newest first (403 for non-admin). `limit` 1–500 (default 100, unreadable → 100) or `all` = full history (portal taste profiles) |
-| `/api/admin/extract-covers` | POST | `{overwrite}` → backfill `cover.jpg` across the whole library |
-| `/api/admin/genre-backfill` | POST | Starts a background thread that fills missing TCON across the whole admin library via iTunes lookups (409 if already running). No UI button — the per-artist audit covers genres; kept for curl/automation |
-| `/api/admin/genre-backfill/status` | GET | `{status: idle\|running\|done\|error, total, done, updated, failed, last_file}` |
 
 ### Browser extension
 
@@ -107,7 +103,7 @@ Songs in playlist extraction carry: `{title, artist, artists[], url, id, duratio
 
 ---
 
-## Gate, CORS and logout (`server/app.py`)
+## Gate, CORS and logout (`server/app.py`, `server/auth/`, `routes/pages.py`)
 
 | Route | Method | Description |
 |---|---|---|
@@ -158,7 +154,6 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | `organize(file_path, metadata)` | Featuring detection → `Artist/Album/Title.mp3` placement (duplicate-safe) → `_update_tags` → `cover.jpg`. `metadata`: `{artist, artists[], album_artist, album, title, year, track_number, track_total}` |
 | `detect_featuring(title, artist)` | Parses `feat./ft./featuring` patterns → `{main_artist, feat_artists[], clean_title, has_feat}` |
 | `_update_tags(path, tags, thumbnail)` | Mutagen: TIT2, **TPE1 multi-value**, **TPE2 (album_artist or primary artist, always set)**, TALB, TDRC, **TRCK `n/total`**, APIC (cropped/resized JPEG) |
-| `extract_album_covers(overwrite)` | Backfills `cover.jpg` per album (sidecar → APIC → FFmpeg frame fallbacks) |
 
 ### `server/genre_lookup.py`
 
@@ -173,14 +168,13 @@ SQLite (`/data/state/songsurf.db`, WAL), one connection behind a lock. At open, 
 | Function | Description |
 |---|---|
 | `audit_artist(artist_dir, music_dir, album_lookup=, track_lookup=)` | Full report for one artist: per-album recommendations (genre/year/album_artist/artist/track_number, each a checkable diff) + warnings (TPE1/TPE2 mismatch, duplicate track numbers, missing covers, incomplete album vs iTunes). Missing TRCK → unambiguous title match against the iTunes tracklist (`_match_missing_tracks`, feat-suffixes stripped). Reads via `mutagen.id3.ID3` |
-| `backfill_genres(music_dir, state, lock, genre_lookup_fn=)` | Background worker: writes missing TCON across the library (tags first, folder names as fallback), updates the shared progress `state` under `lock` |
 
-### Identity (`server/app.py`)
+### Identity (`server/auth/`)
 
 | Function | Description |
 |---|---|
-| `_user_from_portal_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, uid: X-User-Id, role, email: ''}`, else `None` (wrong proof logged) |
-| `_get_current_user()` | `DEV_MODE` → dev user; else `_user_from_portal_headers()` |
+| `user_from_portal_headers()` | Portal gate: `X-Proxy-Token` vs `SONGSURF_PROXY_SECRET` (constant-time) → `{sub: X-User-Name, uid: X-User-Id, role, email: ''}`, else `None` (wrong proof logged) |
+| `get_current_user()` | `DEV_MODE` → dev user; else `user_from_portal_headers()` |
 | `_is_identified(user)` | Pseudo present **and** valid portal UUID, otherwise refused (no storage key) |
 
 ---
@@ -208,15 +202,12 @@ api.saveAlbumTags(folderPath, fields)      // POST /api/library/album-tags/save
 api.deleteSong(path)                       // POST /api/library/delete-song (admin)
 api.renumberAlbum(folderPath, paths)       // POST /api/library/renumber-album
 api.setArtistGenre(folderPath, genre)      // POST /api/library/set-artist-genre
-api.uploadSongCover(path, file)            // POST /api/library/song-cover/upload
 api.uploadAlbumCover(folderPath, file)     // POST /api/library/album-cover/upload
 api.uploadArtistCover(folderPath, file)    // POST /api/library/artist-cover/upload
 api.getFolderCoverUrl(folderPath, ts)      // GET  /api/library/folder-cover (URL builder — ts = stable per-path version, NOT Date.now())
 api.getArtistPictureUrl(folderPath, ts)    // GET  /api/library/artist-picture (URL builder — same versioning)
 api.auditArtist(path)                      // GET  /api/library/audit/artist
 api.auditApply(changes)                    // POST /api/library/audit/apply
-api.genreBackfillStart()                   // POST /api/admin/genre-backfill
-api.genreBackfillStatus()                  // GET  /api/admin/genre-backfill/status
 ```
 
 ---

@@ -12,7 +12,6 @@ Automated coverage:
 - D-1 → D-5, D-9 (URL validation, download-while-busy rejection)
 - ST-3, ST-4 (user isolation, path traversal)
 - Z-3 (ZIP without prepare), Z-5 + ST-1/ST-2 (SSF-10: admin ZIP disabled, member library purged)
-- A-1 (admin-only route)
 
 Remaining manual tests: W-20/21, D-6→D-8, D-10→D-14, Z-1/2/4, Z-6 (require Docker + yt-dlp network).
 
@@ -131,8 +130,7 @@ _I-1 → I-7 and P-1 → P-5 were removed with the Watcher in SSF-16: SongSurf r
 
 | # | Test | How | Expected |
 |---|------|-----|----------|
-| A-1 | `/api/admin/extract-covers` requires admin | Call as Member | 403 — Admin requis |
-| A-2 | Admin can call it | Call as Admin | 200 — covers extracted |
+| A-1 | `/api/admin/dl-logs` requires admin | Call as Member | 403 — Admin requis |
 
 ---
 

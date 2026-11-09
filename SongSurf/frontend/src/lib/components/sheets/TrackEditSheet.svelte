@@ -7,7 +7,7 @@
 	import { api } from '$lib/api.js';
 	import { user, addToast } from '$lib/stores.js';
 	import { openSheet, closeSheet } from '$lib/ui/sheets.js';
-	import { tree, findAlbum, parentPath, coverUrl, refreshTodo, bumpImgVersion, songTitle } from '$lib/library/data.js';
+	import { tree, findAlbum, parentPath, coverUrl, refreshTodo, songTitle } from '$lib/library/data.js';
 	import { ID3_LABELS, MULTI_HINT } from '$lib/metadata/id3.js';
 	import '$lib/styles/metadata.css'; // outils experts existants (préfixe .meta-layout)
 	import Sheet from '../ui/Sheet.svelte';
@@ -30,8 +30,6 @@
 	let initial = {};
 	let v = $state({ title: '', artist: '', year: '', n: '', total: '', genre: '' });
 	let expert = $state({});
-	let uploading = $state(false);
-	let coverError = $state('');
 
 	onMount(load);
 
@@ -79,18 +77,6 @@
 		finally { saving = false; }
 	}
 
-	async function uploadSongCover(file) {
-		if (!file || uploading) return;
-		uploading = true; coverError = '';
-		try {
-			await api.uploadSongCover(path, file);
-			bumpImgVersion(albumPath);
-			const data = await api.songMeta(path);
-			if (data.success) meta = data;
-			addToast('Pochette mise à jour.', 'info');
-		} catch (e) { coverError = e.message ?? 'Erreur'; }
-		finally { uploading = false; }
-	}
 
 	const lab = (label, code) => (isAdmin && code ? `${label} <code>${code}</code>` : label);
 </script>
@@ -153,7 +139,7 @@
 					{/each}
 				</div>
 				<div class="meta-layout details">
-					<SongDetails {meta} albumCoverUrl={coverUrl(albumPath)} uploading={uploading} error={coverError} onUpload={uploadSongCover} />
+					<SongDetails {meta} albumCoverUrl={coverUrl(albumPath)} />
 				</div>
 			</details>
 		{/if}

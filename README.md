@@ -89,7 +89,10 @@ Guide: [`docs/DEPLOY.md`](docs/DEPLOY.md) (full setup, `make deploy-nas`, Synolo
 ```
 SongSurf/SongSurf/            # the app (nested folder)
   server/
-    app.py                    # Flask routes, queue, auth guard, metadata API
+    app.py                    # Flask app, CORS, blueprints, startup
+    auth/                     # who is the user (portal gate, dev mode)
+    core/                     # config, storage, queue, worker, ID3 tags
+    routes/                   # HTTP routes, one file per domain
     downloader.py             # yt-dlp wrapper, extraction, progress
     organizer.py              # file placement, ID3 tags, covers
     state_store.py            # SQLite: queue (round-robin), quotas, ZIP exports

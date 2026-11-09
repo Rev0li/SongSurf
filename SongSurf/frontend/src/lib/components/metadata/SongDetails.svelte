@@ -3,20 +3,14 @@
 	
 	/**
 	 * @typedef {Object} Props
-	 * @property {any} meta - seule, puis « Plus de détails » (audio, état de la pochette, upload par titre).
+	 * @property {any} meta - seule, puis « Plus de détails » (audio, état de la pochette).
 	 * @property {string} [albumCoverUrl]
-	 * @property {boolean} [uploading]
-	 * @property {string} [error]
-	 * @property {any} [onUpload]
 	 */
 
 	/** @type {Props} */
 	let {
 		meta,
-		albumCoverUrl = '',
-		uploading = false,
-		error = '',
-		onUpload = () => {}
+		albumCoverUrl = ''
 	} = $props();
 
 	let detailsOpen = $state(false);
@@ -94,20 +88,6 @@
 			</div>
 		{/if}
 
-		<div class="cover-upload-zone">
-			<p class="cover-hint">Remplacer la pochette — glisse, colle (Ctrl+V) ou clique</p>
-			{#if error}<p class="save-error">{error}</p>{/if}
-			<div class="cover-drop-row">
-				<input
-					type="file" accept="image/*" id="cover-file" class="hidden-file"
-					onchange={(e) => onUpload(e.currentTarget.files?.[0])}
-				/>
-				<label for="cover-file" class="btn btn-ghost btn-sm" class:loading={uploading}>
-					{uploading ? '⏳…' : '📁 Choisir une image'}
-				</label>
-				{#if uploading}<span class="cover-hint">Upload en cours…</span>{/if}
-			</div>
-		</div>
 	{/if}
 </section>
 

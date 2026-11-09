@@ -38,7 +38,7 @@ Caddy strips client-sent `X-User-*` and the portal session cookie, and adds `X-P
 ### Proof
 
 - Secret: `SONGSURF_PROXY_SECRET` (`openssl rand -hex 32`) — **must be byte-identical** in `SongSurf/SongSurf/.secrets` (NAS) and the secret file Caddy reads on the VPS. Rotation = update both, restart both.
-- SongSurf compares it with `hmac.compare_digest` (`_user_from_portal_headers()` in `server/app.py`). Missing or wrong → the `X-User-*` are ignored (SongSurf listens on the home network — any LAN device could otherwise claim to be admin); a wrong proof is logged.
+- SongSurf compares it with `hmac.compare_digest` (`user_from_portal_headers()` in `server/auth/portal.py`). Missing or wrong → the `X-User-*` are ignored (SongSurf listens on the home network — any LAN device could otherwise claim to be admin); a wrong proof is logged.
 - Empty secret → service locked (every request 401), warning at boot.
 
 `sub` is the exact pseudo, used only for display, logs and activity events. Everything stored per user (library, cookies, queue, quota, ZIP) is keyed by the **portal UUID** (SSF-03), admin included — unique and stable by construction, never derived from the pseudo. A request without a valid UUID is refused by SongSurf.
