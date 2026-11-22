@@ -5,7 +5,7 @@ Principe : **une étape à la fois**. Chaque étape commence par ses questions d
 
 ## Place dans le projet global
 
-Ce plan est **une partie** du méga-projet « Refonte → CDI », suivi dans `~/dev/Collapse/` (ordre global, avancement de chaque projet). Ordre décidé le 2026-10-16 :
+Ce plan est **une partie** du méga-projet « Refonte → CDI », suivi dans `~/dev/projets/Collapse/` (ordre global, avancement de chaque projet). Ordre décidé le 2026-10-16 :
 1. Plan du portfolio → 2. MyCss v1 + page Home du portfolio → 3. **Unification auth + SongSurf (ce plan, SSF-01 à SSF-08)**.
 Les tickets SSF ne démarrent qu'à la phase 3. Accès Jellyfin public mis de côté.
 
@@ -171,7 +171,7 @@ Audit : M6.
 - Les couleurs actuelles de SongSurf (rose `#E8B7C4`, turquoise `#6EDAD3`) correspondent déjà au questionnaire d'identité (Obsidian `revosafe/Mycss/`).
 
 ### Portfolio — vitrine publique
-- La vitrine « SongSurf + Jellyfin » vit dans le **portfolio** (`~/dev/portfolio`, refait de zéro dans une autre session), pas dans ce repo. Idées : [`VITRINE_IDEAS.md`](VITRINE_IDEAS.md).
+- La vitrine « SongSurf + Jellyfin » vit dans le **portfolio** (`~/dev/projets/portfolio`, refait de zéro dans une autre session), pas dans ce repo. Idées : [`VITRINE_IDEAS.md`](VITRINE_IDEAS.md).
 - Ce que SongSurf devra fournir plus tard (après la V1) : un mode **bac à sable** (bibliothèque de démo en musique libre, aucun téléchargement réel, remise à zéro auto) et l'acceptation d'un rôle `demo` à jeton court émis par rev0auth. À transformer en ticket le moment venu.
 
 ---
